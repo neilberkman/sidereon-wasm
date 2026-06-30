@@ -12,10 +12,11 @@ use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::geometry::{
-    dop as core_dop, dop_at_epoch, dop_series as core_dop_series, line_of_sight_from_az_el_deg,
-    passes as core_passes, visibility_series as core_visibility_series, visible as core_visible,
-    Dop as CoreDop, DopAtEpoch as CoreDopAtEpoch, DopError, DopOptions,
-    DopWeighting as CoreDopWeighting, LineOfSight, VisibilityOptions,
+    dop as core_dop, dop_at_epoch, dop_series as core_dop_series, dop_with_convention,
+    error_ellipse_2x2, line_of_sight_from_az_el_deg, passes as core_passes,
+    visibility_series as core_visibility_series, visible as core_visible, Dop as CoreDop,
+    DopAtEpoch as CoreDopAtEpoch, DopError, DopOptions, DopWeighting as CoreDopWeighting,
+    EnuConvention, ErrorEllipse2 as CoreErrorEllipse2, LineOfSight, VisibilityOptions,
     VisibilityPass as CoreVisibilityPass, VisibilitySeriesPoint as CoreVisibilitySeriesPoint,
     VisibleSatellite as CoreVisibleSatellite, Wgs84Geodetic as CoreWgs84,
 };
@@ -295,6 +296,132 @@ pub fn gnss_dop(
     let weights = read_positive_weights(weights)?;
     same_len("lineOfSight", rows.len(), "weights", weights.len())?;
     dop_from_rows(&rows, &weights, receiver)
+}
+
+fn parse_convention(value: &str) -> Result<EnuConvention, JsValue> {
+    match value {
+        "geodeticNormal" => Ok(EnuConvention::GeodeticNormal),
+        "geocentricRadial" => Ok(EnuConvention::GeocentricRadial),
+        other => Err(type_error(&format!(
+            "unknown ENU convention {other:?}; expected \"geodeticNormal\" or \"geocentricRadial\""
+        ))),
+    }
+}
+
+/// GNSS dilution of precision with an explicit ENU convention for the
+/// horizontal/vertical split.
+///
+/// `lineOfSight` is a flat row-major `(n, 3)` `Float64Array` of ECEF unit
+/// vectors, `weights` a positive `Float64Array` of length `n`, and `convention`
+/// is `"geodeticNormal"` (the GNSS-standard default, matching [`gnssDop`]) or
+/// `"geocentricRadial"` (radial up). Only HDOP/VDOP differ between conventions
+/// (by ~`1e-3` relative); GDOP/PDOP/TDOP are identical. Delegates to
+/// `sidereon_core::geometry::dop_with_convention`.
+#[wasm_bindgen(js_name = dopWithConvention)]
+pub fn dop_with_convention_js(
+    line_of_sight: &[f64],
+    weights: &[f64],
+    receiver: &Wgs84Geodetic,
+    convention: &str,
+) -> Result<Dop, JsValue> {
+    let rows = rows3("lineOfSight", line_of_sight, true)?;
+    if rows.is_empty() {
+        return Err(type_error("lineOfSight must not be empty"));
+    }
+    let weights = read_positive_weights(weights)?;
+    same_len("lineOfSight", rows.len(), "weights", weights.len())?;
+    let convention = parse_convention(convention)?;
+    let los: Vec<LineOfSight> = rows
+        .iter()
+        .map(|r| LineOfSight::new(r[0], r[1], r[2]))
+        .collect();
+    let dop = dop_with_convention(&los, &weights, receiver.to_core()?, convention).map_err(dop_err)?;
+    Ok(dop.into())
+}
+
+/// A confidence ellipse from a 2x2 covariance block: semi-axes scaled by the
+/// two-degree-of-freedom chi-square quantile `-2 ln(1 - confidence)`.
+#[wasm_bindgen]
+pub struct ErrorEllipse2 {
+    confidence: f64,
+    chi_square_scale: f64,
+    semi_major: f64,
+    semi_minor: f64,
+    orientation_rad: f64,
+}
+
+impl From<CoreErrorEllipse2> for ErrorEllipse2 {
+    fn from(e: CoreErrorEllipse2) -> Self {
+        Self {
+            confidence: e.confidence,
+            chi_square_scale: e.chi_square_scale,
+            semi_major: e.semi_major,
+            semi_minor: e.semi_minor,
+            orientation_rad: e.orientation_rad,
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl ErrorEllipse2 {
+    /// Requested confidence probability in `(0, 1)`.
+    #[wasm_bindgen(getter)]
+    pub fn confidence(&self) -> f64 {
+        self.confidence
+    }
+
+    /// Two-degree-of-freedom chi-square scale `-2 ln(1 - confidence)`.
+    #[wasm_bindgen(getter, js_name = chiSquareScale)]
+    pub fn chi_square_scale(&self) -> f64 {
+        self.chi_square_scale
+    }
+
+    /// Semi-major axis length (same unit as the square root of the covariance).
+    #[wasm_bindgen(getter, js_name = semiMajor)]
+    pub fn semi_major(&self) -> f64 {
+        self.semi_major
+    }
+
+    /// Semi-minor axis length.
+    #[wasm_bindgen(getter, js_name = semiMinor)]
+    pub fn semi_minor(&self) -> f64 {
+        self.semi_minor
+    }
+
+    /// Semi-major-axis orientation in radians, from the first (row/col 0) axis
+    /// toward the second (row/col 1) axis.
+    #[wasm_bindgen(getter, js_name = orientationRad)]
+    pub fn orientation_rad(&self) -> f64 {
+        self.orientation_rad
+    }
+}
+
+/// Confidence ellipse from an arbitrary 2x2 covariance block.
+///
+/// `covariance` is a flat row-major length-4 `Float64Array` (`[c00, c01, c10,
+/// c11]`); `confidence` is in `(0, 1)`. The semi-axes are the eigenvalues of the
+/// symmetrized block scaled by the chi-square(2) quantile. Throws a `RangeError`
+/// for a non-positive-semidefinite block or an out-of-range confidence.
+/// Delegates to `sidereon_core::geometry::error_ellipse_2x2`.
+#[wasm_bindgen(js_name = errorEllipse2)]
+pub fn error_ellipse_2(covariance: &[f64], confidence: f64) -> Result<ErrorEllipse2, JsValue> {
+    if covariance.len() != 4 {
+        return Err(type_error(&format!(
+            "covariance must have length 4 (flat row-major 2-by-2), got {}",
+            covariance.len()
+        )));
+    }
+    for (i, &v) in covariance.iter().enumerate() {
+        if !v.is_finite() {
+            return Err(range_error(&format!("covariance[{i}] must be finite")));
+        }
+    }
+    let block = [
+        [covariance[0], covariance[1]],
+        [covariance[2], covariance[3]],
+    ];
+    let ellipse = error_ellipse_2x2(block, confidence).map_err(dop_err)?;
+    Ok(ellipse.into())
 }
 
 fn parse_system(value: &str) -> Result<GnssSystem, JsValue> {

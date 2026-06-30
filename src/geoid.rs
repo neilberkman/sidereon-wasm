@@ -9,8 +9,11 @@
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::geoid::{
-    ellipsoidal_height_m as core_ellipsoidal_height_m, geoid_undulation as core_geoid_undulation,
-    orthometric_height_m as core_orthometric_height_m, GeoidGrid as CoreGeoidGrid,
+    egm96_ellipsoidal_height_m as core_egm96_ellipsoidal_height_m,
+    egm96_orthometric_height_m as core_egm96_orthometric_height_m,
+    egm96_undulation as core_egm96_undulation, ellipsoidal_height_m as core_ellipsoidal_height_m,
+    geoid_undulation as core_geoid_undulation, orthometric_height_m as core_orthometric_height_m,
+    GeoidGrid as CoreGeoidGrid,
 };
 
 use crate::error::engine_error;
@@ -40,6 +43,36 @@ pub fn orthometric_height_m(ellipsoidal_height_m: f64, lat_rad: f64, lon_rad: f6
 #[wasm_bindgen(js_name = ellipsoidalHeightM)]
 pub fn ellipsoidal_height_m(orthometric_height_m: f64, lat_rad: f64, lon_rad: f64) -> f64 {
     core_ellipsoidal_height_m(orthometric_height_m, lat_rad, lon_rad)
+}
+
+/// Geoid undulation `N` (metres above the WGS84 ellipsoid) at a geodetic
+/// position in radians, from the embedded GENUINE EGM96 1-degree global grid.
+/// Latitude is positive north, longitude positive east. This is the recommended
+/// zero-setup default for metre-class datum work (its bilinear lookup agrees
+/// with the full 15-arcminute EGM96 grid to ~0.4 m RMS); the coarse
+/// [`geoidUndulation`] is only suitable for sanity checks. Delegates to
+/// `sidereon_core::geoid::egm96_undulation`.
+#[wasm_bindgen(js_name = egm96Undulation)]
+pub fn egm96_undulation(lat_rad: f64, lon_rad: f64) -> f64 {
+    core_egm96_undulation(lat_rad, lon_rad)
+}
+
+/// Orthometric height `H = h - N` (metres above mean sea level) from an
+/// ellipsoidal height and a geodetic position in radians, using the embedded
+/// genuine EGM96 1-degree model. Delegates to
+/// `sidereon_core::geoid::egm96_orthometric_height_m`.
+#[wasm_bindgen(js_name = egm96OrthometricHeightM)]
+pub fn egm96_orthometric_height_m(ellipsoidal_height_m: f64, lat_rad: f64, lon_rad: f64) -> f64 {
+    core_egm96_orthometric_height_m(ellipsoidal_height_m, lat_rad, lon_rad)
+}
+
+/// Ellipsoidal height `h = H + N` (metres above the WGS84 ellipsoid) from an
+/// orthometric height and a geodetic position in radians, using the embedded
+/// genuine EGM96 1-degree model. Delegates to
+/// `sidereon_core::geoid::egm96_ellipsoidal_height_m`.
+#[wasm_bindgen(js_name = egm96EllipsoidalHeightM)]
+pub fn egm96_ellipsoidal_height_m(orthometric_height_m: f64, lat_rad: f64, lon_rad: f64) -> f64 {
+    core_egm96_ellipsoidal_height_m(orthometric_height_m, lat_rad, lon_rad)
 }
 
 /// A regular latitude/longitude grid of geoid undulation samples with bilinear

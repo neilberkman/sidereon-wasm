@@ -19,8 +19,8 @@ use sidereon_core::frequencies::{
     rinex_band_frequency_hz, rinex_band_wavelength_m, wavelength_m, CarrierPair as CoreCarrierPair,
 };
 use sidereon_core::observables::{
-    predict as core_predict, ObservableEphemerisSource, PredictOptions as CorePredictOptions,
-    PredictedObservables as CorePredicted,
+    predict as core_predict, predict_batch as core_predict_batch, ObservableEphemerisSource,
+    PredictOptions as CorePredictOptions, PredictedObservables as CorePredicted, PredictRequest,
 };
 use sidereon_core::quality::{
     self, PseudorangeVarianceModel as CoreVarModel, PseudorangeVarianceOptions as CoreVarOptions,
@@ -1176,6 +1176,166 @@ pub fn observables_broadcast(
         satellite,
         receiver_ecef_m,
         t_rx_j2000_s,
+        options,
+    )
+}
+
+/// The per-request results of a batch observable prediction, index-aligned to
+/// the input requests. Each request independently either produced observables or
+/// failed; query a request with [`PredictBatch.isOk`] /
+/// [`PredictBatch.observables`] / [`PredictBatch.error`].
+#[wasm_bindgen]
+pub struct PredictBatch {
+    results: Vec<Result<CorePredicted, String>>,
+}
+
+#[wasm_bindgen]
+impl PredictBatch {
+    /// Number of requests in the batch.
+    #[wasm_bindgen(getter)]
+    pub fn count(&self) -> usize {
+        self.results.len()
+    }
+
+    /// Whether request `index` produced observables. Throws a `RangeError` for
+    /// an out-of-range index.
+    #[wasm_bindgen(js_name = isOk)]
+    pub fn is_ok(&self, index: usize) -> Result<bool, JsValue> {
+        self.results
+            .get(index)
+            .map(Result::is_ok)
+            .ok_or_else(|| range_error(&format!("request index {index} out of range")))
+    }
+
+    /// The observables for request `index`. Throws a `RangeError` for an
+    /// out-of-range index and an `Error` carrying that request's failure message
+    /// when the prediction failed (check [`PredictBatch.isOk`] first).
+    pub fn observables(&self, index: usize) -> Result<PredictedObservables, JsValue> {
+        match self
+            .results
+            .get(index)
+            .ok_or_else(|| range_error(&format!("request index {index} out of range")))?
+        {
+            Ok(inner) => Ok(PredictedObservables { inner: *inner }),
+            Err(message) => Err(engine_error(message.clone())),
+        }
+    }
+
+    /// The failure message for request `index`, or `undefined` when it
+    /// succeeded. Throws a `RangeError` for an out-of-range index.
+    pub fn error(&self, index: usize) -> Result<Option<String>, JsValue> {
+        match self
+            .results
+            .get(index)
+            .ok_or_else(|| range_error(&format!("request index {index} out of range")))?
+        {
+            Ok(_) => Ok(None),
+            Err(message) => Ok(Some(message.clone())),
+        }
+    }
+}
+
+/// Build the `(satellite, receiver, epoch)` request tuples shared by both batch
+/// entry points, validating the three index-aligned input arrays.
+fn build_predict_requests(
+    satellites: Vec<String>,
+    receivers_ecef_m: &[f64],
+    epochs_j2000_s: &[f64],
+) -> Result<Vec<PredictRequest>, JsValue> {
+    if satellites.is_empty() {
+        return Err(type_error("satellites must not be empty"));
+    }
+    if !receivers_ecef_m.len().is_multiple_of(3) {
+        return Err(type_error(&format!(
+            "receiversEcefM length ({}) must be a multiple of 3 (flat row-major n-by-3)",
+            receivers_ecef_m.len()
+        )));
+    }
+    let n = satellites.len();
+    if receivers_ecef_m.len() / 3 != n {
+        return Err(type_error(&format!(
+            "receiversEcefM ({} rows) and satellites ({n}) must have the same length",
+            receivers_ecef_m.len() / 3
+        )));
+    }
+    if epochs_j2000_s.len() != n {
+        return Err(type_error(&format!(
+            "epochsJ2000S ({}) and satellites ({n}) must have the same length",
+            epochs_j2000_s.len()
+        )));
+    }
+    let mut requests = Vec::with_capacity(n);
+    for (i, token) in satellites.iter().enumerate() {
+        let sat = parse_sat(token)?;
+        let receiver = receiver_ecef(&receivers_ecef_m[i * 3..i * 3 + 3])?;
+        let epoch = epochs_j2000_s[i];
+        if !epoch.is_finite() {
+            return Err(range_error(&format!("epochsJ2000S[{i}] must be finite")));
+        }
+        requests.push((sat, receiver, epoch));
+    }
+    Ok(requests)
+}
+
+fn predict_batch_from_source(
+    source: &dyn ObservableEphemerisSource,
+    satellites: Vec<String>,
+    receivers_ecef_m: &[f64],
+    epochs_j2000_s: &[f64],
+    options: JsValue,
+) -> Result<PredictBatch, JsValue> {
+    let requests = build_predict_requests(satellites, receivers_ecef_m, epochs_j2000_s)?;
+    let options = predict_options(options)?;
+    let results = core_predict_batch(source, &requests, options)
+        .into_iter()
+        .map(|result| result.map_err(|e| e.to_string()))
+        .collect();
+    Ok(PredictBatch { results })
+}
+
+/// Predict observables for many `(satellite, receiver, epoch)` requests from an
+/// SP3 precise product, serially.
+///
+/// `satellites` is an array of satellite tokens, `receiversEcefM` a flat
+/// row-major `(n, 3)` `Float64Array` of receiver ECEF positions (metres), and
+/// `epochsJ2000S` a `Float64Array` of receive epochs (seconds since J2000); all
+/// three are index-aligned and length `n`. Element `i` of the result corresponds
+/// to request `i`. Delegates to the serial reference kernel
+/// `sidereon_core::observables::predict_batch`; the binding never spawns the
+/// rayon thread pool the parallel variant uses.
+#[wasm_bindgen(js_name = predictBatchSp3)]
+pub fn predict_batch_sp3(
+    sp3: &Sp3,
+    satellites: Vec<String>,
+    receivers_ecef_m: &[f64],
+    epochs_j2000_s: &[f64],
+    options: JsValue,
+) -> Result<PredictBatch, JsValue> {
+    predict_batch_from_source(
+        &sp3.inner,
+        satellites,
+        receivers_ecef_m,
+        epochs_j2000_s,
+        options,
+    )
+}
+
+/// Predict observables for many `(satellite, receiver, epoch)` requests from a
+/// broadcast ephemeris store, serially. See [`predictBatchSp3`] for the argument
+/// shapes. Delegates to the serial `sidereon_core::observables::predict_batch`.
+#[wasm_bindgen(js_name = predictBatchBroadcast)]
+pub fn predict_batch_broadcast(
+    broadcast: &BroadcastEphemeris,
+    satellites: Vec<String>,
+    receivers_ecef_m: &[f64],
+    epochs_j2000_s: &[f64],
+    options: JsValue,
+) -> Result<PredictBatch, JsValue> {
+    predict_batch_from_source(
+        &broadcast.inner,
+        satellites,
+        receivers_ecef_m,
+        epochs_j2000_s,
         options,
     )
 }

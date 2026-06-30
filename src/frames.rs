@@ -26,7 +26,8 @@ use sidereon_core::astro::time::civil::{
 };
 use sidereon_core::astro::time::model::Instant as CoreInstant;
 use sidereon_core::astro::time::scales::{
-    find_leap_seconds, julian_day_number, leap_second_table, ut1_coverage,
+    find_leap_seconds, gps_utc_offset_s as core_gps_utc_offset_s, julian_day_number,
+    leap_second_table, tai_utc_offset_s as core_tai_utc_offset_s, ut1_coverage,
 };
 use sidereon_core::astro::time::{
     timescale_offset_at_s, timescale_offset_s, GnssWeekTow as CoreGnssWeekTow,
@@ -107,8 +108,8 @@ pub fn time_scale_abbrev(scale: TimeScale) -> String {
 ///
 /// Covers the atomic scales (TAI/TT/GPST/GST/QZSST/BDT), whose mutual offsets
 /// are constants fixed by their ICDs. Throws a `RangeError` when either scale is
-/// UTC-based (`Utc`/`Glonasst`) — those carry leap seconds, so their offset is
-/// epoch-dependent and needs [`timescaleOffsetAtS`] — or for `Tdb` (no fixed
+/// UTC-based (`Utc`/`Glonasst`): those carry leap seconds, so their offset is
+/// epoch-dependent and needs [`timescaleOffsetAtS`], or for `Tdb` (no fixed
 /// offset; resolve it through an `Instant`).
 #[wasm_bindgen(js_name = timescaleOffsetS)]
 pub fn timescale_offset_s_js(from: TimeScale, to: TimeScale) -> Result<f64, JsValue> {
@@ -618,6 +619,28 @@ impl Ut1Coverage {
 pub fn leap_seconds(year: i32, month: i32, day: i32) -> f64 {
     let jd_utc_midnight = julian_day_number(year, month, day) as f64 - 0.5;
     find_leap_seconds(jd_utc_midnight)
+}
+
+/// TAI-UTC (cumulative leap seconds) in effect on a UTC calendar date.
+///
+/// This is **not** the GNSS "GPS - UTC" offset; for the quantity a GPS receiver
+/// applies use [`gpsUtcOffsetS`] (they differ by a constant 19 s). Delegates to
+/// `sidereon_core::astro::time::scales::tai_utc_offset_s`.
+#[wasm_bindgen(js_name = taiUtcOffsetS)]
+pub fn tai_utc_offset_s(year: i32, month: i32, day: i32) -> f64 {
+    let jd_utc_midnight = julian_day_number(year, month, day) as f64 - 0.5;
+    core_tai_utc_offset_s(jd_utc_midnight)
+}
+
+/// GPS - UTC (the GNSS leap-second offset since the GPS epoch) on a UTC calendar
+/// date: the IS-GPS-200 quantity broadcast in the navigation message (18 s from
+/// 2017-01-01). Equals `taiUtcOffsetS - 19`. Use this, not [`taiUtcOffsetS`],
+/// whenever you mean the leap seconds a GPS receiver applies. Delegates to
+/// `sidereon_core::astro::time::scales::gps_utc_offset_s`.
+#[wasm_bindgen(js_name = gpsUtcOffsetS)]
+pub fn gps_utc_offset_s(year: i32, month: i32, day: i32) -> f64 {
+    let jd_utc_midnight = julian_day_number(year, month, day) as f64 - 0.5;
+    core_gps_utc_offset_s(jd_utc_midnight)
 }
 
 /// Provenance and coverage of the embedded leap-second (TAI-UTC) table.

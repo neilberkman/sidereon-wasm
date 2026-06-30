@@ -7,8 +7,11 @@
 //! numbers it returns are what `sidereon-core` produces.
 //!
 //! Only the serial engine paths are used (`solve_spp`, `propagate_teme_arc`,
-//! `look_angle_arc`). The rayon `*_parallel` batch variants are never called, so
-//! no thread pool is ever spawned. rayon links in (it is an unconditional core
+//! `look_angle_arc`, `predict_batch`, `solve_data_problem`). The rayon
+//! `*_parallel` batch variants are never called, so no thread pool is ever
+//! spawned; the data-driven leave-one-out sweep, whose core entry point
+//! (`solve_data_problem_drop_one`) fans across rayon, is driven serially here
+//! one masked row at a time. rayon links in (it is an unconditional core
 //! dependency) but its runtime is never entered under wasm32.
 
 mod antex;
@@ -35,8 +38,10 @@ mod iod;
 mod ionex;
 mod ionosphere;
 mod lambert;
+mod least_squares;
 mod lnav;
 mod marshal;
+mod normality;
 mod moving_baseline;
 mod observables;
 mod observation;
@@ -57,6 +62,7 @@ mod rtcm;
 mod rtk;
 mod rtk_arc;
 mod sgp4;
+mod sky;
 mod sp3;
 mod sp3_merge;
 mod spk;
@@ -65,6 +71,7 @@ mod staleness;
 mod tca;
 mod tides;
 mod tropo;
+mod trls;
 
 pub use antex::{load_antex, Antenna, Antex, AntexDateTime};
 pub use atmosphere::{atmosphere_density, AtmosphereDensity};
@@ -84,9 +91,10 @@ pub use coverage::{coverage_look_angles, CoverageGrid};
 pub use crinex::{decode_crinex, decode_crinex_lines, encode_crinex, load_crinex};
 pub use dgnss::{dgnss_apply, AppliedCorrections, CorrectionEntry, DgnssSolution};
 pub use dop::{
-    gnss_dop, gnss_dop_at_epoch, gnss_dop_series, gnss_dop_series_window, gnss_passes,
-    gnss_visibility_series, gnss_visible, Dop, DopGeometry, DopSeries, DopSeriesSample, GnssPass,
-    GnssVisibilityCount, GnssVisibleSatellite, Wgs84Geodetic,
+    dop_with_convention_js, error_ellipse_2, gnss_dop, gnss_dop_at_epoch, gnss_dop_series,
+    gnss_dop_series_window, gnss_passes, gnss_visibility_series, gnss_visible, Dop, DopGeometry,
+    DopSeries, DopSeriesSample, ErrorEllipse2, GnssPass, GnssVisibilityCount, GnssVisibleSatellite,
+    Wgs84Geodetic,
 };
 pub use doppler::{doppler_range_rate, doppler_shift_js, DopplerShift};
 pub use elements::{coe2rv, rv2coe};
@@ -96,13 +104,17 @@ pub use events::{
 };
 pub use forces::{force_j2_acceleration, force_twobody_acceleration};
 pub use frames::{
-    civil_to_j2000_seconds, ecef_to_geodetic, gcrs_to_itrs, geodetic_to_ecef, itrs_to_gcrs,
-    j2000_seconds_to_civil, leap_second_table_info, leap_seconds, leap_seconds_batch,
-    split_jd_to_j2000_seconds, teme_to_gcrs, time_scale_abbrev, timescale_offset_at_s_js,
+    civil_to_j2000_seconds, ecef_to_geodetic, gcrs_to_itrs, geodetic_to_ecef, gps_utc_offset_s,
+    itrs_to_gcrs, j2000_seconds_to_civil, leap_second_table_info, leap_seconds, leap_seconds_batch,
+    split_jd_to_j2000_seconds, tai_utc_offset_s, teme_to_gcrs, time_scale_abbrev,
+    timescale_offset_at_s_js,
     timescale_offset_s_js, ut1_coverage_info, CivilDateTime, FrameStates, GnssWeekTow, Instant,
     JulianDate, LeapSecondTable, TimeScale, Ut1Coverage,
 };
-pub use geoid::{ellipsoidal_height_m, geoid_undulation, orthometric_height_m, GeoidGrid};
+pub use geoid::{
+    egm96_ellipsoidal_height_m, egm96_orthometric_height_m, egm96_undulation, ellipsoidal_height_m,
+    geoid_undulation, orthometric_height_m, GeoidGrid,
+};
 pub use gnss::{carrier_band_name, gnss_system_label, gnss_system_letter, CarrierBand, GnssSystem};
 pub use ils::{bounded_ils_search_js, lambda_ils_search_js};
 pub use iod::{iod_gauss_angles, iod_gibbs, iod_herrick_gibbs, IodState, IodVelocity};
@@ -111,6 +123,7 @@ pub use ionosphere::{
     galileo_nequick_delay, klobuchar_delay, nequick_g_delay_m_js, nequick_g_stec_tecu_js,
 };
 pub use lambert::{lambert_battin, LambertTransfer};
+pub use least_squares::{covariance_from_jacobian, hessian_trace, normal_covariance};
 pub use lnav::{
     lnav_decode, lnav_encode, lnav_parity, lnav_parity_valid, lnav_subframe_id, lnav_tow,
     LnavDecoded, LnavSubframes,
@@ -122,14 +135,15 @@ pub use observables::{
     geometry_free, glonass_g1_frequency_hz_js, ionosphere_free, ionosphere_free_phase_cycles,
     ionosphere_free_phase_m, ionosphere_free_pseudoranges, melbourne_wubbena, narrow_lane_code,
     noise_amplification, observables_broadcast, observables_sp3, phase_meters,
-    pseudorange_variance, range_rate_to_doppler, replica, rinex_band_frequency_hz_js,
-    rinex_band_wavelength_m_js, sigmas, slip_reason_label, smooth_code, smooth_iono_free_code,
-    snr_post_db, solve_velocity, solve_velocity_broadcast, wavelength_m_js, weight_vector,
-    wide_lane_cycles, wide_lane_wavelength, AcquisitionGrid, AcquisitionResult, CarrierPair,
-    CorrelationResult, IonoFreePseudorangeResult, IonoFreeSmoothResult, PredictedObservables,
-    PseudorangeDropReason, RaimWeights, SatelliteVector, SlipReason, SlipResult, SmoothCodeResult,
-    VelocitySolution,
+    predict_batch_broadcast, predict_batch_sp3, pseudorange_variance, range_rate_to_doppler,
+    replica, rinex_band_frequency_hz_js, rinex_band_wavelength_m_js, sigmas, slip_reason_label,
+    smooth_code, smooth_iono_free_code, snr_post_db, solve_velocity, solve_velocity_broadcast,
+    wavelength_m_js, weight_vector, wide_lane_cycles, wide_lane_wavelength, AcquisitionGrid,
+    AcquisitionResult, CarrierPair, CorrelationResult, IonoFreePseudorangeResult,
+    IonoFreeSmoothResult, PredictBatch, PredictedObservables, PseudorangeDropReason, RaimWeights,
+    SatelliteVector, SlipReason, SlipResult, SmoothCodeResult, VelocitySolution,
 };
+pub use normality::{jarque_bera, kurtosis, moments, shapiro_wilk, skewness};
 pub use observation::{
     parallactic_angle_deg, satellite_visual_magnitude, sub_observer_point, sub_solar_point,
     terminator_latitude_deg,
@@ -186,6 +200,10 @@ pub use sgp4::{
     FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles, NamedTle, ParsedTleFile,
     SatellitePass, Tle, TlePropagation, VisibilitySeries, VisibleSatellite,
 };
+pub use sky::{
+    find_moon_elevation_crossings, find_moon_transits, moon_az_el, moon_elevation_deg,
+    moon_illumination, sun_az_el, MoonElevationCrossing, MoonTransit,
+};
 pub use sp3::{load_sp3, Sp3, Sp3ClockReferenceOffset, Sp3Interpolation, Sp3State};
 pub use sp3_merge::{merge_sp3, Sp3MergeFlag, Sp3MergeReport, Sp3MergeResult};
 pub use spk::{Spk, SpkSegment, SpkState};
@@ -200,4 +218,7 @@ pub use tca::{
 pub use tides::{ocean_tide_loading_js, solid_earth_pole_tide_js, solid_earth_tide_js};
 pub use tropo::{
     tropo_mapping_factors, tropo_slant_delay, tropo_zenith_delay, MappingFactors, ZenithDelay,
+};
+pub use trls::{
+    least_squares, least_squares_drop_one, LeastSquaresDropOneReport, LeastSquaresResult,
 };
