@@ -1,0 +1,15 @@
+{
+  "//": "Type-check only. There is no TypeScript source in this repo: the public surface is the wasm-bindgen-generated pkg/sidereon.d.ts plus the hand-written companion types in types/. This config exists so `npx tsc --noEmit` can validate both declaration sets (and catch drift) under strict settings. esnext lib is required because the generated bindings reference Symbol.dispose.",
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["esnext", "dom"],
+    "strict": true,
+    "skipLibCheck": false,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": []
+  },
+  "files": ["pkg/sidereon.d.ts", "types/sidereon-extra.d.ts"]
+}

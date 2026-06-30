@@ -1,0 +1,34 @@
+[package]
+name = "sidereon-wasm"
+version = "0.9.0"
+authors = []
+edition = "2021"
+description = "WebAssembly / JavaScript interface over the sidereon GNSS + astrodynamics engine: SP3 loading and multi-product merge, SPP / RTK (float + fixed) / PPP (float + fixed) positioning, IONEX slant delay, SGP4 and numerical orbit propagation, RINEX observation/navigation/clock parsing, CRINEX (Hatanaka) decoding, the observable-domain math (carrier combinations, cycle slips, Hatch smoothing, weighting, velocity, GPS C/A signal), and the astro domain (scale-tagged time, frame transforms, Sun/Moon ephemerides, eclipse / body angles, DOP, passes / visibility, conjunction + collision probability, CDM / OMM / ANTEX parsing, RF link budget)"
+license = "MIT"
+repository = "https://github.com/neilberkman/sidereon-wasm"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The thin ergonomic engine surface this binding marshals to. The default
+# features (gnss + serde + json) carry the SP3/SPP/IONEX/SGP4 API. No modeling
+# logic lives here: every call delegates to a `sidereon` entry point, and the
+# binding only ever calls the serial paths (solve_spp, propagate_teme_arc,
+# look_angle_arc), never the rayon `*_parallel` variants, so no thread pool is
+# spawned under wasm32.
+sidereon = "0.9.0"
+sidereon-core = "0.9.0"
+wasm-bindgen = "0.2"
+# Typed access to the JS Error / TypeError / RangeError constructors so failures
+# surface as the exception class a JS developer expects.
+js-sys = "0.3"
+# Structured JS object <-> Rust marshalling for the SPP request, so the JS side
+# passes one idiomatic options object instead of a positional argument wall.
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+
+[profile.release]
+opt-level = "s"
+lto = true

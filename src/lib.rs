@@ -1,0 +1,203 @@
+//! WebAssembly / JavaScript interface over the sidereon GNSS + astrodynamics
+//! engine.
+//!
+//! This crate is a thin interface: it normalizes JS input, marshals it into the
+//! `sidereon` / `sidereon-core` types, calls the reference entry point, and
+//! packages the result for JS. It contains no modeling logic of its own; the
+//! numbers it returns are what `sidereon-core` produces.
+//!
+//! Only the serial engine paths are used (`solve_spp`, `propagate_teme_arc`,
+//! `look_angle_arc`). The rayon `*_parallel` batch variants are never called, so
+//! no thread pool is ever spawned. rayon links in (it is an unconditional core
+//! dependency) but its runtime is never entered under wasm32.
+
+mod antex;
+mod atmosphere;
+mod bodies;
+mod broadcast_comparison;
+mod cdm;
+mod conjunction;
+mod constellation;
+mod coverage;
+mod crinex;
+mod dgnss;
+mod dop;
+mod doppler;
+mod elements;
+mod error;
+mod events;
+mod forces;
+mod frames;
+mod geoid;
+mod gnss;
+mod ils;
+mod iod;
+mod ionex;
+mod ionosphere;
+mod lambert;
+mod lnav;
+mod marshal;
+mod moving_baseline;
+mod observables;
+mod observation;
+mod oem;
+mod omm;
+mod opm;
+mod ppp;
+mod ppp_corrections;
+mod propagation;
+mod qc;
+mod raim;
+mod reduced_orbit;
+mod rf;
+mod rinex_clock;
+mod rinex_nav;
+mod rinex_obs;
+mod rtcm;
+mod rtk;
+mod rtk_arc;
+mod sgp4;
+mod sp3;
+mod sp3_merge;
+mod spk;
+mod spp;
+mod staleness;
+mod tca;
+mod tides;
+mod tropo;
+
+pub use antex::{load_antex, Antenna, Antex, AntexDateTime};
+pub use atmosphere::{atmosphere_density, AtmosphereDensity};
+pub use bodies::{sun_moon_ecef_batch, sun_moon_eci, SunMoon};
+pub use cdm::{parse_cdm_kvn, parse_cdm_xml, Cdm, CdmObject};
+pub use conjunction::{
+    collision_probability, covariance_is_positive_semidefinite, covariance_is_symmetric,
+    encounter_frame, encounter_plane_covariance, rtn_to_eci_covariance, CollisionProbability,
+    ConjunctionState, EncounterFrame,
+};
+pub use constellation::{
+    changed_js, diff_js, from_celestrak_json, from_celestrak_json_lenient, glonass_fdma_channel_js,
+    gnss_sp3_id_js, is_valid_js, merge_navcen_js, parse_navcen, to_csv_js,
+    validate_against_sp3_ids_js, validate_js,
+};
+pub use coverage::{coverage_look_angles, CoverageGrid};
+pub use crinex::{decode_crinex, decode_crinex_lines, encode_crinex, load_crinex};
+pub use dgnss::{dgnss_apply, AppliedCorrections, CorrectionEntry, DgnssSolution};
+pub use dop::{
+    gnss_dop, gnss_dop_at_epoch, gnss_dop_series, gnss_dop_series_window, gnss_passes,
+    gnss_visibility_series, gnss_visible, Dop, DopGeometry, DopSeries, DopSeriesSample, GnssPass,
+    GnssVisibilityCount, GnssVisibleSatellite, Wgs84Geodetic,
+};
+pub use doppler::{doppler_range_rate, doppler_shift_js, DopplerShift};
+pub use elements::{coe2rv, rv2coe};
+pub use events::{
+    earth_angular_radius, eclipse_status, moon_angle, phase_angle, shadow_fraction, sun_angle,
+    sun_elevation,
+};
+pub use forces::{force_j2_acceleration, force_twobody_acceleration};
+pub use frames::{
+    civil_to_j2000_seconds, ecef_to_geodetic, gcrs_to_itrs, geodetic_to_ecef, itrs_to_gcrs,
+    j2000_seconds_to_civil, leap_second_table_info, leap_seconds, leap_seconds_batch,
+    split_jd_to_j2000_seconds, teme_to_gcrs, time_scale_abbrev, timescale_offset_at_s_js,
+    timescale_offset_s_js, ut1_coverage_info, CivilDateTime, FrameStates, GnssWeekTow, Instant,
+    JulianDate, LeapSecondTable, TimeScale, Ut1Coverage,
+};
+pub use geoid::{ellipsoidal_height_m, geoid_undulation, orthometric_height_m, GeoidGrid};
+pub use gnss::{carrier_band_name, gnss_system_label, gnss_system_letter, CarrierBand, GnssSystem};
+pub use ils::{bounded_ils_search_js, lambda_ils_search_js};
+pub use iod::{iod_gauss_angles, iod_gibbs, iod_herrick_gibbs, IodState, IodVelocity};
+pub use ionex::{load_ionex, Ionex};
+pub use ionosphere::{
+    galileo_nequick_delay, klobuchar_delay, nequick_g_delay_m_js, nequick_g_stec_tecu_js,
+};
+pub use lambert::{lambert_battin, LambertTransfer};
+pub use lnav::{
+    lnav_decode, lnav_encode, lnav_parity, lnav_parity_valid, lnav_subframe_id, lnav_tow,
+    LnavDecoded, LnavSubframes,
+};
+pub use moving_baseline::{solve_moving_baseline, MovingBaselineSolution};
+pub use observables::{
+    acquire, ca_chip, ca_code, carrier_frequency_hz, coherent_loss, coherent_loss_db, correlate,
+    default_pair, default_spp_frequency_hz_js, detect_cycle_slips, doppler_to_range_rate, gamma,
+    geometry_free, glonass_g1_frequency_hz_js, ionosphere_free, ionosphere_free_phase_cycles,
+    ionosphere_free_phase_m, ionosphere_free_pseudoranges, melbourne_wubbena, narrow_lane_code,
+    noise_amplification, observables_broadcast, observables_sp3, phase_meters,
+    pseudorange_variance, range_rate_to_doppler, replica, rinex_band_frequency_hz_js,
+    rinex_band_wavelength_m_js, sigmas, slip_reason_label, smooth_code, smooth_iono_free_code,
+    snr_post_db, solve_velocity, solve_velocity_broadcast, wavelength_m_js, weight_vector,
+    wide_lane_cycles, wide_lane_wavelength, AcquisitionGrid, AcquisitionResult, CarrierPair,
+    CorrelationResult, IonoFreePseudorangeResult, IonoFreeSmoothResult, PredictedObservables,
+    PseudorangeDropReason, RaimWeights, SatelliteVector, SlipReason, SlipResult, SmoothCodeResult,
+    VelocitySolution,
+};
+pub use observation::{
+    parallactic_angle_deg, satellite_visual_magnitude, sub_observer_point, sub_solar_point,
+    terminator_latitude_deg,
+};
+pub use oem::{
+    parse_oem_kvn, parse_oem_xml, Oem, OemCovariance, OemMetadata, OemSegment, OemState,
+};
+pub use omm::{parse_omm_json, parse_omm_kvn, parse_omm_xml, Omm, OmmEpoch};
+pub use opm::{
+    parse_opm_kvn, parse_opm_xml, Opm, OpmCovariance, OpmKeplerian, OpmManeuver, OpmMetadata,
+    OpmSpacecraft, OpmState,
+};
+pub use ppp::{
+    solve_ppp_auto_init_fixed_js, solve_ppp_auto_init_float_js, solve_ppp_fixed, solve_ppp_float,
+    PppFixedSolution, PppFloatSolution,
+};
+pub use ppp_corrections::ppp_corrections;
+pub use propagation::{propagate_state, Ephemeris};
+pub use qc::FdeSolution;
+pub use raim::raim_fde_design_js;
+pub use reduced_orbit::{
+    fit_piecewise_reduced_orbit, fit_piecewise_reduced_orbit_sp3, fit_piecewise_reduced_orbit_tle,
+    fit_reduced_orbit, fit_reduced_orbit_sp3, fit_reduced_orbit_tle, PiecewiseOrbit,
+    PiecewiseOrbitSourceFit, ReducedOrbit, ReducedOrbitDrift, ReducedOrbitSourceFit,
+    ReducedOrbitState,
+};
+pub use rf::{cn0, dish_gain, eirp, fspl, wavelength, LinkBudget};
+pub use rinex_clock::{
+    load_rinex_clock, load_rinex_clock_lossy, parse_rinex_clock, parse_rinex_clock_lossy,
+    ClockEpoch, ClockSeries, RinexClock,
+};
+pub use rinex_nav::{
+    load_rinex_nav, parse_rinex_glonass_records, parse_rinex_iono_corrections,
+    parse_rinex_leap_seconds, parse_rinex_nav, parse_rinex_nav_records, BroadcastEphemeris,
+    BroadcastEvaluation, BroadcastRecordJs, ClockPolynomialJs, GlonassRecordJs, IonoCorrectionsJs,
+    KeplerianElementsJs, KlobucharAlphaBetaJs, NavMessage,
+};
+pub use rinex_obs::{
+    load_rinex_obs, observation_kind_label, parse_rinex_obs, CarrierPhaseSeries, ObsEpoch,
+    ObsEpochTime, ObsHeader, ObsPhaseShift, ObservationFilter, ObservationKind,
+    ObservationValueSeries, PseudorangeSeries, RinexObs, SignalPolicy,
+};
+pub use rtcm::{
+    decode_rtcm, decode_rtcm_frame, decode_rtcm_message, encode_rtcm, encode_rtcm_frame,
+    rtcm_message_number, FrameScanner,
+};
+pub use rtk::{solve_rtk_fixed, solve_rtk_float, RtkFixedSolution, RtkFloatSolution};
+pub use rtk_arc::{
+    fix_wide_lane_rtk_arc_js, prepare_ionosphere_free_rtk_arc_js, solve_rtk_arc_js,
+    solve_static_rtk_arc_js,
+};
+pub use sgp4::{
+    parse_tle_file, propagate_batch, visible_from_satellites_js, ChecksumWarning, Constellation,
+    FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles, NamedTle, ParsedTleFile,
+    SatellitePass, Tle, TlePropagation, VisibilitySeries, VisibleSatellite,
+};
+pub use sp3::{load_sp3, Sp3, Sp3ClockReferenceOffset, Sp3Interpolation, Sp3State};
+pub use sp3_merge::{merge_sp3, Sp3MergeFlag, Sp3MergeReport, Sp3MergeResult};
+pub use spk::{Spk, SpkSegment, SpkState};
+pub use spp::{SppBatchSolution, SppSolution};
+pub use staleness::{
+    select_ionex_js, select_ionex_over_range_js, select_sp3_js, select_sp3_over_range_js,
+    solve_with_fallback_js, IonexSelection, SourcedSolution, Sp3Selection,
+};
+pub use tca::{
+    find_tca_candidates, find_tca_conjunctions, screen_tca_candidates, screen_tca_conjunctions,
+};
+pub use tides::{ocean_tide_loading_js, solid_earth_pole_tide_js, solid_earth_tide_js};
+pub use tropo::{
+    tropo_mapping_factors, tropo_slant_delay, tropo_zenith_delay, MappingFactors, ZenithDelay,
+};

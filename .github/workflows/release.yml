@@ -1,0 +1,46 @@
+name: release
+
+# Keyless publish to npm via OIDC Trusted Publishing.
+# Trigger: push a version tag (e.g. v0.8.0). No NPM_TOKEN secret is used —
+# npm exchanges the GitHub OIDC token for a short-lived publish credential and
+# stamps provenance automatically. Requires a Trusted Publisher to be configured
+# on npmjs.com for @neilberkman/sidereon pointing at this repo + workflow.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC trusted publishing + provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      # OIDC trusted publishing needs npm >= 11.5.1; Node 20 ships an older npm.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Build (web + node targets)
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Publish (keyless OIDC + provenance)
+        run: npm publish --access public --provenance

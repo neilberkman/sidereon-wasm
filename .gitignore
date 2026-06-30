@@ -1,0 +1,5 @@
+/target
+/pkg
+/pkg-node
+node_modules
+.venv

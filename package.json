@@ -1,0 +1,49 @@
+{
+  "name": "@neilberkman/sidereon",
+  "version": "0.9.0",
+  "description": "WebAssembly / JavaScript interface over the sidereon GNSS + astrodynamics engine: SP3 loading and multi-product merge, SPP / RTK (float + fixed) / PPP (float + fixed) positioning, IONEX slant delay, SGP4 and numerical orbit propagation, RINEX observation/navigation/clock parsing, CRINEX (Hatanaka) decoding, observable-domain math (carrier combinations, cycle slips, Hatch smoothing, weighting, velocity, GPS C/A signal), and the astro domain (scale-tagged time, frame transforms, Sun/Moon ephemerides, eclipse / body angles, DOP, passes / visibility, conjunction + collision probability, CDM / OMM / ANTEX parsing, RF link budget)",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neilberkman/sidereon-wasm.git"
+  },
+  "homepage": "https://github.com/neilberkman/sidereon-wasm#readme",
+  "bugs": "https://github.com/neilberkman/sidereon-wasm/issues",
+  "exports": {
+    ".": {
+      "types": "./pkg/sidereon.d.ts",
+      "import": "./pkg/sidereon.js",
+      "require": "./pkg-node/sidereon.js"
+    },
+    "./types": "./types/sidereon-extra.d.ts"
+  },
+  "types": "./pkg/sidereon.d.ts",
+  "files": [
+    "pkg/sidereon.js",
+    "pkg/sidereon.d.ts",
+    "pkg/sidereon_bg.wasm",
+    "pkg/sidereon_bg.wasm.d.ts",
+    "pkg-node/package.json",
+    "pkg-node/sidereon.js",
+    "pkg-node/sidereon.d.ts",
+    "pkg-node/sidereon_bg.wasm",
+    "pkg-node/sidereon_bg.wasm.d.ts",
+    "types/sidereon-extra.d.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "wasm-pack build --target web --out-dir pkg --out-name sidereon && wasm-pack build --target nodejs --out-dir pkg-node --out-name sidereon && node scripts/postbuild.mjs",
+    "test": "node --test",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . && prettier --check \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"*.json\" \"eslint.config.js\"",
+    "format": "prettier --write \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"*.json\" \"eslint.config.js\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.6.0",
+    "globals": "^17.7.0",
+    "prettier": "^3.9.1",
+    "typescript": "^6.0.3"
+  }
+}

@@ -1,0 +1,6 @@
+# Generated wasm-bindgen output and build artifacts.
+pkg/
+pkg-node/
+target/
+node_modules/
+Cargo.lock
