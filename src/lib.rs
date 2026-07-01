@@ -50,6 +50,7 @@ mod omm;
 mod opm;
 mod ppp;
 mod ppp_corrections;
+mod precise_samples;
 mod propagation;
 mod qc;
 mod raim;
@@ -161,6 +162,10 @@ pub use ppp::{
     PppFixedSolution, PppFloatSolution,
 };
 pub use ppp_corrections::ppp_corrections;
+pub use precise_samples::{
+    precise_ephemeris_samples_from_samples, sp3_precise_ephemeris_samples,
+    PreciseEphemerisSampleSource,
+};
 pub use propagation::{propagate_state, Ephemeris};
 pub use qc::FdeSolution;
 pub use raim::raim_fde_design_js;

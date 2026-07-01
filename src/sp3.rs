@@ -233,6 +233,18 @@ impl Sp3 {
     pub fn to_sp3_string(&self) -> String {
         self.inner.to_sp3_string()
     }
+
+    /// Predict geometric ranges for many `(satellite, receiver, epoch)` requests
+    /// against this ephemeris in one call. `requests` is an array of
+    /// `{ sat, receiverEcefM, tRxJ2000S }`; returns an array of
+    /// `{ geometricRangeM, satClockS, transmitTimeJ2000S, satPosEcefM }`
+    /// index-aligned to `requests`. The same call shape works on a
+    /// `PreciseEphemerisSampleSource`. Delegates to the serial reference kernel
+    /// `sidereon_core::observables::predict_ranges`.
+    #[wasm_bindgen(js_name = predictRanges)]
+    pub fn predict_ranges(&self, requests: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
+        crate::precise_samples::predict_ranges_over(&self.inner, requests, options)
+    }
 }
 
 /// Parse an SP3-c or SP3-d byte buffer (the full, already-decompressed file)

@@ -1112,7 +1112,7 @@ struct PredictOptionsInput {
     sagnac: Option<bool>,
 }
 
-fn predict_options(options: JsValue) -> Result<CorePredictOptions, JsValue> {
+pub(crate) fn predict_options(options: JsValue) -> Result<CorePredictOptions, JsValue> {
     let input: PredictOptionsInput = if options.is_undefined() || options.is_null() {
         PredictOptionsInput::default()
     } else {
