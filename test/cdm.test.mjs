@@ -155,7 +155,9 @@ test("CdmObject round-trips the full metadata block and velocity covariance", ()
   assert.equal(obj1.earthTides, meta.earthTides);
   assert.equal(obj1.intrackThrust, meta.intrackThrust);
   assert.equal(obj1.velocityCovarianceRtn.length, 15);
-  obj1.velocityCovarianceRtn.forEach((v, i) => assert.equal(f64Bits(v), f64Bits(velocityCovarianceRtn[i])));
+  obj1.velocityCovarianceRtn.forEach((v, i) =>
+    assert.equal(f64Bits(v), f64Bits(velocityCovarianceRtn[i])),
+  );
 
   // An object without a velocity-covariance block reports undefined for it.
   const obj2 = new CdmObject(
@@ -183,7 +185,9 @@ test("CdmObject round-trips the full metadata block and velocity covariance", ()
   assert.equal(ro.atmosphericModel, meta.atmosphericModel);
   assert.equal(ro.maneuverable, meta.maneuverable);
   assert.ok(ro.velocityCovarianceRtn, "velocity covariance survives the round trip");
-  ro.velocityCovarianceRtn.forEach((v, i) => assert.equal(f64Bits(v), f64Bits(velocityCovarianceRtn[i])));
+  ro.velocityCovarianceRtn.forEach((v, i) =>
+    assert.equal(f64Bits(v), f64Bits(velocityCovarianceRtn[i])),
+  );
 });
 
 test("CdmObject rejects a wrong-length velocity covariance", () => {

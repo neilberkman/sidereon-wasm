@@ -138,6 +138,25 @@ test("a single large fault is detected and excluded by name", async () => {
   assert.ok(fdeErr < biasedErr / 5.0, `FDE (${fdeErr.toFixed(2)} m) beats biased`);
 });
 
+test("the robust FDE driver accepts robust tuning and excludes the fault", async () => {
+  const sp3 = await loadFixtureSp3();
+  const { request } = scenario(sp3);
+  const faultIdx = Math.floor(request.observations.length / 2);
+  const faulted = request.observations.map((o, i) =>
+    i === faultIdx ? { ...o, pseudorangeM: o.pseudorangeM + 300.0 } : o,
+  );
+  const faultSat = request.observations[faultIdx].satelliteId;
+
+  const fde = sp3.sppRobustFdeDriver({
+    ...request,
+    observations: faulted,
+    robust: { huberK: 1.5, scaleFloorM: 3.0, maxOuter: 8, outerTolM: 1e-5 },
+  });
+  assert.ok(fde.excluded.includes(faultSat), `excluded ${faultSat}`);
+  assert.ok(!fde.usedSats.includes(faultSat));
+  assert.ok(fde.positionM.every(Number.isFinite));
+});
+
 test("an out-of-range RAIM probability is rejected", async () => {
   const sp3 = await loadFixtureSp3();
   const { request } = scenario(sp3);

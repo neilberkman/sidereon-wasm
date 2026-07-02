@@ -84,7 +84,8 @@ pub fn kurtosis(x: &[f64], fisher: Option<bool>, bias: Option<bool>) -> Result<f
 /// `sidereon_core::quality::normality::moments`.
 #[wasm_bindgen]
 pub fn moments(x: &[f64], fisher: Option<bool>, bias: Option<bool>) -> Result<JsValue, JsValue> {
-    let stats = core_moments(x, fisher.unwrap_or(true), bias.unwrap_or(true)).map_err(normality_err)?;
+    let stats =
+        core_moments(x, fisher.unwrap_or(true), bias.unwrap_or(true)).map_err(normality_err)?;
     to_object(&MomentStatsObject {
         mean: stats.mean,
         variance: stats.variance,

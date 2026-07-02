@@ -165,8 +165,8 @@ test("visibleFromSatellites filters by the elevation mask", () => {
 });
 
 test("visibleFromSatellites honors each Tle's opsmode (deep-space afspc != improved)", () => {
-  // Catalog 23599: deep-space, low inclination (incl 6.9 deg, ~322 min period) —
-  // the regime where the lyddane periodics make AFSPC vs improved genuinely
+  // Catalog 23599: deep-space, low inclination (incl 6.9 deg, ~322 min period).
+  // This is the regime where the lyddane periodics make AFSPC vs improved genuinely
   // diverge (same object the existing passes_opsmode regression uses). The
   // divergence grows with time since epoch, so evaluate ~120 days out, where the
   // two modes are bit-distinct at a single instant.
@@ -194,7 +194,7 @@ test("visibleFromSatellites honors each Tle's opsmode (deep-space afspc != impro
   assert.ok(
     f64Bits(improved[0].elevationDeg) !== f64Bits(afspc[0].elevationDeg) ||
       f64Bits(improved[0].azimuthDeg) !== f64Bits(afspc[0].azimuthDeg),
-    "deep-space improved vs afspc identical — opsmode not honored",
+    "deep-space improved vs afspc identical: opsmode not honored",
   );
 });
 

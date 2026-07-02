@@ -15,13 +15,15 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+use sidereon_core::bias::ClockReferenceObservables;
 use sidereon_core::ppp_corrections::{
-    build, CivilDateTime, OceanLoadingBlq, PoleTideOptions, PppCorrectionEpoch,
+    build, CivilDateTime, CodeBiasOptions, OceanLoadingBlq, PoleTideOptions, PppCorrectionEpoch,
     PppCorrectionObservation, PppCorrectionsError, PppCorrectionsOptions, SatelliteAntenna,
     SatelliteAntennaFrequency, SatelliteAntennaOptions, NUM_OCEAN_CONSTITUENTS,
 };
-use sidereon_core::GnssSatelliteId;
+use sidereon_core::{GnssSatelliteId, GnssSystem};
 
+use crate::bias::BiasSet;
 use crate::error::{engine_error, range_error, type_error};
 use crate::marshal::vec3_finite;
 use crate::sp3::Sp3;
@@ -33,11 +35,13 @@ fn ppp_err(err: PppCorrectionsError) -> JsValue {
     match err {
         PppCorrectionsError::InvalidInput { .. }
         | PppCorrectionsError::WindupFrequency { .. }
-        | PppCorrectionsError::SatelliteAntennaFrequency { .. } => range_error(&err.to_string()),
+        | PppCorrectionsError::SatelliteAntennaFrequency { .. }
+        | PppCorrectionsError::CodeBiasObservable { .. } => range_error(&err.to_string()),
         PppCorrectionsError::Epoch { .. }
         | PppCorrectionsError::Tide { .. }
         | PppCorrectionsError::PoleTide { .. }
-        | PppCorrectionsError::OceanLoading { .. } => engine_error(err),
+        | PppCorrectionsError::OceanLoading { .. }
+        | PppCorrectionsError::Bias { .. } => engine_error(err),
     }
 }
 
@@ -75,6 +79,8 @@ struct ObservationInput {
     satellite_id: String,
     freq1_hz: f64,
     freq2_hz: f64,
+    #[serde(default)]
+    glonass_channel: Option<i8>,
 }
 
 impl ObservationInput {
@@ -83,6 +89,7 @@ impl ObservationInput {
             sat: parse_sat(&self.satellite_id)?,
             freq1_hz: self.freq1_hz,
             freq2_hz: self.freq2_hz,
+            glonass_channel: self.glonass_channel,
         })
     }
 }
@@ -273,6 +280,83 @@ struct OptionsInput {
     ocean_loading: Option<OceanLoadingInput>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SatObservablePairInput {
+    sat: String,
+    obs1: String,
+    obs2: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemObservablePairInput {
+    system: String,
+    obs1: String,
+    obs2: String,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct CodeBiasInput {
+    used_observables_per_sat: Vec<SatObservablePairInput>,
+    used_observables_default: Vec<SystemObservablePairInput>,
+    clock_reference: Vec<SystemObservablePairInput>,
+}
+
+fn parse_system(value: &str) -> Result<GnssSystem, JsValue> {
+    match value {
+        "gps" => Ok(GnssSystem::Gps),
+        "glonass" => Ok(GnssSystem::Glonass),
+        "galileo" => Ok(GnssSystem::Galileo),
+        "beidou" => Ok(GnssSystem::BeiDou),
+        "qzss" => Ok(GnssSystem::Qzss),
+        "navic" => Ok(GnssSystem::Navic),
+        "sbas" => Ok(GnssSystem::Sbas),
+        other => Err(type_error(&format!("invalid GNSS system label {other:?}"))),
+    }
+}
+
+impl CodeBiasInput {
+    fn to_core(&self, bias_set: &BiasSet) -> Result<CodeBiasOptions, JsValue> {
+        Ok(CodeBiasOptions {
+            bias_set: bias_set.core(),
+            used_observables_per_sat: self
+                .used_observables_per_sat
+                .iter()
+                .map(|entry| {
+                    Ok((
+                        parse_sat(&entry.sat)?,
+                        (entry.obs1.clone(), entry.obs2.clone()),
+                    ))
+                })
+                .collect::<Result<_, JsValue>>()?,
+            used_observables_default: self
+                .used_observables_default
+                .iter()
+                .map(|entry| {
+                    Ok((
+                        parse_system(&entry.system)?,
+                        (entry.obs1.clone(), entry.obs2.clone()),
+                    ))
+                })
+                .collect::<Result<_, JsValue>>()?,
+            clock_reference: Some(ClockReferenceObservables {
+                per_system: self
+                    .clock_reference
+                    .iter()
+                    .map(|entry| {
+                        Ok((
+                            parse_system(&entry.system)?,
+                            (entry.obs1.clone(), entry.obs2.clone()),
+                        ))
+                    })
+                    .collect::<Result<_, JsValue>>()?,
+            }),
+        })
+    }
+}
+
 impl OptionsInput {
     fn to_core(&self) -> Result<PppCorrectionsOptions, JsValue> {
         Ok(PppCorrectionsOptions {
@@ -293,6 +377,7 @@ impl OptionsInput {
                 .as_ref()
                 .map(SatelliteAntennaOptionsInput::to_core)
                 .transpose()?,
+            code_bias: None,
         })
     }
 }
@@ -340,6 +425,7 @@ struct PppCorrectionsJs {
     windup_m: Vec<SatScalarJs>,
     sat_pco_ecef: Vec<SatVectorJs>,
     sat_pcv_m: Vec<SatScalarJs>,
+    code_bias_m: Vec<SatScalarJs>,
 }
 
 // --- entry point ------------------------------------------------------------
@@ -378,7 +464,45 @@ pub fn ppp_corrections(
         .collect::<Result<_, _>>()?;
     let core_options = opts.to_core()?;
 
-    let corrections = build(&sp3.inner, &core_epochs, receiver, &core_options).map_err(ppp_err)?;
+    build_to_js(sp3, &core_epochs, receiver, core_options)
+}
+
+#[wasm_bindgen(js_name = pppCorrectionsWithCodeBias)]
+pub fn ppp_corrections_with_code_bias(
+    sp3: &Sp3,
+    epochs: JsValue,
+    receiver_ecef_m: &[f64],
+    options: JsValue,
+    bias_set: &BiasSet,
+    code_bias: JsValue,
+) -> Result<JsValue, JsValue> {
+    let epochs: Vec<EpochInput> = serde_wasm_bindgen::from_value(epochs)
+        .map_err(|e| type_error(&format!("invalid PPP correction epochs: {e}")))?;
+    let opts: OptionsInput = if options.is_undefined() || options.is_null() {
+        OptionsInput::default()
+    } else {
+        serde_wasm_bindgen::from_value(options)
+            .map_err(|e| type_error(&format!("invalid PPP correction options: {e}")))?
+    };
+    let code_bias: CodeBiasInput = serde_wasm_bindgen::from_value(code_bias)
+        .map_err(|e| type_error(&format!("invalid code-bias options: {e}")))?;
+    let receiver = vec3_finite("receiverEcefM", receiver_ecef_m)?;
+    let core_epochs: Vec<PppCorrectionEpoch> = epochs
+        .iter()
+        .map(EpochInput::to_core)
+        .collect::<Result<_, _>>()?;
+    let mut core_options = opts.to_core()?;
+    core_options.code_bias = Some(code_bias.to_core(bias_set)?);
+    build_to_js(sp3, &core_epochs, receiver, core_options)
+}
+
+fn build_to_js(
+    sp3: &Sp3,
+    core_epochs: &[PppCorrectionEpoch],
+    receiver: [f64; 3],
+    core_options: PppCorrectionsOptions,
+) -> Result<JsValue, JsValue> {
+    let corrections = build(&sp3.inner, core_epochs, receiver, &core_options).map_err(ppp_err)?;
 
     let out = PppCorrectionsJs {
         tide: corrections
@@ -425,6 +549,15 @@ pub fn ppp_corrections(
             .collect(),
         sat_pcv_m: corrections
             .sat_pcv_m
+            .iter()
+            .map(|c| SatScalarJs {
+                sat: c.sat.to_string(),
+                epoch_index: c.epoch_index,
+                value_m: c.value_m,
+            })
+            .collect(),
+        code_bias_m: corrections
+            .code_bias_m
             .iter()
             .map(|c| SatScalarJs {
                 sat: c.sat.to_string(),

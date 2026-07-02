@@ -9,9 +9,12 @@
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::astro::angles::{
+    angular_separation as core_angular_separation,
+    angular_separation_coords as core_angular_separation_coords, beta_angle as core_beta_angle,
+    beta_angle_from_state as core_beta_angle_from_state,
     earth_angular_radius as core_earth_angular_radius, moon_angle as core_moon_angle,
-    phase_angle as core_phase_angle, sun_angle as core_sun_angle,
-    sun_elevation as core_sun_elevation,
+    phase_angle as core_phase_angle, position_angle as core_position_angle,
+    sun_angle as core_sun_angle, sun_elevation as core_sun_elevation,
 };
 use sidereon_core::astro::events::eclipse::{
     shadow_fraction as core_shadow_fraction, status as core_status, EclipseStatus,
@@ -179,4 +182,53 @@ pub fn earth_angular_radius(satellite_position_km: &[f64]) -> Result<Vec<f64>, J
     sats.iter()
         .map(|&sat| core_earth_angular_radius(sat).map_err(engine_error))
         .collect()
+}
+
+/// On-sky angle in degrees between two direction vectors.
+#[wasm_bindgen(js_name = angularSeparation)]
+pub fn angular_separation(a: &[f64], b: &[f64]) -> Result<f64, JsValue> {
+    let a = crate::marshal::vec3_finite("a", a)?;
+    let b = crate::marshal::vec3_finite("b", b)?;
+    core_angular_separation(a, b).map_err(engine_error)
+}
+
+/// On-sky angle in degrees between two `(lonDeg, latDeg)` direction pairs.
+#[wasm_bindgen(js_name = angularSeparationCoords)]
+pub fn angular_separation_coords(
+    a_lon_deg: f64,
+    a_lat_deg: f64,
+    b_lon_deg: f64,
+    b_lat_deg: f64,
+) -> Result<f64, JsValue> {
+    core_angular_separation_coords((a_lon_deg, a_lat_deg), (b_lon_deg, b_lat_deg))
+        .map_err(engine_error)
+}
+
+/// Position angle in degrees from North through East.
+#[wasm_bindgen(js_name = positionAngle)]
+pub fn position_angle(
+    from_lon_deg: f64,
+    from_lat_deg: f64,
+    to_lon_deg: f64,
+    to_lat_deg: f64,
+) -> Result<f64, JsValue> {
+    core_position_angle((from_lon_deg, from_lat_deg), (to_lon_deg, to_lat_deg))
+        .map_err(engine_error)
+}
+
+/// Solar beta angle in degrees from orbit normal and Sun vectors.
+#[wasm_bindgen(js_name = betaAngle)]
+pub fn beta_angle(orbit_normal: &[f64], sun: &[f64]) -> Result<f64, JsValue> {
+    let orbit_normal = crate::marshal::vec3_finite("orbitNormal", orbit_normal)?;
+    let sun = crate::marshal::vec3_finite("sun", sun)?;
+    core_beta_angle(orbit_normal, sun).map_err(engine_error)
+}
+
+/// Solar beta angle in degrees from an inertial state and Sun vector.
+#[wasm_bindgen(js_name = betaAngleFromState)]
+pub fn beta_angle_from_state(r: &[f64], v: &[f64], sun: &[f64]) -> Result<f64, JsValue> {
+    let r = crate::marshal::vec3_finite("r", r)?;
+    let v = crate::marshal::vec3_finite("v", v)?;
+    let sun = crate::marshal::vec3_finite("sun", sun)?;
+    core_beta_angle_from_state(r, v, sun).map_err(engine_error)
 }

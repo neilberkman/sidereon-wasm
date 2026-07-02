@@ -166,7 +166,7 @@ test("an MSM4 observation message built from scratch round-trips", () => {
   const back = decodeRtcmFrame(encodeRtcmFrame(msm)).message;
   assert.equal(back.type, "msm");
   assert.equal(back.messageNumber, 1074);
-  assert.equal(back.system, "gps");
+  assert.equal(back.system, "GPS");
   assert.equal(back.kind, "msm4");
   assert.equal(back.satellites.length, 1);
   assert.equal(back.signals.length, 1);

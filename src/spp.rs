@@ -27,15 +27,7 @@ struct SystemTdopJs {
 }
 
 fn system_label(system: GnssSystem) -> &'static str {
-    match system {
-        GnssSystem::Gps => "gps",
-        GnssSystem::Glonass => "glonass",
-        GnssSystem::Galileo => "galileo",
-        GnssSystem::BeiDou => "beidou",
-        GnssSystem::Qzss => "qzss",
-        GnssSystem::Navic => "navic",
-        GnssSystem::Sbas => "sbas",
-    }
+    system.as_str()
 }
 
 /// One pseudorange observation: `{ satelliteId: "G01", pseudorangeM: 2.3e7 }`.
@@ -227,6 +219,7 @@ fn build_solve_inputs(req: &SppRequest) -> Result<(SolveInputs, bool), JsValue> 
         },
         beidou_klobuchar: None,
         galileo_nequick: None,
+        sbas_iono: None,
         glonass_channels: req.glonass_channels.iter().copied().collect(),
         met: SurfaceMet {
             pressure_hpa: req.met.pressure_hpa,

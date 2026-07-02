@@ -21,8 +21,8 @@ use sidereon_core::astro::time::civil::j2000_seconds_from_split;
 use sidereon_core::astro::time::model::{Instant, InstantRepr, JulianDateSplit, TimeScale};
 use sidereon_core::constants::{J2000_JD, SECONDS_PER_DAY};
 use sidereon_core::ephemeris::{
-    PreciseEphemerisSample as CoreSample, PreciseEphemerisSamples as CoreSamples,
-    PreciseSamplesError,
+    sample as core_sample, EphemerisSampleStatus, PreciseEphemerisSample as CoreSample,
+    PreciseEphemerisSamples as CoreSamples, PreciseSamplesError,
 };
 use sidereon_core::observables::{
     predict_ranges as core_predict_ranges, ObservableEphemerisSource, RangePrediction,
@@ -31,6 +31,7 @@ use sidereon_core::observables::{
 use sidereon_core::GnssSatelliteId;
 
 use crate::error::{engine_error, range_error, type_error};
+use crate::rinex_nav::BroadcastEphemeris;
 use crate::sp3::Sp3;
 
 fn parse_sat(token: &str) -> Result<GnssSatelliteId, JsValue> {
@@ -203,6 +204,77 @@ struct RangePredictionJs {
     sat_clock_s: Option<f64>,
     transmit_time_j2000_s: f64,
     sat_pos_ecef_m: [f64; 3],
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EphemerisSampleRowJs {
+    sat: String,
+    epoch_j2000_s: f64,
+    status: &'static str,
+    position_ecef_m: Option<[f64; 3]>,
+    clock_s: Option<f64>,
+}
+
+fn sample_status_label(status: EphemerisSampleStatus) -> &'static str {
+    match status {
+        EphemerisSampleStatus::Valid => "valid",
+        EphemerisSampleStatus::Gap => "gap",
+    }
+}
+
+fn sample_over(
+    source: &dyn ObservableEphemerisSource,
+    satellites: Vec<String>,
+    start_j2000_s: f64,
+    stop_j2000_s: f64,
+    step_s: f64,
+) -> Result<JsValue, JsValue> {
+    let satellites = satellites
+        .iter()
+        .map(|sat| parse_sat(sat))
+        .collect::<Result<Vec<_>, _>>()?;
+    let rows = core_sample(source, &satellites, start_j2000_s, stop_j2000_s, step_s)
+        .map_err(engine_error)?;
+    let out: Vec<EphemerisSampleRowJs> = rows
+        .into_iter()
+        .map(|row| EphemerisSampleRowJs {
+            sat: row.sat.to_string(),
+            epoch_j2000_s: row.epoch_j2000_s,
+            status: sample_status_label(row.status),
+            position_ecef_m: row.position_ecef_m,
+            clock_s: row.clock_s,
+        })
+        .collect();
+    to_js(&out)
+}
+
+#[wasm_bindgen(js_name = sampleSp3Ephemeris)]
+pub fn sample_sp3_ephemeris(
+    sp3: &Sp3,
+    satellites: Vec<String>,
+    start_j2000_s: f64,
+    stop_j2000_s: f64,
+    step_s: f64,
+) -> Result<JsValue, JsValue> {
+    sample_over(&sp3.inner, satellites, start_j2000_s, stop_j2000_s, step_s)
+}
+
+#[wasm_bindgen(js_name = sampleBroadcastEphemeris)]
+pub fn sample_broadcast_ephemeris(
+    broadcast: &BroadcastEphemeris,
+    satellites: Vec<String>,
+    start_j2000_s: f64,
+    stop_j2000_s: f64,
+    step_s: f64,
+) -> Result<JsValue, JsValue> {
+    sample_over(
+        &broadcast.inner,
+        satellites,
+        start_j2000_s,
+        stop_j2000_s,
+        step_s,
+    )
 }
 
 /// Predict geometric ranges for many `(satellite, receiver, epoch)` requests in

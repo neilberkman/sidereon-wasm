@@ -14,28 +14,34 @@ use sidereon_core::rtcm::{
     decode_frame as core_decode_frame, decode_messages as core_decode_messages,
     message_number as core_message_number, AntennaDescriptor, FrameScanner as CoreFrameScanner,
     GlonassEphemeris, GpsEphemeris, Message, MsmHeader, MsmKind, MsmMessage, MsmSatellite,
-    MsmSignal, StationCoordinates, UnsupportedMessage,
+    MsmSignal, SsrClockRecord, SsrCodeBiasRecord, SsrHeader, SsrKind, SsrMessage, SsrOrbitRecord,
+    SsrPhaseBiasRecord, SsrPhaseBiasSignal, StationCoordinates, UnsupportedMessage,
 };
 use sidereon_core::GnssSystem;
 
 use crate::error::{engine_error, type_error};
 
 fn gnss_system_label(system: GnssSystem) -> &'static str {
-    match system {
-        GnssSystem::Gps => "gps",
-        GnssSystem::Glonass => "glonass",
-        GnssSystem::Galileo => "galileo",
-        GnssSystem::BeiDou => "beidou",
-        GnssSystem::Qzss => "qzss",
-        GnssSystem::Navic => "navic",
-        GnssSystem::Sbas => "sbas",
-    }
+    system.as_str()
 }
 
 fn msm_kind_label(kind: MsmKind) -> &'static str {
     match kind {
         MsmKind::Msm4 => "msm4",
         MsmKind::Msm7 => "msm7",
+    }
+}
+
+fn ssr_kind_label(kind: SsrKind) -> &'static str {
+    match kind {
+        SsrKind::Orbit => "orbit",
+        SsrKind::Clock => "clock",
+        SsrKind::CombinedOrbitClock => "combinedOrbitClock",
+        SsrKind::CodeBias => "codeBias",
+        SsrKind::PhaseBias => "phaseBias",
+        SsrKind::Ura => "ura",
+        SsrKind::HighRateClock => "highRateClock",
+        SsrKind::Vtec => "vtec",
     }
 }
 
@@ -388,6 +394,180 @@ struct UnsupportedObject {
     body: Vec<u8>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SsrHeaderObject {
+    epoch_time_s: u32,
+    update_interval: u8,
+    multiple_message: bool,
+    iod_ssr: u8,
+    provider_id: u16,
+    solution_id: u8,
+    satellite_reference_datum: Option<bool>,
+    dispersive_bias_consistency: Option<bool>,
+    mw_consistency: Option<bool>,
+    satellite_count: u8,
+}
+
+impl From<&SsrHeader> for SsrHeaderObject {
+    fn from(h: &SsrHeader) -> Self {
+        Self {
+            epoch_time_s: h.epoch_time_s,
+            update_interval: h.update_interval,
+            multiple_message: h.multiple_message,
+            iod_ssr: h.iod_ssr,
+            provider_id: h.provider_id,
+            solution_id: h.solution_id,
+            satellite_reference_datum: h.satellite_reference_datum,
+            dispersive_bias_consistency: h.dispersive_bias_consistency,
+            mw_consistency: h.mw_consistency,
+            satellite_count: h.satellite_count,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SsrOrbitObject {
+    satellite_id: u8,
+    iode: u32,
+    delta_radial: i32,
+    delta_along: i32,
+    delta_cross: i32,
+    dot_delta_radial: i32,
+    dot_delta_along: i32,
+    dot_delta_cross: i32,
+}
+
+impl From<&SsrOrbitRecord> for SsrOrbitObject {
+    fn from(r: &SsrOrbitRecord) -> Self {
+        Self {
+            satellite_id: r.satellite_id,
+            iode: r.iode,
+            delta_radial: r.delta_radial,
+            delta_along: r.delta_along,
+            delta_cross: r.delta_cross,
+            dot_delta_radial: r.dot_delta_radial,
+            dot_delta_along: r.dot_delta_along,
+            dot_delta_cross: r.dot_delta_cross,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SsrClockObject {
+    satellite_id: u8,
+    c0: i32,
+    c1: i32,
+    c2: i32,
+}
+
+impl From<&SsrClockRecord> for SsrClockObject {
+    fn from(r: &SsrClockRecord) -> Self {
+        Self {
+            satellite_id: r.satellite_id,
+            c0: r.c0,
+            c1: r.c1,
+            c2: r.c2,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SsrCodeBiasObject {
+    satellite_id: u8,
+    biases: Vec<(u8, i16)>,
+}
+
+impl From<&SsrCodeBiasRecord> for SsrCodeBiasObject {
+    fn from(r: &SsrCodeBiasRecord) -> Self {
+        Self {
+            satellite_id: r.satellite_id,
+            biases: r.biases.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SsrPhaseBiasSignalObject {
+    signal_id: u8,
+    integer_indicator: u8,
+    wide_lane_integer_indicator: u8,
+    discontinuity_counter: u8,
+    bias: i32,
+}
+
+impl From<&SsrPhaseBiasSignal> for SsrPhaseBiasSignalObject {
+    fn from(r: &SsrPhaseBiasSignal) -> Self {
+        Self {
+            signal_id: r.signal_id,
+            integer_indicator: r.integer_indicator,
+            wide_lane_integer_indicator: r.wide_lane_integer_indicator,
+            discontinuity_counter: r.discontinuity_counter,
+            bias: r.bias,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SsrPhaseBiasObject {
+    satellite_id: u8,
+    yaw_angle: u16,
+    yaw_rate: i8,
+    biases: Vec<SsrPhaseBiasSignalObject>,
+}
+
+impl From<&SsrPhaseBiasRecord> for SsrPhaseBiasObject {
+    fn from(r: &SsrPhaseBiasRecord) -> Self {
+        Self {
+            satellite_id: r.satellite_id,
+            yaw_angle: r.yaw_angle,
+            yaw_rate: r.yaw_rate,
+            biases: r
+                .biases
+                .iter()
+                .map(SsrPhaseBiasSignalObject::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SsrObject {
+    message_number: u16,
+    system: &'static str,
+    kind: &'static str,
+    header: SsrHeaderObject,
+    orbit: Vec<SsrOrbitObject>,
+    clock: Vec<SsrClockObject>,
+    code_bias: Vec<SsrCodeBiasObject>,
+    phase_bias: Vec<SsrPhaseBiasObject>,
+    ura: Vec<(u8, u8)>,
+    padding_bits: Vec<bool>,
+}
+
+impl From<&SsrMessage> for SsrObject {
+    fn from(m: &SsrMessage) -> Self {
+        Self {
+            message_number: m.message_number,
+            system: gnss_system_label(m.system),
+            kind: ssr_kind_label(m.kind),
+            header: SsrHeaderObject::from(&m.header),
+            orbit: m.orbit.iter().map(SsrOrbitObject::from).collect(),
+            clock: m.clock.iter().map(SsrClockObject::from).collect(),
+            code_bias: m.code_bias.iter().map(SsrCodeBiasObject::from).collect(),
+            phase_bias: m.phase_bias.iter().map(SsrPhaseBiasObject::from).collect(),
+            ura: m.ura.clone(),
+            padding_bits: m.padding_bits.clone(),
+        }
+    }
+}
+
 impl From<&UnsupportedMessage> for UnsupportedObject {
     fn from(u: &UnsupportedMessage) -> Self {
         Self {
@@ -405,6 +585,7 @@ enum MessageObject {
     AntennaDescriptor(AntennaObject),
     GpsEphemeris(GpsEphemerisObject),
     GlonassEphemeris(GlonassEphemerisObject),
+    Ssr(SsrObject),
     Unsupported(UnsupportedObject),
 }
 
@@ -422,6 +603,7 @@ impl From<&Message> for MessageObject {
             Message::GlonassEphemeris(e) => {
                 MessageObject::GlonassEphemeris(GlonassEphemerisObject::from(e))
             }
+            Message::Ssr(s) => MessageObject::Ssr(SsrObject::from(s)),
             Message::Unsupported(u) => MessageObject::Unsupported(UnsupportedObject::from(u)),
         }
     }

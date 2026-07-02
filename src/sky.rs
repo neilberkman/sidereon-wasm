@@ -14,9 +14,8 @@ use sidereon::passes::UtcInstant;
 use sidereon_core::astro::bodies::{
     find_moon_elevation_crossings as core_find_moon_elevation_crossings,
     find_moon_transits as core_find_moon_transits, moon_az_el as core_moon_az_el,
-    moon_illumination as core_moon_illumination,
-    sun_az_el as core_sun_az_el, BodyAzEl, MoonElevationCrossingKind, MoonElevationOptions,
-    MoonIllumination, MoonTransitKind,
+    moon_illumination as core_moon_illumination, sun_az_el as core_sun_az_el, BodyAzEl,
+    MoonElevationCrossingKind, MoonElevationOptions, MoonIllumination, MoonTransitKind,
 };
 use sidereon_core::astro::frames::transforms::GeodeticStationKm;
 
@@ -150,7 +149,9 @@ pub fn moon_elevation_deg(
 ) -> Result<f64, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
     let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
-    Ok(core_moon_az_el(&station, time).map_err(engine_error)?.elevation_deg)
+    Ok(core_moon_az_el(&station, time)
+        .map_err(engine_error)?
+        .elevation_deg)
 }
 
 /// Options for the Moon elevation crossings finder. Every field defaults to the
@@ -168,9 +169,13 @@ impl MoonElevationOptionsInput {
     fn to_core(&self) -> MoonElevationOptions {
         let d = MoonElevationOptions::default();
         MoonElevationOptions {
-            elevation_threshold_deg: self.elevation_threshold_deg.unwrap_or(d.elevation_threshold_deg),
+            elevation_threshold_deg: self
+                .elevation_threshold_deg
+                .unwrap_or(d.elevation_threshold_deg),
             step_seconds: self.step_seconds.unwrap_or(d.step_seconds),
-            time_tolerance_seconds: self.time_tolerance_seconds.unwrap_or(d.time_tolerance_seconds),
+            time_tolerance_seconds: self
+                .time_tolerance_seconds
+                .unwrap_or(d.time_tolerance_seconds),
         }
     }
 }
@@ -229,8 +234,8 @@ pub fn find_moon_elevation_crossings(
     };
     let start = UtcInstant::from_unix_microseconds(start_unix_us);
     let end = UtcInstant::from_unix_microseconds(end_unix_us);
-    let crossings =
-        core_find_moon_elevation_crossings(&station, start, end, opts.to_core()).map_err(engine_error)?;
+    let crossings = core_find_moon_elevation_crossings(&station, start, end, opts.to_core())
+        .map_err(engine_error)?;
     Ok(crossings
         .into_iter()
         .map(|c| MoonElevationCrossing {

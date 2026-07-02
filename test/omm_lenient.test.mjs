@@ -18,7 +18,7 @@ test("lenient build matches strict when every entry resolves", () => {
   assert.equal(lenient.skipped.length, 0);
   assert.deepEqual(lenient.records, strict);
   assert.ok(lenient.records.length > 0);
-  assert.ok(lenient.records.every((r) => r.system === "gps"));
+  assert.ok(lenient.records.every((r) => r.system === "GPS"));
 });
 
 test("lenient build skips entries of another system, keeping their identity", () => {

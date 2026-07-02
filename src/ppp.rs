@@ -69,6 +69,8 @@ struct ObservationInput {
     freq1_hz: f64,
     #[serde(default)]
     freq2_hz: f64,
+    #[serde(default)]
+    glonass_channel: Option<i8>,
 }
 
 impl ObservationInput {
@@ -83,6 +85,7 @@ impl ObservationInput {
             phase_m: self.phase_m,
             freq1_hz: self.freq1_hz,
             freq2_hz: self.freq2_hz,
+            glonass_channel: self.glonass_channel,
         })
     }
 }

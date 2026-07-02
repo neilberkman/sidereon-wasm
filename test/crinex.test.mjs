@@ -50,10 +50,7 @@ test("encode crinex round-trips through decode for v3 and v1 references", () => 
     assert.match(encoded, /CRINEX VERS {3}\/ TYPE/);
     assert.notEqual(encoded, reference);
     // decode(encode(rinex)) == rinex for any RINEX OBS text that round-trips.
-    assert.deepEqual(
-      splitlines(decodeCrinex(Buffer.from(encoded, "utf8"))),
-      splitlines(reference),
-    );
+    assert.deepEqual(splitlines(decodeCrinex(Buffer.from(encoded, "utf8"))), splitlines(reference));
   }
 });
 

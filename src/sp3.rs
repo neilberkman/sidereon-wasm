@@ -185,6 +185,18 @@ impl Sp3 {
         crate::qc::fde(&self.inner, request)
     }
 
+    /// Run the core robust-reweighted SPP driver under the RAIM/FDE exclusion loop.
+    ///
+    /// `request` is the FDE request with a `robust` object. The implementation
+    /// delegates to `sidereon_core::quality::spp_robust_fde_driver`.
+    #[wasm_bindgen(js_name = sppRobustFdeDriver)]
+    pub fn spp_robust_fde_driver(
+        &self,
+        request: JsValue,
+    ) -> Result<crate::qc::FdeSolution, JsValue> {
+        crate::qc::fde(&self.inner, request)
+    }
+
     /// Estimate `other`'s per-epoch common clock offset relative to this product.
     ///
     /// The result is one row per matched epoch with enough common clocked

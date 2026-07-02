@@ -34,13 +34,58 @@ test("klobucharDelay rejects a wrong-length coefficient row", () => {
 
 test("galileoNequickDelay returns a positive finite delay (default coefficients)", () => {
   // A zero broadcast set selects the Galileo-recommended default ionisation.
-  const delay = galileoNequickDelay(0, 0, 0, 40.0, -100.0, 0.0, 30.0, 2020, 6, 24, 12, 0, 0.0, L1_HZ);
+  const delay = galileoNequickDelay(
+    0,
+    0,
+    0,
+    40.0,
+    -100.0,
+    0.0,
+    30.0,
+    2020,
+    6,
+    24,
+    12,
+    0,
+    0.0,
+    L1_HZ,
+  );
   assert.ok(Number.isFinite(delay));
   assert.ok(delay > 0.0);
 });
 
 test("galileoNequickDelay responds to the broadcast coefficients", () => {
-  const base = galileoNequickDelay(0, 0, 0, 40.0, -100.0, 0.0, 30.0, 2020, 6, 24, 12, 0, 0.0, L1_HZ);
-  const hot = galileoNequickDelay(200, 0, 0, 40.0, -100.0, 0.0, 30.0, 2020, 6, 24, 12, 0, 0.0, L1_HZ);
+  const base = galileoNequickDelay(
+    0,
+    0,
+    0,
+    40.0,
+    -100.0,
+    0.0,
+    30.0,
+    2020,
+    6,
+    24,
+    12,
+    0,
+    0.0,
+    L1_HZ,
+  );
+  const hot = galileoNequickDelay(
+    200,
+    0,
+    0,
+    40.0,
+    -100.0,
+    0.0,
+    30.0,
+    2020,
+    6,
+    24,
+    12,
+    0,
+    0.0,
+    L1_HZ,
+  );
   assert.ok(hot > base);
 });

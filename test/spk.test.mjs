@@ -23,7 +23,7 @@ const EROS = 20000433;
 const SUN = 10;
 const SPK_TYPE_21 = 21;
 
-// (et seconds past J2000 TDB, [x, y, z, vx, vy, vz]) km, km/s — CSPICE reference.
+// (et seconds past J2000 TDB, [x, y, z, vx, vy, vz]) km, km/s, CSPICE reference.
 const REFERENCE = [
   [
     757339200.0,

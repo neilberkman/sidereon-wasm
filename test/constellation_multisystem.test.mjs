@@ -22,7 +22,7 @@ test("fromCelestrakJson dispatches per system and resolves GLONASS slots + FDMA 
   assert.ok(records.length > 0);
   // Every record is a GLONASS R-token with a resolved FDMA channel in [-7, 6].
   for (const r of records) {
-    assert.equal(r.system, "glonass");
+    assert.equal(r.system, "GLONASS");
     assert.ok(r.sp3Id.startsWith("R"));
     assert.equal(typeof r.fdmaChannel, "number");
     assert.ok(r.fdmaChannel >= -7 && r.fdmaChannel <= 6);
@@ -67,5 +67,5 @@ test("validate reports duplicate / inactive findings as system-keyed pairs", () 
   // Inject a duplicate slot and confirm the pair shape carries the system.
   const dup = [records[0], { ...records[0] }];
   const dupReport = validate(dup);
-  assert.deepEqual(dupReport.duplicatePrns, [{ system: "glonass", prn: records[0].prn }]);
+  assert.deepEqual(dupReport.duplicatePrns, [{ system: "GLONASS", prn: records[0].prn }]);
 });

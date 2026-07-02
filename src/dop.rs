@@ -335,7 +335,8 @@ pub fn dop_with_convention_js(
         .iter()
         .map(|r| LineOfSight::new(r[0], r[1], r[2]))
         .collect();
-    let dop = dop_with_convention(&los, &weights, receiver.to_core()?, convention).map_err(dop_err)?;
+    let dop =
+        dop_with_convention(&los, &weights, receiver.to_core()?, convention).map_err(dop_err)?;
     Ok(dop.into())
 }
 

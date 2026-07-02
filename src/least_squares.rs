@@ -21,7 +21,12 @@ use crate::error::{engine_error, range_error, type_error};
 /// Reshape a flat row-major `(m, n)` buffer into the core's column-major
 /// `DMatrix`, rejecting a length mismatch (`TypeError`) and any non-finite entry
 /// (`RangeError`).
-fn matrix_from_flat(name: &str, values: &[f64], m: usize, n: usize) -> Result<DMatrix<f64>, JsValue> {
+fn matrix_from_flat(
+    name: &str,
+    values: &[f64],
+    m: usize,
+    n: usize,
+) -> Result<DMatrix<f64>, JsValue> {
     let expected = m
         .checked_mul(n)
         .ok_or_else(|| range_error(&format!("{name} dimensions m*n overflow")))?;

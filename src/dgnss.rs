@@ -268,6 +268,7 @@ pub fn solve(eph: &CoreSp3, request: JsValue) -> Result<DgnssSolution, JsValue> 
         },
         beidou_klobuchar: None,
         galileo_nequick: None,
+        sbas_iono: None,
         glonass_channels: BTreeMap::new(),
         met: SurfaceMet {
             pressure_hpa: 1013.25,

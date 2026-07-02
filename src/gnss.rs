@@ -64,19 +64,10 @@ pub fn gnss_system_letter(system: GnssSystem) -> String {
     CoreGnssSystem::from(system).letter().to_string()
 }
 
-/// Stable lower-case display label for a constellation, e.g. `"gps"`.
+/// Canonical core display label for a constellation, e.g. `"GPS"`.
 #[wasm_bindgen(js_name = gnssSystemLabel)]
 pub fn gnss_system_label(system: GnssSystem) -> String {
-    match system {
-        GnssSystem::Gps => "gps",
-        GnssSystem::Glonass => "glonass",
-        GnssSystem::Galileo => "galileo",
-        GnssSystem::BeiDou => "beidou",
-        GnssSystem::Qzss => "qzss",
-        GnssSystem::Navic => "navic",
-        GnssSystem::Sbas => "sbas",
-    }
-    .to_string()
+    CoreGnssSystem::from(system).as_str().to_string()
 }
 
 /// A canonical GNSS carrier band. The JS value matches the variant order below.
@@ -166,5 +157,5 @@ impl From<CoreCarrierBand> for CarrierBand {
 /// Canonical lower-case carrier-band token, e.g. `"l1"`.
 #[wasm_bindgen(js_name = carrierBandName)]
 pub fn carrier_band_name(band: CarrierBand) -> String {
-    CoreCarrierBand::from(band).name().to_string()
+    CoreCarrierBand::from(band).as_str().to_string()
 }

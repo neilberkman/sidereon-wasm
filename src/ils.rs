@@ -3,9 +3,9 @@
 //!
 //! Thin marshaling over [`sidereon_core::ils`]. The float ambiguities cross as a
 //! `Float64Array`, the covariance as a row-major `number[][]`, and the result as
-//! a plain `IlsResult` object (serde). All search math — Gaussian elimination,
-//! LtDL decorrelation, the MLAMBDA depth-first search, scoring and the ratio test
-//! — lives in `sidereon-core`; this module adds no modeling of its own. The fixed
+//! a plain `IlsResult` object (serde). All search math, including Gaussian
+//! elimination, LtDL decorrelation, the MLAMBDA depth-first search, scoring, and
+//! the ratio test, lives in `sidereon-core`; this module adds no modeling of its own. The fixed
 //! integer vector is a small-magnitude cycle count, so it crosses as `number[]`
 //! (exact in f64), not a BigInt array.
 
@@ -96,7 +96,7 @@ fn result_to_js(result: CoreIlsResult) -> Result<JsValue, JsValue> {
 /// `covariance` is its `n x n` covariance as a row-major `number[][]`, and
 /// `ratioThreshold` is the ratio-test acceptance threshold (RTKLIB's default is
 /// `3.0`). Finds the true integer-least-squares optimum and runner-up for any
-/// positive-definite covariance — no search box, no combinatorial blow-up.
+/// positive-definite covariance. No search box, no combinatorial blow-up.
 /// Returns an `IlsResult`. Throws a `TypeError` on a malformed shape, a
 /// `RangeError` on a non-finite or out-of-domain input, and an `Error` on a
 /// singular covariance or a non-converging search.

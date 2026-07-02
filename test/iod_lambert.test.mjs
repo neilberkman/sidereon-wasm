@@ -7,12 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  iodGibbs,
-  iodHerrickGibbs,
-  iodGaussAngles,
-  lambertBattin,
-} from "../pkg-node/sidereon.js";
+import { iodGibbs, iodHerrickGibbs, iodGaussAngles, lambertBattin } from "../pkg-node/sidereon.js";
 
 const MU = 398600.4415; // km^3/s^2, Vallado reference suite value
 const R = 7000.0; // km
@@ -46,14 +41,7 @@ test("iodHerrickGibbs recovers the circular speed for closely-spaced samples", (
   const dt = (dtheta * Math.PI) / 180 / n; // seconds between samples
   const jd2 = 2451545.0;
   const dJd = dt / 86400.0;
-  const out = iodHerrickGibbs(
-    pos(-dtheta),
-    pos(0),
-    pos(dtheta),
-    jd2 - dJd,
-    jd2,
-    jd2 + dJd,
-  );
+  const out = iodHerrickGibbs(pos(-dtheta), pos(0), pos(dtheta), jd2 - dJd, jd2, jd2 + dJd);
   assert.ok(Math.abs(mag(out.velocityKmS) - SPEED) < 1e-3);
   assert.ok(out.velocityKmS[1] > 0);
 });

@@ -53,6 +53,6 @@ test("SppSolution.systemTdops carries one finite per-system entry, ascending", a
   const tdops = sol.systemTdops;
   // GPS-only fixture: a single constellation clock.
   assert.equal(tdops.length, 1);
-  assert.equal(tdops[0].system, "gps");
+  assert.equal(tdops[0].system, "GPS");
   assert.ok(Number.isFinite(tdops[0].tdop) && tdops[0].tdop > 0);
 });

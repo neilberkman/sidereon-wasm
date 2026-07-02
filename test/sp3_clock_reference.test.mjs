@@ -13,7 +13,14 @@ const shiftClockUs = (line, deltaUs) => {
 
 const shiftedProduct = (deltaUs) => {
   const text = fixture("sp3/degenerate_coincident_5sat.sp3").toString("utf8");
-  return loadSp3(Buffer.from(text.split("\n").map((line) => shiftClockUs(line, deltaUs)).join("\n")));
+  return loadSp3(
+    Buffer.from(
+      text
+        .split("\n")
+        .map((line) => shiftClockUs(line, deltaUs))
+        .join("\n"),
+    ),
+  );
 };
 
 test("SP3 clock reference offset and alignment delegate to the core pair", () => {

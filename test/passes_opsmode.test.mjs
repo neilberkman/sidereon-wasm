@@ -1,7 +1,7 @@
 // Regression: Tle.findPasses (and the passes inside visibilitySeries) must honor
 // the satellite's OpsMode, set at construction. Before the fix they routed
 // through the ElementSet-based core finder, which hardcodes OpsMode::Afspc, so an
-// "improved"-mode Tle silently got AFSPC passes — inconsistent with lookAngles,
+// "improved"-mode Tle silently got AFSPC passes, inconsistent with lookAngles,
 // which uses the satellite's real mode. Both now route through
 // find_passes_for_satellite(&self.satellite, ...), preserving opsmode.
 //
@@ -39,7 +39,7 @@ for (const mode of ["improved", "afspc"]) {
     assert.ok(passes.length >= 2, "expected several ISS passes in the window");
 
     // lookAngles already uses the satellite's real opsmode. The finder's
-    // max-elevation must reproduce lookAngles sampled at culmination — only true
+    // max-elevation must reproduce lookAngles sampled at culmination, only true
     // if findPasses uses the same satellite (not the hardcoded-AFSPC element set).
     const culms = passes.map((p) => p.culminationUnixUs);
     const looks = t.lookAngles(s, BigInt64Array.from(culms));
@@ -62,7 +62,7 @@ const DS_END = DS_START + 24n * 3600n * 1000000n;
 const dsPasses = (mode) =>
   new Tle(DS_L1, DS_L2, mode).findPasses(station(), DS_START, DS_END, MASK, STEP);
 
-test("deep-space findPasses(improved) differs from findPasses(afspc) — opsmode is honored", () => {
+test("deep-space findPasses(improved) differs from findPasses(afspc): opsmode is honored", () => {
   const improved = dsPasses("improved");
   const afspc = dsPasses("afspc");
 
@@ -74,7 +74,7 @@ test("deep-space findPasses(improved) differs from findPasses(afspc) — opsmode
   const elevsDiffer = improved.some((p, i) => p.maxElevationDeg !== afspc[i].maxElevationDeg);
   assert.ok(
     culmsDiffer && elevsDiffer,
-    "improved vs afspc passes were identical — findPasses is ignoring opsmode",
+    "improved vs afspc passes were identical: findPasses is ignoring opsmode",
   );
 });
 
@@ -100,7 +100,7 @@ test("deep-space findPasses tracks the satellite's own mode, not hardcoded AFSPC
     assert.notEqual(
       p.maxElevationDeg,
       lookAfspc.elevationDeg[i],
-      `pass ${i} max elevation equals the AFSPC value — opsmode not honored`,
+      `pass ${i} max elevation equals the AFSPC value: opsmode not honored`,
     );
   });
 });

@@ -6,11 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  solidEarthTide,
-  oceanTideLoading,
-  solidEarthPoleTide,
-} from "../pkg-node/sidereon.js";
+import { solidEarthTide, oceanTideLoading, solidEarthPoleTide } from "../pkg-node/sidereon.js";
 
 // A mid-latitude ITRF station and coarse geocentric Sun/Moon directions (m).
 const STATION = Float64Array.from([4517590.0, 837270.0, 4527420.0]);

@@ -15,6 +15,7 @@ use sidereon::sgp4::{parse_tle_file_with_opsmode, OpsMode, Satellite};
 use sidereon::tle::{
     encode as encode_tle, parse as parse_tle, ChecksumWarning as CoreChecksumWarning, TleElements,
 };
+use sidereon_core::geometry::visible_at_elevation_mask;
 
 use crate::error::{engine_error, range_error, type_error};
 use crate::marshal::instants;
@@ -344,7 +345,7 @@ impl Tle {
             range_km: looks.iter().map(|l| l.range_km).collect(),
             visible: looks
                 .iter()
-                .map(|l| u8::from(l.elevation_deg >= mask))
+                .map(|l| u8::from(visible_at_elevation_mask(l.elevation_deg, mask)))
                 .collect(),
             passes: passes.iter().map(SatellitePass::from).collect(),
         })

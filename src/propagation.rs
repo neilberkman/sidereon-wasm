@@ -13,6 +13,7 @@ use sidereon::propagator::{
     propagate_states, IntegratorKind, PropagationConfig, PropagationForceModel,
 };
 use sidereon::state::CartesianState;
+use sidereon_core::astro::forces::{DragParameters, SpaceWeather};
 
 use crate::error::{engine_error, range_error, type_error};
 
@@ -46,6 +47,82 @@ struct PropagateRequest {
     max_steps: Option<u32>,
     #[serde(default)]
     mu_km3_s2: Option<f64>,
+    #[serde(default)]
+    drag: Option<DragInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct SpaceWeatherInput {
+    f107: Option<f64>,
+    f107a: Option<f64>,
+    ap: Option<f64>,
+}
+
+impl Default for SpaceWeatherInput {
+    fn default() -> Self {
+        Self {
+            f107: None,
+            f107a: None,
+            ap: None,
+        }
+    }
+}
+
+impl SpaceWeatherInput {
+    fn to_core(&self) -> SpaceWeather {
+        let defaults = SpaceWeather::default();
+        SpaceWeather {
+            f107: self.f107.unwrap_or(defaults.f107),
+            f107a: self.f107a.unwrap_or(defaults.f107a),
+            ap: self.ap.unwrap_or(defaults.ap),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DragInput {
+    #[serde(default)]
+    bc_factor_m2_kg: Option<f64>,
+    #[serde(default)]
+    ballistic_coefficient_kg_m2: Option<f64>,
+    #[serde(default)]
+    cd: Option<f64>,
+    #[serde(default)]
+    area_m2: Option<f64>,
+    #[serde(default)]
+    mass_kg: Option<f64>,
+    #[serde(default)]
+    cutoff_altitude_km: Option<f64>,
+    #[serde(default)]
+    space_weather: SpaceWeatherInput,
+}
+
+impl DragInput {
+    fn to_core(&self) -> Result<DragParameters, JsValue> {
+        let cutoff = self
+            .cutoff_altitude_km
+            .unwrap_or(sidereon_core::astro::forces::DragForce::DEFAULT_REENTRY_ALTITUDE_KM);
+        let sw = self.space_weather.to_core();
+        if let Some(bc_factor) = self.bc_factor_m2_kg {
+            return DragParameters::from_bc_factor_m2_kg(bc_factor, sw, cutoff)
+                .map_err(engine_error);
+        }
+        if let Some(bc) = self.ballistic_coefficient_kg_m2 {
+            return DragParameters::from_ballistic_coefficient(bc, sw, cutoff)
+                .map_err(engine_error);
+        }
+        match (self.cd, self.area_m2, self.mass_kg) {
+            (Some(cd), Some(area_m2), Some(mass_kg)) => {
+                DragParameters::from_area_mass(cd, area_m2, mass_kg, sw, cutoff)
+                    .map_err(engine_error)
+            }
+            _ => Err(type_error(
+                "drag requires bcFactorM2Kg, ballisticCoefficientKgM2, or cd/areaM2/massKg",
+            )),
+        }
+    }
 }
 
 /// Map a `forceModel` string to the driver's high-level choice. Defaults to
@@ -123,6 +200,7 @@ pub fn propagate_state(request: JsValue) -> Result<Ephemeris, JsValue> {
         mu_km3_s2: req.mu_km3_s2,
         integrator: integrator_kind(req.integrator.as_deref())?,
         options,
+        drag: req.drag.as_ref().map(DragInput::to_core).transpose()?,
     };
 
     let states = propagate_states(&config, &req.times_s).map_err(engine_error)?;

@@ -24,29 +24,19 @@ use sidereon_core::GnssSystem;
 
 use crate::error::{engine_error, type_error};
 
-// ── system <-> label ─────────────────────────────────────────────────────────
-
 fn system_label(system: GnssSystem) -> &'static str {
-    match system {
-        GnssSystem::Gps => "gps",
-        GnssSystem::Glonass => "glonass",
-        GnssSystem::Galileo => "galileo",
-        GnssSystem::BeiDou => "beidou",
-        GnssSystem::Qzss => "qzss",
-        GnssSystem::Navic => "navic",
-        GnssSystem::Sbas => "sbas",
-    }
+    system.as_str()
 }
 
 fn system_from_label(label: &str) -> Result<GnssSystem, JsValue> {
     match label {
-        "gps" => Ok(GnssSystem::Gps),
-        "glonass" => Ok(GnssSystem::Glonass),
-        "galileo" => Ok(GnssSystem::Galileo),
-        "beidou" => Ok(GnssSystem::BeiDou),
-        "qzss" => Ok(GnssSystem::Qzss),
-        "navic" => Ok(GnssSystem::Navic),
-        "sbas" => Ok(GnssSystem::Sbas),
+        "gps" | "GPS" => Ok(GnssSystem::Gps),
+        "glonass" | "GLONASS" => Ok(GnssSystem::Glonass),
+        "galileo" | "Galileo" => Ok(GnssSystem::Galileo),
+        "beidou" | "BeiDou" => Ok(GnssSystem::BeiDou),
+        "qzss" | "QZSS" => Ok(GnssSystem::Qzss),
+        "navic" | "NavIC" => Ok(GnssSystem::Navic),
+        "sbas" | "SBAS" => Ok(GnssSystem::Sbas),
         other => Err(type_error(&format!("unknown GNSS system label {other:?}"))),
     }
 }
@@ -531,7 +521,7 @@ struct CatalogJs {
 /// skipping (rather than throwing on) entries that do not resolve.
 ///
 /// The lenient sibling of [`fromCelestrakJson`]: feed it a raw combined CelesTrak
-/// `gnss` feed and it returns `{ records, skipped }` — `records` is the `Record[]`
+/// `gnss` feed and it returns `{ records, skipped }`. `records` is the `Record[]`
 /// for `system` (the same shape `fromCelestrakJson` returns, sorted by
 /// `(system, prn)`), and `skipped` is a `SkippedOmm[]` of the entries whose
 /// `OBJECT_NAME` did not resolve to a PRN for `system` (another constellation's

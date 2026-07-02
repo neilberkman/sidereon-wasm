@@ -15,8 +15,9 @@ use wasm_bindgen::prelude::*;
 
 use sidereon_core::ephemeris::Sp3 as CoreSp3;
 use sidereon_core::positioning::{
-    Corrections, EphemerisSource, KlobucharCoeffs, Observation, ReceiverSolution, SolveInputs,
-    SurfaceMet,
+    Corrections, EphemerisSource, KlobucharCoeffs, Observation, ReceiverSolution, RobustConfig,
+    SolveInputs, SurfaceMet, DEFAULT_HUBER_K, DEFAULT_ROBUST_MAX_OUTER, DEFAULT_ROBUST_OUTER_TOL_M,
+    DEFAULT_ROBUST_SCALE_FLOOR_M,
 };
 use sidereon_core::quality::{
     self, FdeError, FdeOptions, FdeSppError, FdeSppOptions, RaimOptions, RaimWeights,
@@ -110,6 +111,48 @@ struct FdeRequest {
     /// Optional PDOP ceiling applied to each candidate solution.
     #[serde(default)]
     max_pdop: Option<f64>,
+    #[serde(default)]
+    robust: Option<RobustInput>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct RobustInput {
+    huber_k: Option<f64>,
+    scale_floor_m: Option<f64>,
+    max_outer: Option<usize>,
+    outer_tol_m: Option<f64>,
+}
+
+impl RobustInput {
+    fn to_config(&self) -> Result<RobustConfig, JsValue> {
+        let huber_k = self.huber_k.unwrap_or(DEFAULT_HUBER_K);
+        let scale_floor_m = self.scale_floor_m.unwrap_or(DEFAULT_ROBUST_SCALE_FLOOR_M);
+        let outer_tol_m = self.outer_tol_m.unwrap_or(DEFAULT_ROBUST_OUTER_TOL_M);
+        let max_outer = self.max_outer.unwrap_or(DEFAULT_ROBUST_MAX_OUTER);
+        if !(huber_k.is_finite() && huber_k > 0.0) {
+            return Err(range_error("robust.huberK must be finite and positive"));
+        }
+        if !(scale_floor_m.is_finite() && scale_floor_m > 0.0) {
+            return Err(range_error(
+                "robust.scaleFloorM must be finite and positive",
+            ));
+        }
+        if !(outer_tol_m.is_finite() && outer_tol_m >= 0.0) {
+            return Err(range_error(
+                "robust.outerTolM must be finite and non-negative",
+            ));
+        }
+        if max_outer < 1 {
+            return Err(range_error("robust.maxOuter must be at least 1"));
+        }
+        Ok(RobustConfig {
+            huber_k,
+            scale_floor_m,
+            max_outer,
+            outer_tol_m,
+        })
+    }
 }
 
 fn default_true() -> bool {
@@ -262,6 +305,7 @@ pub fn fde(eph: &CoreSp3, request: JsValue) -> Result<FdeSolution, JsValue> {
         },
         beidou_klobuchar: None,
         galileo_nequick: None,
+        sbas_iono: None,
         glonass_channels: req.glonass_channels.iter().copied().collect(),
         met: SurfaceMet {
             pressure_hpa: req.met.pressure_hpa,
@@ -284,12 +328,22 @@ pub fn fde(eph: &CoreSp3, request: JsValue) -> Result<FdeSolution, JsValue> {
         },
     };
 
-    let result = quality::fde_spp(
-        eph as &dyn EphemerisSource,
-        &inputs,
-        req.with_geodetic,
-        &options,
-    )
+    let result = if let Some(robust) = &req.robust {
+        quality::spp_robust_fde_driver(
+            eph as &dyn EphemerisSource,
+            &inputs,
+            req.with_geodetic,
+            robust.to_config()?,
+            &options,
+        )
+    } else {
+        quality::fde_spp(
+            eph as &dyn EphemerisSource,
+            &inputs,
+            req.with_geodetic,
+            &options,
+        )
+    }
     .map_err(fde_error_to_js)?;
 
     Ok(FdeSolution {

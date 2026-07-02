@@ -346,7 +346,7 @@ impl Sp3MergeReport {
     }
 
     /// Per-(epoch, satellite) agreement statistics for every accepted cell, in
-    /// output (epoch, then satellite) order — one entry per cell written to the
+    /// output (epoch, then satellite) order, one entry per cell written to the
     /// merged product.
     #[wasm_bindgen(getter)]
     pub fn agreement(&self) -> Vec<Sp3AgreementMetric> {

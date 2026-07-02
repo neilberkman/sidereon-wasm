@@ -19,7 +19,7 @@ import { fixtureJson } from "./helpers.mjs";
 // GPS L1 wavelength (metres) the fixture's ambiguities use.
 const L1_WAVELENGTH_M = 0.19029367279836487;
 const F_L1_HZ = 1575.42e6;
-const F_L2_HZ = 1227.60e6;
+const F_L2_HZ = 1227.6e6;
 
 const fx = fixtureJson("rtk_wtzr.json");
 

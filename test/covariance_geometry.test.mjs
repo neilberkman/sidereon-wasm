@@ -59,7 +59,10 @@ test("covarianceFromJacobian scales by the post-fit reduced chi-square", () => {
 
 test("covarianceFromJacobian rejects non-positive degrees of freedom", () => {
   // m == n: no redundancy.
-  assert.throws(() => covarianceFromJacobian(Float64Array.from([1, 0, 0, 1]), 2, 2, 0.0), RangeError);
+  assert.throws(
+    () => covarianceFromJacobian(Float64Array.from([1, 0, 0, 1]), 2, 2, 0.0),
+    RangeError,
+  );
 });
 
 test("normalCovariance rejects a rank-deficient Jacobian", () => {

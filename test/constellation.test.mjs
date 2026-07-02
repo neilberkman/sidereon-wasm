@@ -35,7 +35,7 @@ test("fromCelestrakJson derives PRN-sorted GPS records", () => {
   const prn3 = records.find((r) => r.prn === 3);
   assert.equal(prn3.noradId, 40294);
   assert.equal(prn3.sp3Id, "G03");
-  assert.equal(prn3.system, "gps");
+  assert.equal(prn3.system, "GPS");
   assert.equal(prn3.source.celestrak.blockType, "IIF");
 });
 
@@ -89,7 +89,7 @@ test("toCsv exports the compact mapping CSV", () => {
 test("validateAgainstSp3Ids reports inactive/unusable PRNs", () => {
   const merged = mergeNavcen(fromCelestrakJson(GPS_OPS), parseNavcen(NAVCEN));
   const report = validateAgainstSp3Ids(merged, ["G03", "G05", "G13"]);
-  assert.deepEqual(report.inactiveUnusablePrns, [{ system: "gps", prn: 19 }]);
+  assert.deepEqual(report.inactiveUnusablePrns, [{ system: "GPS", prn: 19 }]);
   assert.deepEqual(report.missingSp3Ids, []);
   assert.deepEqual(report.extraSp3Ids, []);
 });

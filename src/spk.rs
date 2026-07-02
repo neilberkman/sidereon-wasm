@@ -150,6 +150,12 @@ pub struct Spk {
     inner: CoreSpk,
 }
 
+impl Spk {
+    pub(crate) fn core(&self) -> &CoreSpk {
+        &self.inner
+    }
+}
+
 #[wasm_bindgen]
 impl Spk {
     /// Parse an SPK/DAF kernel from its raw bytes (the full, decompressed

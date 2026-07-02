@@ -20,7 +20,7 @@ use sidereon_core::frequencies::{
 };
 use sidereon_core::observables::{
     predict as core_predict, predict_batch as core_predict_batch, ObservableEphemerisSource,
-    PredictOptions as CorePredictOptions, PredictedObservables as CorePredicted, PredictRequest,
+    PredictOptions as CorePredictOptions, PredictRequest, PredictedObservables as CorePredicted,
 };
 use sidereon_core::quality::{
     self, PseudorangeVarianceModel as CoreVarModel, PseudorangeVarianceOptions as CoreVarOptions,

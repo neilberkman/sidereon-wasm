@@ -14,8 +14,11 @@
 //! one masked row at a time. rayon links in (it is an unconditional core
 //! dependency) but its runtime is never entered under wasm32.
 
+mod almanac;
+mod anomaly;
 mod antex;
 mod atmosphere;
+mod bias;
 mod bodies;
 mod broadcast_comparison;
 mod cdm;
@@ -27,6 +30,7 @@ mod dgnss;
 mod dop;
 mod doppler;
 mod elements;
+mod equinoctial;
 mod error;
 mod events;
 mod forces;
@@ -41,8 +45,8 @@ mod lambert;
 mod least_squares;
 mod lnav;
 mod marshal;
-mod normality;
 mod moving_baseline;
+mod normality;
 mod observables;
 mod observation;
 mod oem;
@@ -55,6 +59,7 @@ mod propagation;
 mod qc;
 mod raim;
 mod reduced_orbit;
+mod relative;
 mod rf;
 mod rinex_clock;
 mod rinex_nav;
@@ -62,20 +67,34 @@ mod rinex_obs;
 mod rtcm;
 mod rtk;
 mod rtk_arc;
+mod sbas;
 mod sgp4;
 mod sky;
 mod sp3;
 mod sp3_merge;
 mod spk;
 mod spp;
+mod ssr;
 mod staleness;
 mod tca;
+mod terrain;
 mod tides;
-mod tropo;
 mod trls;
+mod tropo;
 
+pub use almanac::{
+    lunar_solar_eclipses, lunar_solar_eclipses_spk, meridian_transits, meridian_transits_spk,
+    moon_phases, moon_phases_spk, planetary_events, seasons, seasons_spk,
+};
+pub use anomaly::{
+    eccentric_to_mean, eccentric_to_true, mean_to_eccentric, mean_to_true, propagate_kepler,
+    solve_kepler, true_to_eccentric, true_to_mean,
+};
 pub use antex::{load_antex, Antenna, Antex, AntexDateTime};
 pub use atmosphere::{atmosphere_density, AtmosphereDensity};
+pub use bias::{
+    load_bias_sinex, load_bias_sinex_lossy, load_code_dcb, load_code_dcb_lossy, BiasSet,
+};
 pub use bodies::{sun_moon_ecef_batch, sun_moon_eci, SunMoon};
 pub use cdm::{parse_cdm_kvn, parse_cdm_xml, Cdm, CdmObject};
 pub use conjunction::{
@@ -99,18 +118,23 @@ pub use dop::{
 };
 pub use doppler::{doppler_range_rate, doppler_shift_js, DopplerShift};
 pub use elements::{coe2rv, rv2coe};
-pub use events::{
-    earth_angular_radius, eclipse_status, moon_angle, phase_angle, shadow_fraction, sun_angle,
-    sun_elevation,
+pub use equinoctial::{
+    coe2eq, coe2mee, eq2coe, eq2rv, mee2coe, mee2rv, rv2eq, rv2mee, RetrogradeFactor,
 };
-pub use forces::{force_j2_acceleration, force_twobody_acceleration};
+pub use events::{
+    angular_separation, angular_separation_coords, beta_angle, beta_angle_from_state,
+    earth_angular_radius, eclipse_status, moon_angle, phase_angle, position_angle, shadow_fraction,
+    sun_angle, sun_elevation,
+};
+pub use forces::{
+    estimate_decay, force_j2_acceleration, force_twobody_acceleration, DragForce, SpaceWeather,
+};
 pub use frames::{
     civil_to_j2000_seconds, ecef_to_geodetic, gcrs_to_itrs, geodetic_to_ecef, gps_utc_offset_s,
     itrs_to_gcrs, j2000_seconds_to_civil, leap_second_table_info, leap_seconds, leap_seconds_batch,
     split_jd_to_j2000_seconds, tai_utc_offset_s, teme_to_gcrs, time_scale_abbrev,
-    timescale_offset_at_s_js,
-    timescale_offset_s_js, ut1_coverage_info, CivilDateTime, FrameStates, GnssWeekTow, Instant,
-    JulianDate, LeapSecondTable, TimeScale, Ut1Coverage,
+    timescale_offset_at_s_js, timescale_offset_s_js, ut1_coverage_info, CivilDateTime, FrameStates,
+    GnssWeekTow, Instant, JulianDate, LeapSecondTable, TimeScale, Ut1Coverage,
 };
 pub use geoid::{
     egm96_ellipsoidal_height_m, egm96_orthometric_height_m, egm96_undulation, ellipsoidal_height_m,
@@ -130,6 +154,7 @@ pub use lnav::{
     LnavDecoded, LnavSubframes,
 };
 pub use moving_baseline::{solve_moving_baseline, MovingBaselineSolution};
+pub use normality::{jarque_bera, kurtosis, moments, shapiro_wilk, skewness};
 pub use observables::{
     acquire, ca_chip, ca_code, carrier_frequency_hz, coherent_loss, coherent_loss_db, correlate,
     default_pair, default_spp_frequency_hz_js, detect_cycle_slips, doppler_to_range_rate, gamma,
@@ -144,10 +169,9 @@ pub use observables::{
     IonoFreeSmoothResult, PredictBatch, PredictedObservables, PseudorangeDropReason, RaimWeights,
     SatelliteVector, SlipReason, SlipResult, SmoothCodeResult, VelocitySolution,
 };
-pub use normality::{jarque_bera, kurtosis, moments, shapiro_wilk, skewness};
 pub use observation::{
-    parallactic_angle_deg, satellite_visual_magnitude, sub_observer_point, sub_solar_point,
-    terminator_latitude_deg,
+    observe, observe_barycentric_state, observe_spk_body, parallactic_angle_deg,
+    satellite_visual_magnitude, sub_observer_point, sub_solar_point, terminator_latitude_deg,
 };
 pub use oem::{
     parse_oem_kvn, parse_oem_xml, Oem, OemCovariance, OemMetadata, OemSegment, OemState,
@@ -162,9 +186,10 @@ pub use ppp::{
     PppFixedSolution, PppFloatSolution,
 };
 pub use ppp_corrections::ppp_corrections;
+pub use ppp_corrections::ppp_corrections_with_code_bias;
 pub use precise_samples::{
-    precise_ephemeris_samples_from_samples, sp3_precise_ephemeris_samples,
-    PreciseEphemerisSampleSource,
+    precise_ephemeris_samples_from_samples, sample_broadcast_ephemeris, sample_sp3_ephemeris,
+    sp3_precise_ephemeris_samples, PreciseEphemerisSampleSource,
 };
 pub use propagation::{propagate_state, Ephemeris};
 pub use qc::FdeSolution;
@@ -174,6 +199,10 @@ pub use reduced_orbit::{
     fit_reduced_orbit, fit_reduced_orbit_sp3, fit_reduced_orbit_tle, PiecewiseOrbit,
     PiecewiseOrbitSourceFit, ReducedOrbit, ReducedOrbitDrift, ReducedOrbitSourceFit,
     ReducedOrbitState,
+};
+pub use relative::{
+    cw_propagate, cw_stm, lvlh_rotation, mean_motion_circular, mean_motion_from_state,
+    relative_state, ric_rotation, rsw_rotation, rtn_rotation,
 };
 pub use rf::{cn0, dish_gain, eirp, fspl, wavelength, LinkBudget};
 pub use rinex_clock::{
@@ -200,6 +229,7 @@ pub use rtk_arc::{
     fix_wide_lane_rtk_arc_js, prepare_ionosphere_free_rtk_arc_js, solve_rtk_arc_js,
     solve_static_rtk_arc_js,
 };
+pub use sbas::{decode_sbas_message, sbas_corrected_state, solve_spp_sbas, SbasCorrectionStore};
 pub use sgp4::{
     parse_tle_file, propagate_batch, visible_from_satellites_js, ChecksumWarning, Constellation,
     FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles, NamedTle, ParsedTleFile,
@@ -213,6 +243,7 @@ pub use sp3::{load_sp3, Sp3, Sp3ClockReferenceOffset, Sp3Interpolation, Sp3State
 pub use sp3_merge::{merge_sp3, Sp3MergeFlag, Sp3MergeReport, Sp3MergeResult};
 pub use spk::{Spk, SpkSegment, SpkState};
 pub use spp::{SppBatchSolution, SppSolution};
+pub use ssr::{decode_ssr, ssr_corrected_state, SsrCorrectionStore};
 pub use staleness::{
     select_ionex_js, select_ionex_over_range_js, select_sp3_js, select_sp3_over_range_js,
     solve_with_fallback_js, IonexSelection, SourcedSolution, Sp3Selection,
@@ -220,10 +251,11 @@ pub use staleness::{
 pub use tca::{
     find_tca_candidates, find_tca_conjunctions, screen_tca_candidates, screen_tca_conjunctions,
 };
+pub use terrain::DtedTerrain;
 pub use tides::{ocean_tide_loading_js, solid_earth_pole_tide_js, solid_earth_tide_js};
-pub use tropo::{
-    tropo_mapping_factors, tropo_slant_delay, tropo_zenith_delay, MappingFactors, ZenithDelay,
-};
 pub use trls::{
     least_squares, least_squares_drop_one, LeastSquaresDropOneReport, LeastSquaresResult,
+};
+pub use tropo::{
+    tropo_mapping_factors, tropo_slant_delay, tropo_zenith_delay, MappingFactors, ZenithDelay,
 };
