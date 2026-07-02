@@ -191,6 +191,7 @@ impl BiasSet {
     }
 
     #[wasm_bindgen(js_name = codeBiasModelM)]
+    #[allow(clippy::too_many_arguments)]
     pub fn code_bias_model_m(
         &self,
         sat: &str,

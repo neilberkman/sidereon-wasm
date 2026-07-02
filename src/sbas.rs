@@ -90,6 +90,12 @@ pub struct SbasCorrectionStore {
     inner: CoreSbasCorrectionStore,
 }
 
+impl Default for SbasCorrectionStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[wasm_bindgen]
 impl SbasCorrectionStore {
     #[wasm_bindgen(constructor)]
@@ -129,6 +135,7 @@ impl SbasCorrectionStore {
     }
 
     #[wasm_bindgen(js_name = ionoSlantDelayM)]
+    #[allow(clippy::too_many_arguments)]
     pub fn iono_slant_delay_m(
         &self,
         geo: &str,

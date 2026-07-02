@@ -51,22 +51,12 @@ struct PropagateRequest {
     drag: Option<DragInput>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct SpaceWeatherInput {
     f107: Option<f64>,
     f107a: Option<f64>,
     ap: Option<f64>,
-}
-
-impl Default for SpaceWeatherInput {
-    fn default() -> Self {
-        Self {
-            f107: None,
-            f107a: None,
-            ap: None,
-        }
-    }
 }
 
 impl SpaceWeatherInput {

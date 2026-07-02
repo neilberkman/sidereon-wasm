@@ -6,7 +6,7 @@ use sidereon_core::positioning::EphemerisSource;
 use sidereon_core::rtcm::{decode_frame, Message, SsrKind, SsrMessage};
 use sidereon_core::ssr::{
     MissingCorrectionAction, SsrCorrectedEphemeris, SsrCorrectionStore as CoreSsrCorrectionStore,
-    SsrFallbackPolicy,
+    SsrFallbackPolicy, SsrSource as CoreSsrSource,
 };
 use sidereon_core::GnssSatelliteId;
 
@@ -23,6 +23,7 @@ struct CorrectedStateJs {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SsrOrbitJs {
+    source: &'static str,
     provider_id: u16,
     solution_id: u8,
     iode: u32,
@@ -40,6 +41,7 @@ struct SsrOrbitJs {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SsrClockJs {
+    source: &'static str,
     provider_id: u16,
     solution_id: u8,
     iod_ssr: u8,
@@ -134,6 +136,47 @@ struct SsrMessageJs {
     phase_bias: Vec<SsrPhaseBiasRecordJs>,
     ura: Vec<(u8, u8)>,
     padding_bit_count: usize,
+}
+
+/// Source stream for engineering-unit SSR corrections.
+#[wasm_bindgen]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SsrSource {
+    /// RTCM SSR messages.
+    RtcmSsr,
+    /// Galileo High Accuracy Service messages.
+    GalileoHas,
+}
+
+impl From<CoreSsrSource> for SsrSource {
+    fn from(source: CoreSsrSource) -> Self {
+        match source {
+            CoreSsrSource::RtcmSsr => Self::RtcmSsr,
+            CoreSsrSource::GalileoHas => Self::GalileoHas,
+        }
+    }
+}
+
+impl From<SsrSource> for CoreSsrSource {
+    fn from(source: SsrSource) -> Self {
+        match source {
+            SsrSource::RtcmSsr => Self::RtcmSsr,
+            SsrSource::GalileoHas => Self::GalileoHas,
+        }
+    }
+}
+
+fn source_label(source: CoreSsrSource) -> &'static str {
+    match source {
+        CoreSsrSource::RtcmSsr => "rtcmSsr",
+        CoreSsrSource::GalileoHas => "galileoHas",
+    }
+}
+
+/// Stable lower-camel-case SSR source token.
+#[wasm_bindgen(js_name = ssrSourceLabel)]
+pub fn ssr_source_label(source: SsrSource) -> String {
+    source_label(source.into()).to_string()
 }
 
 fn kind_label(kind: SsrKind) -> &'static str {
@@ -268,6 +311,12 @@ pub struct SsrCorrectionStore {
     inner: CoreSsrCorrectionStore,
 }
 
+impl Default for SsrCorrectionStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[wasm_bindgen]
 impl SsrCorrectionStore {
     #[wasm_bindgen(constructor)]
@@ -299,6 +348,7 @@ impl SsrCorrectionStore {
             return Ok(JsValue::NULL);
         };
         serde_wasm_bindgen::to_value(&SsrOrbitJs {
+            source: source_label(orbit.solution.source),
             provider_id: orbit.solution.provider_id,
             solution_id: orbit.solution.solution_id,
             iode: orbit.iode,
@@ -321,6 +371,7 @@ impl SsrCorrectionStore {
             return Ok(JsValue::NULL);
         };
         serde_wasm_bindgen::to_value(&SsrClockJs {
+            source: source_label(clock.solution.source),
             provider_id: clock.solution.provider_id,
             solution_id: clock.solution.solution_id,
             iod_ssr: clock.iod_ssr,

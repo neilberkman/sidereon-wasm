@@ -106,21 +106,42 @@ positions and scalar attributes out.
 
 The wasm surface mirrors the full breadth of the engine:
 
-- **Orbit propagation:** SGP4 from TLE and OMM, numerical propagation, batch
-  constellation propagation, pass prediction, look angles, coverage.
-- **GNSS positioning:** SPP, RTK (float/fixed), PPP (float/fixed), DGNSS, RAIM/FDE,
-  DOP, velocity.
+- **Orbit propagation:** SGP4 from TLE and OMM, numerical propagation with
+  selectable force models including atmospheric drag (space-weather driven) and
+  orbital decay estimation, Kepler two-body propagation, batch constellation
+  propagation, pass prediction, look angles, coverage.
+- **GNSS positioning:** SPP, RTK (float/fixed), PPP (float/fixed), DGNSS,
+  moving-baseline RTK, DOP, velocity, and a robust SPP driver that runs fault
+  detection and exclusion (RAIM/FDE) with iterative reweighting.
+- **GNSS corrections and biases:** SBAS message decoding with SBAS-corrected
+  solves, RTCM SSR orbit and clock correction streams, Bias-SINEX code and
+  phase biases (DCB/OSB).
 - **Ephemeris and time:** broadcast ephemeris and SP3 (load/interpolate/merge),
-  JPL SPK (DAF/.bsp) kernels, scale-aware time (`Instant` with GMST/GAST and
-  resolved TT/UT1/TDB), Earth orientation parameters.
+  source-agnostic precise ephemeris sampling (one sampling interface over SP3,
+  broadcast, or caller-supplied samples), JPL SPK (DAF/.bsp) kernels,
+  scale-aware time (`Instant` with GMST/GAST and resolved TT/UT1/TDB), Earth
+  orientation parameters.
 - **Geometry and events:** reference frames (TEME, GCRS, ITRS, geodetic, ECEF),
-  look angles, eclipse and shadow geometry, conjunction screening with collision
-  probability, initial orbit determination, orbital elements.
-- **Atmosphere:** Klobuchar and NeQuick-G ionosphere, IONEX slant delay,
-  troposphere models.
-- **RF link budget:** free-space path loss, EIRP, C/N0, antenna gain.
-- **Format parsing and serialization:** TLE/OMM, CCSDS, RINEX, CRINEX (Hatanaka),
-  SP3, IONEX, ANTEX, RTCM.
+  relative motion in RIC/RTN/LVLH frames with Clohessy-Wiltshire propagation,
+  look angles, eclipse and shadow geometry, angular separation, position angle,
+  phase angle, beta angle, conjunction screening with collision probability,
+  initial orbit determination, Lambert transfer solutions, orbital elements
+  with anomaly conversions and equinoctial / modified equinoctial forms.
+- **Observational astronomy:** apparent places (astrometric and apparent
+  RA/Dec plus topocentric azimuth/elevation with optional refraction) for the
+  Sun, Moon, and any SPK body; Moon rise/set and meridian-transit finding;
+  sub-solar and sub-observer points, day-night terminator, parallactic angle,
+  satellite visual magnitude.
+- **Almanac:** seasons, moon phases, lunar and solar eclipses, planetary
+  conjunctions and oppositions, Sun/Moon/planet meridian transits.
+- **Atmosphere and Earth models:** Klobuchar and NeQuick-G ionosphere, IONEX
+  slant delay, troposphere models, geoid undulation (EGM96), solid Earth and
+  pole tides, ocean tide loading, DTED terrain elevation lookup.
+- **RF link budget:** free-space path loss, EIRP, C/N0, antenna gain, Doppler
+  shift and range rate.
+- **Format parsing and serialization:** TLE/OMM, CCSDS (OEM/OPM/CDM), RINEX
+  observation/navigation/clock, CRINEX (Hatanaka), SP3, IONEX, ANTEX,
+  Bias-SINEX, RTCM.
 
 The binding adds no modeling of its own: every result is exactly what the engine
 computes. Failures surface as the JS exception you would expect (`Error` for

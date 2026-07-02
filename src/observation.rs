@@ -74,24 +74,13 @@ struct RefractionInput {
     temperature_c: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct ObserveOptionsInput {
     polar_motion: Option<PolarMotionInput>,
     refraction: Option<RefractionInput>,
     deflection: Option<bool>,
     aberration: Option<bool>,
-}
-
-impl Default for ObserveOptionsInput {
-    fn default() -> Self {
-        Self {
-            polar_motion: None,
-            refraction: None,
-            deflection: None,
-            aberration: None,
-        }
-    }
 }
 
 impl ObserveOptionsInput {

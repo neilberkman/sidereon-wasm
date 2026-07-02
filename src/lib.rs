@@ -243,7 +243,7 @@ pub use sp3::{load_sp3, Sp3, Sp3ClockReferenceOffset, Sp3Interpolation, Sp3State
 pub use sp3_merge::{merge_sp3, Sp3MergeFlag, Sp3MergeReport, Sp3MergeResult};
 pub use spk::{Spk, SpkSegment, SpkState};
 pub use spp::{SppBatchSolution, SppSolution};
-pub use ssr::{decode_ssr, ssr_corrected_state, SsrCorrectionStore};
+pub use ssr::{decode_ssr, ssr_corrected_state, ssr_source_label, SsrCorrectionStore, SsrSource};
 pub use staleness::{
     select_ionex_js, select_ionex_over_range_js, select_sp3_js, select_sp3_over_range_js,
     solve_with_fallback_js, IonexSelection, SourcedSolution, Sp3Selection,

@@ -9,6 +9,7 @@ import {
   GnssSystem,
   SbasCorrectionStore,
   SsrCorrectionStore,
+  SsrSource,
   carrierBandName,
   decodeSbasMessage,
   decodeSsr,
@@ -24,6 +25,7 @@ import {
   sbasCorrectedState,
   solveSppSbas,
   ssrCorrectedState,
+  ssrSourceLabel,
 } from "../pkg-node/sidereon.js";
 import { fixture, hexToF64 } from "./helpers.mjs";
 
@@ -66,6 +68,8 @@ test("GNSS system and carrier labels come from the core label tables", () => {
   assert.equal(gnssSystemLabel(GnssSystem.Galileo), "Galileo");
   assert.equal(carrierBandName(CarrierBand.L1), "l1");
   assert.equal(carrierBandName(CarrierBand.E5a), "e5a");
+  assert.equal(ssrSourceLabel(SsrSource.RtcmSsr), "rtcmSsr");
+  assert.equal(ssrSourceLabel(SsrSource.GalileoHas), "galileoHas");
 });
 
 test("Bias-SINEX and CODE DCB loaders expose oracle bias values", () => {
@@ -263,6 +267,8 @@ test("SSR decode, correction store, and corrected state route through core", () 
   const clock = store.clock(sat);
   assert.ok(orbit);
   assert.ok(clock);
+  assert.equal(orbit.source, "rtcmSsr");
+  assert.equal(clock.source, "rtcmSsr");
   assert.ok(Number.isFinite(orbit.radialM));
   assert.ok(Number.isFinite(clock.c0M));
 
