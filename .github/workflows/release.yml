@@ -1,8 +1,7 @@
 name: release
 
 # Keyless publish to npm via OIDC Trusted Publishing.
-# Trigger: push a version tag (e.g. v0.8.0). No NPM_TOKEN secret is used —
-# npm exchanges the GitHub OIDC token for a short-lived publish credential and
+# Trigger: push a version tag (e.g. v0.8.0). No NPM_TOKEN secret is used. # npm exchanges the GitHub OIDC token for a short-lived publish credential and
 # stamps provenance automatically. Requires a Trusted Publisher to be configured
 # on npmjs.com for @neilberkman/sidereon pointing at this repo + workflow.
 on:
