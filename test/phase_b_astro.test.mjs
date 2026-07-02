@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import {
   Spk,
@@ -47,7 +48,7 @@ import {
 } from "../pkg-node/sidereon.js";
 
 const MU = 398600.4418;
-const CORE_FIXTURES = "/tmp/sid-integration/crates/sidereon-core/tests/fixtures";
+const CORE_FIXTURES = fileURLToPath(new URL("./fixtures", import.meta.url));
 
 const coreFixture = (rel) => readFileSync(`${CORE_FIXTURES}/${rel}`);
 const close = (actual, expected, tol, label) =>

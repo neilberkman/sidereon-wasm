@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import {
   CarrierBand,
@@ -26,7 +27,7 @@ import {
 } from "../pkg-node/sidereon.js";
 import { fixture, hexToF64 } from "./helpers.mjs";
 
-const CORE_FIXTURES = "/tmp/sid-integration/crates/sidereon-core/tests/fixtures";
+const CORE_FIXTURES = fileURLToPath(new URL("./fixtures", import.meta.url));
 const C_M_S = 299792458.0;
 const F_L1_HZ = 1575.42e6;
 const F_L2_HZ = 1227.6e6;
