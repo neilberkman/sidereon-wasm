@@ -8,9 +8,11 @@ use sidereon::rinex_qc::{
     RepairAction, RepairOptions, Severity,
 };
 use sidereon_core::observation_qc::{
-    observation_qc_with_options, IntervalSource, ObservationDataGap, ObservationQcNote,
-    ObservationQcOptions, ObservationQcReport, SatelliteObservationQc, SatelliteSignalQc, SnrStats,
-    SsiHistogram, SystemSignalQc,
+    observation_qc_with_options, render_html as core_render_html, render_text as core_render_text,
+    ClockJump, CycleSlipQc, IntervalSource, MpStats, MultipathReport, ObservationDataGap,
+    ObservationQcNote, ObservationQcOptions, ObservationQcReport as CoreObservationQcReport,
+    SatelliteMultipathQc, SatelliteObservationQc, SatelliteSignalQc, SnrStats, SsiHistogram,
+    SystemCycleSlipQc, SystemMultipathQc, SystemSignalQc,
 };
 use sidereon_core::rinex::nav::encode_nav;
 use sidereon_core::rinex::observations::{ObsEpochTime, PgmRunByDate};
@@ -305,6 +307,7 @@ pub fn repair_rinex_nav(bytes: &[u8], options: JsValue) -> Result<RinexNavRepair
 struct ObservationQcOptionsInput {
     interval_override_s: Option<f64>,
     gap_factor: Option<f64>,
+    clock_jump_threshold_s: Option<f64>,
 }
 
 fn observation_qc_options(value: JsValue) -> Result<ObservationQcOptions, JsValue> {
@@ -317,6 +320,9 @@ fn observation_qc_options(value: JsValue) -> Result<ObservationQcOptions, JsValu
     Ok(ObservationQcOptions {
         interval_override_s: input.interval_override_s,
         gap_factor: input.gap_factor.unwrap_or(defaults.gap_factor),
+        clock_jump_threshold_s: input
+            .clock_jump_threshold_s
+            .unwrap_or(defaults.clock_jump_threshold_s),
     })
 }
 
@@ -368,6 +374,20 @@ fn data_gap_js(gap: &ObservationDataGap) -> ObservationDataGapJs {
         nominal_interval_s: gap.nominal_interval_s,
         observed_delta_s: gap.observed_delta_s,
         missing_epochs: gap.missing_epochs,
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClockJumpJs {
+    epoch_index: usize,
+    delta_s: f64,
+}
+
+fn clock_jump_js(jump: &ClockJump) -> ClockJumpJs {
+    ClockJumpJs {
+        epoch_index: jump.epoch_index,
+        delta_s: jump.delta_s,
     }
 }
 
@@ -473,6 +493,106 @@ fn system_signal_qc_js(value: &SystemSignalQc) -> SystemSignalQcJs {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct SystemCycleSlipQcJs {
+    system: &'static str,
+    observations: usize,
+    slips: usize,
+    observations_per_slip: Option<f64>,
+}
+
+fn system_cycle_slip_qc_js(value: &SystemCycleSlipQc) -> SystemCycleSlipQcJs {
+    SystemCycleSlipQcJs {
+        system: system_label(value.system),
+        observations: value.observations,
+        slips: value.slips,
+        observations_per_slip: value.observations_per_slip,
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CycleSlipQcJs {
+    observations: usize,
+    total_slips: usize,
+    observations_per_slip: Option<f64>,
+    by_system: Vec<SystemCycleSlipQcJs>,
+}
+
+fn cycle_slip_qc_js(value: &CycleSlipQc) -> CycleSlipQcJs {
+    CycleSlipQcJs {
+        observations: value.observations,
+        total_slips: value.total_slips,
+        observations_per_slip: value.observations_per_slip,
+        by_system: value.by_system.iter().map(system_cycle_slip_qc_js).collect(),
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MpStatsJs {
+    n: usize,
+    rms_m: f64,
+}
+
+fn mp_stats_js(value: MpStats) -> MpStatsJs {
+    MpStatsJs {
+        n: value.n,
+        rms_m: value.rms_m,
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SatelliteMultipathQcJs {
+    satellite: String,
+    mp1: Option<MpStatsJs>,
+    mp2: Option<MpStatsJs>,
+}
+
+fn satellite_multipath_qc_js(value: &SatelliteMultipathQc) -> SatelliteMultipathQcJs {
+    SatelliteMultipathQcJs {
+        satellite: value.satellite.to_string(),
+        mp1: value.mp1.map(mp_stats_js),
+        mp2: value.mp2.map(mp_stats_js),
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemMultipathQcJs {
+    system: &'static str,
+    mp1: Option<MpStatsJs>,
+    mp2: Option<MpStatsJs>,
+}
+
+fn system_multipath_qc_js(value: &SystemMultipathQc) -> SystemMultipathQcJs {
+    SystemMultipathQcJs {
+        system: system_label(value.system),
+        mp1: value.mp1.map(mp_stats_js),
+        mp2: value.mp2.map(mp_stats_js),
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultipathReportJs {
+    satellites: Vec<SatelliteMultipathQcJs>,
+    systems: Vec<SystemMultipathQcJs>,
+}
+
+fn multipath_report_js(value: &MultipathReport) -> MultipathReportJs {
+    MultipathReportJs {
+        satellites: value
+            .satellites
+            .iter()
+            .map(satellite_multipath_qc_js)
+            .collect(),
+        systems: value.systems.iter().map(system_multipath_qc_js).collect(),
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ObservationQcNoteJs {
     kind: &'static str,
     epoch_index: Option<usize>,
@@ -503,13 +623,16 @@ struct ObservationQcReportJs {
     interval_source: &'static str,
     missing_epochs: usize,
     data_gaps: Vec<ObservationDataGapJs>,
+    clock_jumps: Vec<ClockJumpJs>,
+    cycle_slips: CycleSlipQcJs,
+    multipath: MultipathReportJs,
     satellites: Vec<SatelliteObservationQcJs>,
     satellite_signals: Vec<SatelliteSignalQcJs>,
     system_signals: Vec<SystemSignalQcJs>,
     notes: Vec<ObservationQcNoteJs>,
 }
 
-fn observation_qc_report_js(report: &ObservationQcReport) -> ObservationQcReportJs {
+fn observation_qc_report_js(report: &CoreObservationQcReport) -> ObservationQcReportJs {
     ObservationQcReportJs {
         total_epoch_records: report.total_epoch_records,
         observation_epochs: report.observation_epochs,
@@ -520,6 +643,9 @@ fn observation_qc_report_js(report: &ObservationQcReport) -> ObservationQcReport
         interval_source: interval_source_label(report.interval_source),
         missing_epochs: report.missing_epochs,
         data_gaps: report.data_gaps.iter().map(data_gap_js).collect(),
+        clock_jumps: report.clock_jumps.iter().map(clock_jump_js).collect(),
+        cycle_slips: cycle_slip_qc_js(&report.cycle_slips),
+        multipath: multipath_report_js(&report.multipath),
         satellites: report.satellites.iter().map(satellite_qc_js).collect(),
         satellite_signals: report
             .satellite_signals
@@ -535,10 +661,131 @@ fn observation_qc_report_js(report: &ObservationQcReport) -> ObservationQcReport
     }
 }
 
+/// Aggregate observation QC report.
+#[wasm_bindgen]
+pub struct ObservationQcReport {
+    inner: CoreObservationQcReport,
+}
+
+#[wasm_bindgen]
+impl ObservationQcReport {
+    #[wasm_bindgen(getter, js_name = totalEpochRecords)]
+    pub fn total_epoch_records(&self) -> usize {
+        self.inner.total_epoch_records
+    }
+
+    #[wasm_bindgen(getter, js_name = observationEpochs)]
+    pub fn observation_epochs(&self) -> usize {
+        self.inner.observation_epochs
+    }
+
+    #[wasm_bindgen(getter, js_name = eventRecords)]
+    pub fn event_records(&self) -> usize {
+        self.inner.event_records
+    }
+
+    #[wasm_bindgen(getter, js_name = powerFailureEpochs)]
+    pub fn power_failure_epochs(&self) -> usize {
+        self.inner.power_failure_epochs
+    }
+
+    #[wasm_bindgen(getter, js_name = skippedRecords)]
+    pub fn skipped_records(&self) -> usize {
+        self.inner.skipped_records
+    }
+
+    #[wasm_bindgen(getter, js_name = intervalS)]
+    pub fn interval_s(&self) -> Option<f64> {
+        self.inner.interval_s
+    }
+
+    #[wasm_bindgen(getter, js_name = intervalSource)]
+    pub fn interval_source(&self) -> String {
+        interval_source_label(self.inner.interval_source).to_string()
+    }
+
+    #[wasm_bindgen(getter, js_name = missingEpochs)]
+    pub fn missing_epochs(&self) -> usize {
+        self.inner.missing_epochs
+    }
+
+    #[wasm_bindgen(getter, js_name = dataGaps)]
+    pub fn data_gaps(&self) -> Result<JsValue, JsValue> {
+        let gaps: Vec<_> = self.inner.data_gaps.iter().map(data_gap_js).collect();
+        to_value(&gaps)
+    }
+
+    #[wasm_bindgen(getter, js_name = clockJumps)]
+    pub fn clock_jumps(&self) -> Result<JsValue, JsValue> {
+        let jumps: Vec<_> = self.inner.clock_jumps.iter().map(clock_jump_js).collect();
+        to_value(&jumps)
+    }
+
+    #[wasm_bindgen(getter, js_name = cycleSlips)]
+    pub fn cycle_slips(&self) -> Result<JsValue, JsValue> {
+        to_value(&cycle_slip_qc_js(&self.inner.cycle_slips))
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn multipath(&self) -> Result<JsValue, JsValue> {
+        to_value(&multipath_report_js(&self.inner.multipath))
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn satellites(&self) -> Result<JsValue, JsValue> {
+        let satellites: Vec<_> = self.inner.satellites.iter().map(satellite_qc_js).collect();
+        to_value(&satellites)
+    }
+
+    #[wasm_bindgen(getter, js_name = satelliteSignals)]
+    pub fn satellite_signals(&self) -> Result<JsValue, JsValue> {
+        let signals: Vec<_> = self
+            .inner
+            .satellite_signals
+            .iter()
+            .map(satellite_signal_qc_js)
+            .collect();
+        to_value(&signals)
+    }
+
+    #[wasm_bindgen(getter, js_name = systemSignals)]
+    pub fn system_signals(&self) -> Result<JsValue, JsValue> {
+        let signals: Vec<_> = self
+            .inner
+            .system_signals
+            .iter()
+            .map(system_signal_qc_js)
+            .collect();
+        to_value(&signals)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn notes(&self) -> Result<JsValue, JsValue> {
+        let notes: Vec<_> = self.inner.notes.iter().copied().map(note_js).collect();
+        to_value(&notes)
+    }
+
+    #[wasm_bindgen(js_name = renderText)]
+    pub fn render_text(&self) -> String {
+        core_render_text(&self.inner)
+    }
+
+    #[wasm_bindgen(js_name = renderHtml)]
+    pub fn render_html(&self) -> String {
+        core_render_html(&self.inner)
+    }
+
+    #[wasm_bindgen(js_name = toJson)]
+    pub fn to_json(&self) -> Result<String, JsValue> {
+        serde_json::to_string(&observation_qc_report_js(&self.inner))
+            .map_err(|e| type_error(&e.to_string()))
+    }
+}
+
 /// Aggregate observation QC for a parsed RINEX OBS product.
 #[wasm_bindgen(js_name = observationQc)]
-pub fn observation_qc(obs: &RinexObs, options: JsValue) -> Result<JsValue, JsValue> {
-    let report = observation_qc_with_options(&obs.inner, observation_qc_options(options)?)
+pub fn observation_qc(obs: &RinexObs, options: JsValue) -> Result<ObservationQcReport, JsValue> {
+    let inner = observation_qc_with_options(&obs.inner, observation_qc_options(options)?)
         .map_err(engine_error)?;
-    to_value(&observation_qc_report_js(&report))
+    Ok(ObservationQcReport { inner })
 }

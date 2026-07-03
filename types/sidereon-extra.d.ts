@@ -755,12 +755,34 @@ export interface RinexNavRepairOptions {
 
 /** Options accepted by `observationQc`. */
 export interface ObservationQcOptions {
-  minSatellitesPerEpoch?: number;
-  expectedIntervalS?: number;
-  checkCycleSlips?: boolean;
-  geometryFreeThresholdM?: number;
-  melbourneWubbenaThresholdCycles?: number;
-  gapThresholdS?: number;
+  intervalOverrideS?: number;
+  gapFactor?: number;
+  clockJumpThresholdS?: number;
+}
+
+/** Civil epoch used inside observation QC report rows. */
+export interface ObservationQcEpochTime {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+/** One detected gap between adjacent observation epochs. */
+export interface ObservationQcDataGap {
+  startEpoch: ObservationQcEpochTime;
+  endEpoch: ObservationQcEpochTime;
+  nominalIntervalS: number;
+  observedDeltaS: number;
+  missingEpochs: number;
+}
+
+/** One detected receiver-clock jump. */
+export interface ObservationQcClockJump {
+  epochIndex: number;
+  deltaS: number;
 }
 
 /** One satellite summary in an observation QC report. */
@@ -802,7 +824,55 @@ export interface ObservationQcSystemSignal {
   snr?: ObservationQcSnr;
 }
 
-/** Plain object returned by `observationQc`. */
+/** Per-system cycle-slip summary in an observation QC report. */
+export interface ObservationQcSystemCycleSlip {
+  system: string;
+  observations: number;
+  slips: number;
+  observationsPerSlip?: number;
+}
+
+/** Cycle-slip summary in an observation QC report. */
+export interface ObservationQcCycleSlips {
+  observations: number;
+  totalSlips: number;
+  observationsPerSlip?: number;
+  bySystem: ObservationQcSystemCycleSlip[];
+}
+
+/** MP1 or MP2 multipath RMS statistics. */
+export interface ObservationQcMpStats {
+  n: number;
+  rmsM: number;
+}
+
+/** Per-satellite multipath summary in an observation QC report. */
+export interface ObservationQcSatelliteMultipath {
+  satellite: string;
+  mp1?: ObservationQcMpStats;
+  mp2?: ObservationQcMpStats;
+}
+
+/** Per-system multipath summary in an observation QC report. */
+export interface ObservationQcSystemMultipath {
+  system: string;
+  mp1?: ObservationQcMpStats;
+  mp2?: ObservationQcMpStats;
+}
+
+/** Multipath summary in an observation QC report. */
+export interface ObservationQcMultipath {
+  satellites: ObservationQcSatelliteMultipath[];
+  systems: ObservationQcSystemMultipath[];
+}
+
+/** Non-fatal observation QC note. */
+export interface ObservationQcNote {
+  kind: string;
+  epochIndex?: number;
+}
+
+/** Report object returned by `observationQc`. */
 export interface ObservationQcReport {
   totalEpochRecords: number;
   observationEpochs: number;
@@ -812,11 +882,17 @@ export interface ObservationQcReport {
   intervalS?: number;
   intervalSource?: string;
   missingEpochs: number;
-  dataGaps: unknown[];
+  dataGaps: ObservationQcDataGap[];
+  clockJumps: ObservationQcClockJump[];
+  cycleSlips: ObservationQcCycleSlips;
+  multipath: ObservationQcMultipath;
   satellites: ObservationQcSatellite[];
   satelliteSignals: ObservationQcSatelliteSignal[];
   systemSignals: ObservationQcSystemSignal[];
-  notes: string[];
+  notes: ObservationQcNote[];
+  renderText(): string;
+  renderHtml(): string;
+  toJson(): string;
 }
 
 // --- RTK baseline solving ---------------------------------------------------

@@ -237,7 +237,7 @@ pub use rinex_obs::{
 };
 pub use rinex_qc::{
     lint_rinex_nav, lint_rinex_obs, observation_qc, repair_rinex_nav, repair_rinex_obs,
-    RinexNavRepair, RinexObsRepair,
+    ObservationQcReport, RinexNavRepair, RinexObsRepair,
 };
 pub use rtcm::{
     decode_rtcm, decode_rtcm_frame, decode_rtcm_message, decode_rtcm_stream, encode_rtcm,
