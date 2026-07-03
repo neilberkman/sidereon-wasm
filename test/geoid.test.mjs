@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 
 import {
   geoidUndulation,
+  geoidUndulationsDeg,
+  geoidUndulationsRad,
   orthometricHeightM,
   ellipsoidalHeightM,
   GeoidGrid,
@@ -37,6 +39,28 @@ test("GeoidGrid interpolates corners exactly and the midpoint as the mean", () =
   assert.equal(grid.undulationDeg(-5, 25), 2.5);
   // undulationRad agrees with undulationDeg at the same position.
   assert.equal(grid.undulationRad(-5 * DEG, 25 * DEG), grid.undulationDeg(-5, 25));
+});
+
+test("geoid batch lookups and grid height conversions match core output", () => {
+  const grid = new GeoidGrid(-10, 20, 10, 10, 2, 2, Float64Array.from([1, 2, 3, 4]));
+
+  assert.deepEqual(
+    Array.from(grid.undulationsDeg(Float64Array.from([-10, 20, -5, 25, 0, 30]))),
+    [1, 2.5, 4],
+  );
+  assert.deepEqual(
+    Array.from(grid.undulationsRad(Float64Array.from([-10 * DEG, 20 * DEG, -5 * DEG, 25 * DEG]))),
+    [1, 2.5],
+  );
+  assert.equal(grid.orthometricHeightDeg(100, -5, 25), 97.5);
+  assert.equal(grid.ellipsoidalHeightDeg(97.5, -5, 25), 100);
+
+  assert.deepEqual(Array.from(geoidUndulationsDeg(Float64Array.from([0, 0]))), [
+    geoidUndulation(0, 0),
+  ]);
+  assert.deepEqual(Array.from(geoidUndulationsRad(Float64Array.from([0, 0]))), [
+    geoidUndulation(0, 0),
+  ]);
 });
 
 test("GeoidGrid.fromText parses the documented format identically", () => {

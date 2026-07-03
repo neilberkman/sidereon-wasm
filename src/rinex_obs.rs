@@ -528,7 +528,13 @@ impl CarrierPhaseSeries {
 /// A parsed RINEX 3/4 observation file.
 #[wasm_bindgen]
 pub struct RinexObs {
-    inner: CoreRinexObs,
+    pub(crate) inner: CoreRinexObs,
+}
+
+impl RinexObs {
+    pub(crate) fn from_core(inner: CoreRinexObs) -> Self {
+        Self { inner }
+    }
 }
 
 #[wasm_bindgen]

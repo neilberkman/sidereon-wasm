@@ -12,10 +12,14 @@ use wasm_bindgen::prelude::*;
 
 use sidereon_core::rtcm::{
     decode_frame as core_decode_frame, decode_messages as core_decode_messages,
-    message_number as core_message_number, AntennaDescriptor, FrameScanner as CoreFrameScanner,
-    GlonassEphemeris, GpsEphemeris, Message, MsmHeader, MsmKind, MsmMessage, MsmSatellite,
-    MsmSignal, SsrClockRecord, SsrCodeBiasRecord, SsrHeader, SsrKind, SsrMessage, SsrOrbitRecord,
-    SsrPhaseBiasRecord, SsrPhaseBiasSignal, StationCoordinates, UnsupportedMessage,
+    decode_stream as core_decode_stream, derive_lli as core_derive_lli,
+    message_number as core_message_number, minimum_lock_time_ms as core_minimum_lock_time_ms,
+    msm_epoch_dt_ms as core_msm_epoch_dt_ms, msm_signal_rinex_code as core_msm_signal_rinex_code,
+    AntennaDescriptor, FrameScanner as CoreFrameScanner, GlonassEphemeris, GpsEphemeris,
+    LockTimeTracker as CoreLockTimeTracker, Message, MsmHeader, MsmKind, MsmMessage, MsmSatellite,
+    MsmSignal, PreviousLock, SsrClockRecord, SsrCodeBiasRecord, SsrHeader, SsrKind, SsrMessage,
+    SsrOrbitRecord, SsrPhaseBiasRecord, SsrPhaseBiasSignal, StationCoordinates, UnsupportedMessage,
+    LLI_HALF_CYCLE, LLI_LOSS_OF_LOCK,
 };
 use sidereon_core::GnssSystem;
 
@@ -225,6 +229,83 @@ impl From<&MsmMessage> for MsmObject {
             signals: m.signals.iter().map(MsmSignalObject::from).collect(),
         }
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CellLliObject {
+    satellite_id: u8,
+    signal_id: u8,
+    lli: u8,
+    min_lock_time_ms: Option<u32>,
+}
+
+impl From<&sidereon_core::rtcm::CellLli> for CellLliObject {
+    fn from(cell: &sidereon_core::rtcm::CellLli) -> Self {
+        Self {
+            satellite_id: cell.satellite_id,
+            signal_id: cell.signal_id,
+            lli: cell.lli,
+            min_lock_time_ms: cell.min_lock_time_ms,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FrameSkipObject {
+    offset: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message_number: Option<u16>,
+    reason: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+impl From<&sidereon_core::rtcm::FrameSkip> for FrameSkipObject {
+    fn from(skip: &sidereon_core::rtcm::FrameSkip) -> Self {
+        match &skip.reason {
+            sidereon_core::rtcm::FrameSkipReason::Truncated => Self {
+                offset: skip.offset as f64,
+                message_number: skip.message_number,
+                reason: "truncated",
+                message: None,
+            },
+            sidereon_core::rtcm::FrameSkipReason::Malformed(message) => Self {
+                offset: skip.offset as f64,
+                message_number: skip.message_number,
+                reason: "malformed",
+                message: Some(message.clone()),
+            },
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamDiagnosticsObject {
+    resync_bytes: f64,
+    skipped_frames: Vec<FrameSkipObject>,
+}
+
+impl From<&sidereon_core::rtcm::StreamDiagnostics> for StreamDiagnosticsObject {
+    fn from(diagnostics: &sidereon_core::rtcm::StreamDiagnostics) -> Self {
+        Self {
+            resync_bytes: diagnostics.resync_bytes as f64,
+            skipped_frames: diagnostics
+                .skipped_frames
+                .iter()
+                .map(FrameSkipObject::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RtcmStreamObject {
+    messages: Vec<MessageObject>,
+    diagnostics: StreamDiagnosticsObject,
 }
 
 #[derive(Serialize)]
@@ -631,6 +712,193 @@ pub fn decode_rtcm(bytes: &[u8]) -> Result<JsValue, JsValue> {
     objects
         .serialize(&serializer())
         .map_err(|e| type_error(&e.to_string()))
+}
+
+/// Decode an RTCM 3 byte stream into messages plus stream diagnostics.
+///
+/// The `messages` array has the same object form as [`decodeRtcm`].
+/// `diagnostics.resyncBytes` counts skipped bytes while finding valid frames,
+/// and `diagnostics.skippedFrames` reports CRC-valid frames whose bodies could
+/// not be decoded.
+#[wasm_bindgen(js_name = decodeRtcmStream)]
+pub fn decode_rtcm_stream(bytes: &[u8]) -> Result<JsValue, JsValue> {
+    let stream = core_decode_stream(bytes);
+    let object = RtcmStreamObject {
+        messages: stream.messages.iter().map(MessageObject::from).collect(),
+        diagnostics: StreamDiagnosticsObject::from(&stream.diagnostics),
+    };
+    object
+        .serialize(&serializer())
+        .map_err(|e| type_error(&e.to_string()))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LliBitsObject {
+    loss_of_lock: u8,
+    half_cycle: u8,
+}
+
+/// RINEX LLI bit constants used by the RTCM MSM LLI helpers.
+#[wasm_bindgen(js_name = rtcmLliBits)]
+pub fn rtcm_lli_bits() -> Result<JsValue, JsValue> {
+    LliBitsObject {
+        loss_of_lock: LLI_LOSS_OF_LOCK,
+        half_cycle: LLI_HALF_CYCLE,
+    }
+    .serialize(&serializer())
+    .map_err(|e| type_error(&e.to_string()))
+}
+
+fn optional_number(value: Option<u32>) -> JsValue {
+    value
+        .map(|v| JsValue::from_f64(f64::from(v)))
+        .unwrap_or(JsValue::UNDEFINED)
+}
+
+fn optional_string(value: Option<&str>) -> JsValue {
+    value.map(JsValue::from_str).unwrap_or(JsValue::UNDEFINED)
+}
+
+fn optional_u32_from_value(value: JsValue, name: &str) -> Result<Option<u32>, JsValue> {
+    if value.is_null() || value.is_undefined() {
+        Ok(None)
+    } else {
+        serde_wasm_bindgen::from_value(value)
+            .map(Some)
+            .map_err(|e| type_error(&format!("{name} must be an unsigned 32-bit integer: {e}")))
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviousLockInput {
+    #[serde(default)]
+    min_lock_time_ms: Option<u32>,
+    elapsed_ms: u64,
+}
+
+impl From<PreviousLockInput> for PreviousLock {
+    fn from(previous: PreviousLockInput) -> Self {
+        Self {
+            min_lock_time_ms: previous.min_lock_time_ms,
+            elapsed_ms: previous.elapsed_ms,
+        }
+    }
+}
+
+fn optional_previous_lock(value: JsValue) -> Result<Option<PreviousLock>, JsValue> {
+    if value.is_null() || value.is_undefined() {
+        Ok(None)
+    } else {
+        serde_wasm_bindgen::from_value::<PreviousLockInput>(value)
+            .map(|previous| Some(previous.into()))
+            .map_err(|e| {
+                type_error(&format!(
+                    "previous must be null/undefined or {{ elapsedMs, minLockTimeMs? }}: {e}"
+                ))
+            })
+    }
+}
+
+/// Minimum continuous-lock time encoded by an MSM4/7 lock-time indicator.
+///
+/// `kind` is `"msm4"` or `"msm7"`. Reserved or out-of-range indicators return
+/// `undefined`.
+#[wasm_bindgen(js_name = rtcmMinimumLockTimeMs)]
+pub fn rtcm_minimum_lock_time_ms(kind: &str, indicator: u16) -> Result<JsValue, JsValue> {
+    Ok(optional_number(core_minimum_lock_time_ms(
+        msm_kind_from_label(kind)?,
+        indicator,
+    )))
+}
+
+/// Derive a RINEX LLI value for one MSM signal cell.
+///
+/// `previous` is `null`/`undefined` or `{ elapsedMs, minLockTimeMs? }`.
+/// `currentMinLockTimeMs` is a number or `null`/`undefined` for reserved current
+/// indicators.
+#[wasm_bindgen(js_name = rtcmDeriveLli)]
+pub fn rtcm_derive_lli(
+    previous: JsValue,
+    current_min_lock_time_ms: JsValue,
+    half_cycle_ambiguity: bool,
+) -> Result<u8, JsValue> {
+    Ok(core_derive_lli(
+        optional_previous_lock(previous)?,
+        optional_u32_from_value(current_min_lock_time_ms, "currentMinLockTimeMs")?,
+        half_cycle_ambiguity,
+    ))
+}
+
+/// Elapsed milliseconds between two raw MSM epoch-time fields.
+#[wasm_bindgen(js_name = rtcmMsmEpochDtMs)]
+pub fn rtcm_msm_epoch_dt_ms(
+    system: &str,
+    previous_epoch_time: u32,
+    current_epoch_time: u32,
+) -> Result<f64, JsValue> {
+    Ok(core_msm_epoch_dt_ms(
+        gnss_system_from_label(system)?,
+        previous_epoch_time,
+        current_epoch_time,
+    ) as f64)
+}
+
+/// RINEX 3 observation-code suffix for an MSM signal id, or `undefined` for
+/// reserved ids.
+#[wasm_bindgen(js_name = rtcmMsmSignalRinexCode)]
+pub fn rtcm_msm_signal_rinex_code(system: &str, signal_id: u8) -> Result<JsValue, JsValue> {
+    Ok(optional_string(core_msm_signal_rinex_code(
+        gnss_system_from_label(system)?,
+        signal_id,
+    )))
+}
+
+/// Stateful MSM lock-time tracker for deriving RINEX LLI continuity bits.
+#[wasm_bindgen]
+pub struct RtcmLockTimeTracker {
+    inner: CoreLockTimeTracker,
+}
+
+impl Default for RtcmLockTimeTracker {
+    fn default() -> Self {
+        Self {
+            inner: CoreLockTimeTracker::new(),
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl RtcmLockTimeTracker {
+    /// Build an empty tracker.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Drop all per-cell lock history.
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
+
+    /// Derive LLI rows for one decoded MSM message object and advance state.
+    pub fn observe(&mut self, message: JsValue) -> Result<JsValue, JsValue> {
+        let message = message_from_value(message)?;
+        let Message::Msm(msm) = message else {
+            return Err(type_error(
+                "RtcmLockTimeTracker.observe expects an MSM message",
+            ));
+        };
+        let rows: Vec<CellLliObject> = self
+            .inner
+            .observe(&msm)
+            .iter()
+            .map(CellLliObject::from)
+            .collect();
+        rows.serialize(&serializer())
+            .map_err(|e| type_error(&e.to_string()))
+    }
 }
 
 /// Read the 12-bit RTCM message number from a message body.

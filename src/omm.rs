@@ -29,7 +29,7 @@ pub struct OmmEpoch {
 
 impl OmmEpoch {
     fn iso8601_string(&self) -> String {
-        format!(
+        let mut text = format!(
             "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}",
             self.inner.year,
             self.inner.month,
@@ -38,7 +38,11 @@ impl OmmEpoch {
             self.inner.minute,
             self.inner.second,
             self.inner.microsecond
-        )
+        );
+        if self.inner.femtosecond != 0 {
+            text.push_str(&format!("{:09}", self.inner.femtosecond));
+        }
+        text
     }
 }
 
@@ -47,6 +51,7 @@ impl OmmEpoch {
     /// Build an OMM epoch from UTC calendar fields. Throws a `RangeError` on an
     /// out-of-range field.
     #[wasm_bindgen(constructor)]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         year: i32,
         month: u32,
@@ -55,6 +60,7 @@ impl OmmEpoch {
         minute: u32,
         second: u32,
         microsecond: u32,
+        femtosecond: Option<u32>,
     ) -> Result<OmmEpoch, JsValue> {
         if !(1..=12).contains(&month) {
             return Err(range_error("month must be in 1..=12"));
@@ -74,6 +80,10 @@ impl OmmEpoch {
         if microsecond > 999_999 {
             return Err(range_error("microsecond must be in 0..=999999"));
         }
+        let femtosecond = femtosecond.unwrap_or(0);
+        if femtosecond > 999_999_999 {
+            return Err(range_error("femtosecond must be in 0..=999999999"));
+        }
         Ok(OmmEpoch {
             inner: CoreOmmEpoch {
                 year,
@@ -83,6 +93,7 @@ impl OmmEpoch {
                 minute,
                 second,
                 microsecond,
+                femtosecond,
             },
         })
     }
@@ -129,6 +140,12 @@ impl OmmEpoch {
         self.inner.microsecond
     }
 
+    /// Femtosecond remainder within the microsecond.
+    #[wasm_bindgen(getter)]
+    pub fn femtosecond(&self) -> u32 {
+        self.inner.femtosecond
+    }
+
     /// ISO-8601 epoch text with microsecond precision.
     #[wasm_bindgen(getter)]
     pub fn iso8601(&self) -> String {
@@ -163,6 +180,12 @@ struct OmmMeta {
 #[derive(Clone)]
 pub struct Omm {
     inner: CoreOmm,
+}
+
+impl Omm {
+    pub(crate) fn from_core(inner: CoreOmm) -> Self {
+        Self { inner }
+    }
 }
 
 #[wasm_bindgen]
@@ -215,6 +238,8 @@ impl Omm {
                 bstar: finite(m.bstar.unwrap_or(0.0), "bstar")?,
                 mean_motion_dot: finite(m.mean_motion_dot.unwrap_or(0.0), "meanMotionDot")?,
                 mean_motion_ddot: finite(m.mean_motion_ddot.unwrap_or(0.0), "meanMotionDdot")?,
+                exact_sgp4_epoch: None,
+                quantize_tle_derived_fields: true,
             },
         })
     }

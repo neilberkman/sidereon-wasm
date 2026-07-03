@@ -12,8 +12,8 @@ use wasm_bindgen::prelude::*;
 
 use serde::{Deserialize, Serialize};
 use sidereon_core::astro::forces::{
-    DragForce as CoreDragForce, ForceModel, J2Gravity, SpaceWeather as CoreSpaceWeather,
-    TwoBodyGravity,
+    DragForce as CoreDragForce, DragParameters, ForceModel, J2Gravity,
+    SpaceWeather as CoreSpaceWeather, TwoBodyGravity,
 };
 use sidereon_core::astro::propagator::api::PropagationContext;
 use sidereon_core::astro::propagator::decay::{estimate_decay as core_estimate_decay, DecayConfig};
@@ -105,7 +105,7 @@ impl SpaceWeather {
 }
 
 impl SpaceWeather {
-    fn core(&self) -> CoreSpaceWeather {
+    pub(crate) fn core(&self) -> CoreSpaceWeather {
         self.inner
     }
 }
@@ -118,6 +118,15 @@ pub struct DragForce {
 
 #[wasm_bindgen]
 impl DragForce {
+    pub(crate) fn parameters(&self) -> Result<DragParameters, JsValue> {
+        DragParameters::from_bc_factor_m2_kg(
+            self.inner.bc_factor_m2_kg(),
+            self.inner.space_weather(),
+            self.inner.cutoff_altitude_km(),
+        )
+        .map_err(engine_error)
+    }
+
     #[wasm_bindgen(js_name = fromAreaMass)]
     pub fn from_area_mass(
         cd: f64,
@@ -265,16 +274,9 @@ pub fn estimate_decay(drag: &DragForce, request: JsValue) -> Result<JsValue, JsV
         .map_err(|e| type_error(&format!("invalid decay request: {e}")))?;
     let position = vec3_finite("positionKm", &req.position_km)?;
     let velocity = vec3_finite("velocityKmS", &req.velocity_km_s)?;
-    let mut config = DecayConfig::new(
-        sidereon_core::astro::forces::DragParameters::from_bc_factor_m2_kg(
-            drag.inner.bc_factor_m2_kg(),
-            drag.inner.space_weather(),
-            drag.inner.cutoff_altitude_km(),
-        )
-        .map_err(engine_error)?,
-    )
-    .with_force_model(force_model(req.force_model.as_deref())?)
-    .with_integrator(integrator(req.integrator.as_deref())?);
+    let mut config = DecayConfig::new(drag.parameters()?)
+        .with_force_model(force_model(req.force_model.as_deref())?)
+        .with_integrator(integrator(req.integrator.as_deref())?);
     if let Some(value) = req.reentry_altitude_km {
         config = config.with_reentry_altitude_km(value);
     }

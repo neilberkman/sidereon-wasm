@@ -284,6 +284,541 @@ export interface PropagateStateRequest {
   muKm3S2?: number;
 }
 
+// --- Covariance propagation -------------------------------------------------
+//
+// `propagateCovariance(request)` and `transportCovariance(covariance, segments,
+// options)` deserialize through serde. These interfaces document the accepted
+// JS objects and plain object fields returned by the related table APIs.
+
+/** Covariance reference frame label. */
+export type CovarianceFrameLabel = "inertial" | "rtn";
+
+/** RTN acceleration process-noise power spectral densities. */
+export interface CovarianceProcessNoise {
+  qRadialKm2S3?: number;
+  qTransverseKm2S3?: number;
+  qNormalKm2S3?: number;
+}
+
+/** Space-weather constants embedded in a covariance drag request. */
+export interface CovarianceDragSpaceWeather {
+  f107?: number;
+  f107a?: number;
+  ap?: number;
+}
+
+/** Drag parameterization for covariance propagation. */
+export interface CovarianceDragConfig {
+  bcFactorM2Kg?: number;
+  ballisticCoefficientKgM2?: number;
+  cd?: number;
+  areaM2?: number;
+  massKg?: number;
+  cutoffAltitudeKm?: number;
+  spaceWeather?: CovarianceDragSpaceWeather;
+}
+
+/** The object passed to `propagateCovariance`. */
+export interface CovariancePropagationRequest {
+  epochS: number;
+  positionKm: [number, number, number];
+  velocityKmS: [number, number, number];
+  covariance: number[] | Float64Array;
+  timesS: number[];
+  covarianceFrame?: CovarianceFrameLabel;
+  outputFrame?: CovarianceFrameLabel;
+  processNoise?: CovarianceProcessNoise;
+  forceModel?: ForceModel;
+  integrator?: Integrator;
+  absTol?: number;
+  relTol?: number;
+  initialStepS?: number;
+  minStepS?: number;
+  maxStepS?: number;
+  maxSteps?: number;
+  muKm3S2?: number;
+  drag?: CovarianceDragConfig;
+}
+
+/** One STM segment passed to `transportCovariance`. */
+export interface CovarianceTransportSegment {
+  stateTransitionMatrix: number[] | Float64Array;
+  dtS: number;
+  qRotationEpochS: number;
+  qRotationPositionKm: [number, number, number];
+  qRotationVelocityKmS: [number, number, number];
+}
+
+/** Options passed as the third argument to `transportCovariance`. */
+export interface CovarianceTransportOptions {
+  processNoise?: CovarianceProcessNoise;
+}
+
+// --- SGP4 fitting -----------------------------------------------------------
+//
+// `fitTle(samples, config)` accepts TEME state samples plus solver controls and
+// returns `TleFit.elements` / `TleFit.stats` as serde plain objects.
+
+/** One TEME state sample for `fitTle`. */
+export interface TleFitSample {
+  epoch: [number, number];
+  positionTemeKm: [number, number, number];
+  velocityTemeKmS?: [number, number, number];
+}
+
+/** Metadata copied into the fitted TLE and OMM encodings. */
+export interface TleFitMetadata {
+  catalogNumber?: number;
+  classification?: "U" | "C" | "S";
+  internationalDesignator?: string;
+  elementSetNumber?: number;
+  revAtEpoch?: number;
+  objectName?: string;
+}
+
+/** Solver controls for `fitTle`. */
+export interface TleFitConfig {
+  epoch?: "midpoint" | "first" | "last";
+  epochSampleIndex?: number;
+  epochJd?: [number, number];
+  fitBstar?: boolean;
+  bstarSeed?: number;
+  useVelocity?: boolean;
+  velocityWeightS?: number;
+  weights?: number[];
+  opsMode?: "improved" | "afspc";
+  ftol?: number;
+  xtol?: number;
+  gtol?: number;
+  maxNfev?: number;
+  xScale?: "unit" | "jac" | number[];
+  loss?: "linear" | "softL1" | "soft_l1" | "huber" | "cauchy" | "arctan";
+  fScale?: number;
+  metadata?: TleFitMetadata;
+}
+
+/** `TleFit.stats` plain object. */
+export interface TleFitStatistics {
+  rms_position_km: number;
+  max_position_km: number;
+  rms_position_axes_km: [number, number, number];
+  rms_velocity_km_s?: number;
+  tle_rms_position_km: number;
+  status: number;
+  nfev: number;
+  njev: number;
+  cost: number;
+  optimality: number;
+  bstar_observable: boolean;
+  seed_refine_passes: number;
+}
+
+/** `TleFit.elements` plain object. */
+export interface TleFitElements {
+  epoch: [number, number];
+  bstar: number;
+  mean_motion_dot: number;
+  mean_motion_double_dot: number;
+  eccentricity: number;
+  argument_of_perigee_deg: number;
+  inclination_deg: number;
+  mean_anomaly_deg: number;
+  mean_motion_rev_per_day: number;
+  right_ascension_deg: number;
+  catalog_number: number;
+}
+
+// --- NMEA -------------------------------------------------------------------
+//
+// `parseNmea`, `NmeaAccumulator.push/finish`, and `nmeaWriteGga` use serde
+// plain objects for sentence bodies, diagnostics, epochs, and writer requests.
+
+/** Calendar date used by NMEA epoch recovery. */
+export interface NmeaDate {
+  year: number;
+  month: number;
+  day: number;
+}
+
+/** NMEA time of day. */
+export interface NmeaTimeOfDay {
+  hour: number;
+  minute: number;
+  second: number;
+  nanos: number;
+  decimals: number;
+}
+
+/** NMEA latitude, longitude, and ellipsoidal height. */
+export interface NmeaPosition {
+  latDeg: number;
+  lonDeg: number;
+  heightM: number;
+}
+
+/** Shared NMEA parser diagnostics. */
+export interface NmeaDiagnostics {
+  skipCount: number;
+  warningCount: number;
+  skips: unknown[];
+  warnings: unknown[];
+}
+
+/** One satellite ID used by an NMEA GSA epoch. */
+export interface NmeaUsedSatellite {
+  raw: number;
+  resolved?: string;
+}
+
+/** One parsed or accumulated NMEA epoch. */
+export interface NmeaEpoch {
+  timeOfDay: NmeaTimeOfDay;
+  date?: NmeaDate;
+  position: NmeaPosition;
+  instantUtcJ2000S?: number;
+  pdop?: number;
+  hdop?: number;
+  vdop?: number;
+  usedSatellites: NmeaUsedSatellite[];
+  satellitesInView: number;
+  sentenceCount: number;
+  diagnostics: NmeaDiagnostics;
+  gga?: Record<string, unknown>;
+  rmc?: Record<string, unknown>;
+  gll?: Record<string, unknown>;
+  gst?: Record<string, unknown>;
+  vtg?: Record<string, unknown>;
+  zda?: Record<string, unknown>;
+  gsa: Record<string, unknown>[];
+  gsv: Record<string, unknown>[];
+}
+
+/** Plain object returned by `NmeaAccumulator.push/finish`. */
+export interface NmeaAccumulatorResult {
+  sentences: Record<string, unknown>[];
+  epochs: NmeaEpoch[];
+  diagnostics: NmeaDiagnostics;
+  retainedLength: number;
+}
+
+/** Constructor options for `NmeaAccumulator`. */
+export interface NmeaAccumulatorOptions {
+  date?: NmeaDate;
+  maxSentencesPerEpoch?: number;
+}
+
+/** The object passed to `nmeaWriteGga`. */
+export interface NmeaGgaRequest {
+  talker?: string;
+  timeSecondsOfDay: number;
+  latDeg: number;
+  lonDeg: number;
+  coordinateDecimals?: number;
+  quality?: number;
+  satellitesUsed?: number;
+  hdop?: number;
+  altitudeMslM?: number;
+  geoidSeparationM?: number;
+  differentialAgeS?: number;
+  differentialStationId?: string;
+}
+
+// --- NTRIP sans-IO ----------------------------------------------------------
+
+/** Basic authentication credentials for NTRIP request construction. */
+export interface NtripCredentials {
+  username: string;
+  password: string;
+}
+
+/** NTRIP revision label accepted by request and state-machine configs. */
+export type NtripVersionLabel = "rev1" | "rev2";
+
+/** Config object for `ntripRequestBytes` and `new NtripClientMachine(config)`. */
+export interface NtripRequestConfig {
+  host: string;
+  port?: number;
+  mountpoint?: string;
+  version?: NtripVersionLabel;
+  credentials?: NtripCredentials;
+  userAgentProduct?: string;
+  ggaIntervalS?: number;
+}
+
+/** Header row surfaced on NTRIP connection events. */
+export interface NtripHeader {
+  name: string;
+  value: string;
+}
+
+/** Event emitted by `NtripClientMachine.push/finish`. */
+export type NtripClientEvent =
+  | {
+      kind: "connected";
+      version?: NtripVersionLabel;
+      chunked?: boolean;
+      headers?: NtripHeader[];
+      payload?: undefined;
+      sourcetable?: undefined;
+      rejection?: undefined;
+      detail?: undefined;
+    }
+  | {
+      kind: "payload";
+      payload: number[];
+      version?: undefined;
+      chunked?: undefined;
+      headers?: undefined;
+      sourcetable?: undefined;
+      rejection?: undefined;
+      detail?: undefined;
+    }
+  | {
+      kind: "sourcetable";
+      sourcetable: NtripSourcetable;
+      version?: undefined;
+      chunked?: undefined;
+      headers?: undefined;
+      payload?: undefined;
+      rejection?: undefined;
+      detail?: undefined;
+    }
+  | {
+      kind: "rejected" | "streamCorrupted" | "streamEnded";
+      detail?: string;
+      rejection?: unknown;
+      version?: undefined;
+      chunked?: undefined;
+      headers?: undefined;
+      payload?: undefined;
+      sourcetable?: undefined;
+    };
+
+/** Parsed scalar wrapper used by NTRIP sourcetable fields. */
+export type NtripParsed<T> =
+  { kind: "parsed"; value: T } | { kind: "missing" } | { kind: "invalid"; raw: string };
+
+/** One STR row in an NTRIP sourcetable. */
+export interface NtripStreamRecord {
+  typeTag: "STR";
+  mountpoint: string;
+  identifier: string;
+  format: string;
+  formatDetails: string;
+  carrier: NtripParsed<number>;
+  navSystem: string;
+  network: string;
+  country: string;
+  latDeg: NtripParsed<number>;
+  lonDeg: NtripParsed<number>;
+  nmeaRequired: NtripParsed<boolean>;
+  networkSolution: NtripParsed<boolean>;
+  generator: string;
+  compression: string;
+  authentication: string;
+  fee: NtripParsed<boolean>;
+  bitrate: NtripParsed<number>;
+  misc: string;
+}
+
+/** Parsed NTRIP sourcetable. */
+export interface NtripSourcetable {
+  recordCount: number;
+  streamCount: number;
+  streams: NtripStreamRecord[];
+  records: Record<string, unknown>[];
+  diagnostics: unknown[];
+}
+
+// --- Space weather ----------------------------------------------------------
+
+/** CelesTrak CSSI table coverage. */
+export interface SpaceWeatherCoverage {
+  firstJ2000S: number;
+  lastObservedJ2000S: number;
+  lastDailyPredictedJ2000S: number;
+  endJ2000S: number;
+}
+
+/** One daily CSSI space-weather row. */
+export interface SpaceWeatherDay {
+  year: number;
+  month: number;
+  day: number;
+  class: "observed" | "dailyPredicted";
+  bsrn: number;
+  nd: number;
+  kp: number[];
+  kpSum: number;
+  ap: number[];
+  apAvg: number;
+  cp: number;
+  c9: number;
+  isn: number;
+  fluxQualifier?: string;
+  f107Obs: number;
+  f107Adj: number;
+  f107ObsCenter81: number;
+  f107ObsLast81: number;
+  f107AdjCenter81: number;
+  f107AdjLast81: number;
+}
+
+/** One monthly predicted CSSI row. */
+export interface SpaceWeatherMonthly {
+  year: number;
+  month: number;
+  f107: number;
+  f107a: number;
+  ap?: number;
+}
+
+/** Sample returned by `SpaceWeatherTable.sampleAt`. */
+export interface SpaceWeatherSample {
+  f107: number;
+  f107a: number;
+  ap: number;
+  class: "observed" | "dailyPredicted" | "monthlyPredicted";
+  apDefaulted: boolean;
+}
+
+/** Optional table sampling policy. */
+export interface SpaceWeatherSamplePolicy {
+  defaultMonthlyAp?: number;
+}
+
+/** Decay request passed to `estimateDecayWithSpaceWeather`. */
+export interface SpaceWeatherDecayRequest {
+  epochS: number;
+  positionKm: [number, number, number];
+  velocityKmS: [number, number, number];
+  scanStepS?: number;
+  maxDurationS?: number;
+  maxScanSamples?: number;
+  reentryAltitudeKm?: number;
+  crossingToleranceS?: number;
+}
+
+/** Decay result returned by `estimateDecayWithSpaceWeather`. */
+export interface SpaceWeatherDecayResult {
+  timeToDecayS: number;
+  reentryEpochS: number;
+  reentryPositionKm: [number, number, number];
+  reentryVelocityKmS: [number, number, number];
+  reentryAltitudeKm: number;
+}
+
+// --- RINEX QC and repair ----------------------------------------------------
+
+/** Location attached to a RINEX lint finding. */
+export interface RinexFindingRef {
+  epochIndex?: number;
+  satellite?: string;
+  field?: string;
+}
+
+/** One lint finding from `lintRinexObs` or `lintRinexNav`. */
+export interface RinexFinding {
+  code: string;
+  severity: "fatal" | "error" | "warning" | "info";
+  specRef: string;
+  repairable: boolean;
+  at: RinexFindingRef;
+  detail: string;
+}
+
+/** Shared RINEX lint report. */
+export interface RinexLintReport {
+  clean: boolean;
+  decodedFromCrinex: boolean;
+  findingCount: number;
+  counts: { fatal: number; error: number; warning: number; info: number };
+  findings: RinexFinding[];
+}
+
+/** Options accepted by `repairRinexObs`. */
+export interface RinexObsRepairOptions {
+  fileStamp?: string;
+  setInterval?: boolean;
+  setTimeOfLastObs?: boolean;
+  setObsCounts?: boolean;
+  dropEmptyRecords?: boolean;
+  sortRecords?: boolean;
+}
+
+/** Options accepted by `repairRinexNav`. */
+export interface RinexNavRepairOptions {
+  fileStamp?: string;
+  dropUnsupported?: boolean;
+  sortRecords?: boolean;
+}
+
+/** Options accepted by `observationQc`. */
+export interface ObservationQcOptions {
+  minSatellitesPerEpoch?: number;
+  expectedIntervalS?: number;
+  checkCycleSlips?: boolean;
+  geometryFreeThresholdM?: number;
+  melbourneWubbenaThresholdCycles?: number;
+  gapThresholdS?: number;
+}
+
+/** One satellite summary in an observation QC report. */
+export interface ObservationQcSatellite {
+  satellite: string;
+  epochsWithObservations: number;
+  valueObservations: number;
+}
+
+/** Signal-strength indicator histogram. */
+export interface ObservationQcSsi {
+  counts: number[];
+}
+
+/** SNR summary for one signal. */
+export interface ObservationQcSnr {
+  n: number;
+  mean: number;
+  min: number;
+  max: number;
+  std: number;
+}
+
+/** One satellite/signal summary in an observation QC report. */
+export interface ObservationQcSatelliteSignal {
+  satellite: string;
+  code: string;
+  valueObservations: number;
+  ssi: ObservationQcSsi;
+  snr?: ObservationQcSnr;
+}
+
+/** One system/signal summary in an observation QC report. */
+export interface ObservationQcSystemSignal {
+  system: string;
+  code: string;
+  valueObservations: number;
+  ssi: ObservationQcSsi;
+  snr?: ObservationQcSnr;
+}
+
+/** Plain object returned by `observationQc`. */
+export interface ObservationQcReport {
+  totalEpochRecords: number;
+  observationEpochs: number;
+  eventRecords: number;
+  powerFailureEpochs: number;
+  skippedRecords: number;
+  intervalS?: number;
+  intervalSource?: string;
+  missingEpochs: number;
+  dataGaps: unknown[];
+  satellites: ObservationQcSatellite[];
+  satelliteSignals: ObservationQcSatelliteSignal[];
+  systemSignals: ObservationQcSystemSignal[];
+  notes: string[];
+}
+
 // --- RTK baseline solving ---------------------------------------------------
 //
 // `solveRtkFloat(config)` / `solveRtkFixed(config)` deserialize through serde.
@@ -890,13 +1425,7 @@ export interface BroadcastCompareReport {
 
 /** Lower-case constellation label, e.g. "gps". GPS is supported today. */
 export type ConstellationSystem =
-  | "gps"
-  | "glonass"
-  | "galileo"
-  | "beidou"
-  | "qzss"
-  | "navic"
-  | "sbas";
+  "gps" | "glonass" | "galileo" | "beidou" | "qzss" | "navic" | "sbas";
 
 /** CelesTrak `gps-ops` provenance preserved on a record. */
 export interface CelestrakSource {
@@ -1403,10 +1932,7 @@ export interface LnavOptions {
 
 /** Geometric classification of a two-body orbit. */
 export type OrbitType =
-  | "ellipticalInclined"
-  | "ellipticalEquatorial"
-  | "circularInclined"
-  | "circularEquatorial";
+  "ellipticalInclined" | "ellipticalEquatorial" | "circularInclined" | "circularEquatorial";
 
 /**
  * Classical (Keplerian) orbital elements in the Vallado convention. Returned by
@@ -1530,6 +2056,21 @@ export interface RtcmMsmSignal {
   finePhaseRangeRate?: number;
 }
 
+/** Derived RINEX LLI for one MSM signal cell. */
+export interface RtcmCellLli {
+  satelliteId: number;
+  signalId: number;
+  /** RINEX LLI value; bit 0 is loss of lock, bit 1 is half-cycle ambiguity. */
+  lli: number;
+  minLockTimeMs?: number;
+}
+
+/** Previous lock-state input for `rtcmDeriveLli`. */
+export interface RtcmPreviousLock {
+  minLockTimeMs?: number;
+  elapsedMs: number;
+}
+
 /** An MSM4 / MSM7 multi-signal observation message. */
 export interface RtcmMsm {
   type: "msm";
@@ -1650,6 +2191,32 @@ export interface RtcmScannedFrame {
   /** Message body (bytes between the length word and the CRC). */
   body: Uint8Array;
   frameLen: number;
+}
+
+/** One CRC-valid frame skipped by `decodeRtcmStream`. */
+export interface RtcmFrameSkip {
+  offset: number;
+  messageNumber?: number;
+  reason: "truncated" | "malformed";
+  message?: string;
+}
+
+/** Stream diagnostics returned by `decodeRtcmStream`. */
+export interface RtcmStreamDiagnostics {
+  resyncBytes: number;
+  skippedFrames: RtcmFrameSkip[];
+}
+
+/** RTCM stream decode result returned by `decodeRtcmStream`. */
+export interface RtcmStream {
+  messages: RtcmMessage[];
+  diagnostics: RtcmStreamDiagnostics;
+}
+
+/** RINEX LLI bit constants used by RTCM MSM helpers. */
+export interface RtcmLliBits {
+  lossOfLock: number;
+  halfCycle: number;
 }
 
 // ---------------------------------------------------------------------------

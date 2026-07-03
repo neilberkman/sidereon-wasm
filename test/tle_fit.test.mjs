@@ -1,0 +1,104 @@
+// Inverse SGP4 fitting from a TEME sample arc through the WASM binding.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+import { Tle, fitTle } from "../pkg-node/sidereon.js";
+
+import { f64Bits } from "./helpers.mjs";
+
+const L1 = "1 25544U 98067A   18183.80969102  .00002605  00000-0  48194-4 0  9999";
+const L2 = "2 25544  51.6418 282.1100 0003956 227.7591 296.3436 15.54198036120477";
+
+const unixUsToJdParts = (us) => {
+  const jd = 2440587.5 + Number(us) / 86400_000000;
+  const whole = Math.trunc(jd);
+  return [whole, jd - whole];
+};
+
+const bits = (values) =>
+  Array.from(values, (x) => `0x${f64Bits(x).toString(16).padStart(16, "0")}`);
+
+test("fitTle recovers a core-pinned TLE and OMM from propagated samples", () => {
+  const truth = new Tle(L1, L2);
+  const baseUs =
+    BigInt(Date.UTC(2018, 0, 1, 0, 0, 0)) * 1000n + BigInt(Math.round(183.80969102 * 86400_000000));
+  const epochs = BigInt64Array.from(
+    [-180, -120, -60, 0, 60, 120, 180].map((dt) => baseUs + BigInt(dt) * 1_000_000n),
+  );
+  const truthArc = truth.propagate(epochs);
+  const samples = Array.from(epochs, (epoch, i) => ({
+    epoch: unixUsToJdParts(epoch),
+    positionTemeKm: Array.from(truthArc.positionKm.slice(i * 3, i * 3 + 3)),
+    velocityTemeKmS: Array.from(truthArc.velocityKmS.slice(i * 3, i * 3 + 3)),
+  }));
+
+  const fit = fitTle(samples, {
+    fitBstar: true,
+    useVelocity: true,
+    velocityWeightS: 60,
+    loss: "softL1",
+    fScale: 1,
+    xScale: "jac",
+    maxNfev: 80,
+    metadata: {
+      catalogNumber: 25544,
+      classification: "U",
+      internationalDesignator: "98067A",
+      elementSetNumber: 999,
+      revAtEpoch: 12047,
+      objectName: "ISS (ZARYA)",
+    },
+  });
+
+  assert.equal(fit.line1, "1 25544U 98067A   18184.80969102  .00000000  00000-0  69039-5 0  9999");
+  assert.equal(fit.line2, "2 25544  51.6418 277.1225 0003956 231.4635 131.4746 15.54204685120470");
+  assert.deepEqual(fit.toLines(), [fit.line1, fit.line2]);
+  assert.equal(fit.omm.noradCatId, 25544);
+  assert.equal(fit.omm.classificationType, "U");
+  assert.equal(fit.omm.revAtEpoch, 12047n);
+  assert.equal(fit.omm.objectName, "ISS (ZARYA)");
+  assert.equal(fit.omm.objectId, "1998-067A");
+  assert.equal(fit.omm.epoch.iso8601, "2018-07-03T19:25:57.304112613201141");
+
+  assert.equal(f64Bits(fit.stats.rms_position_km), 0x3f16b6c5b2fdd699n);
+  assert.equal(f64Bits(fit.stats.max_position_km), 0x3f21f40358bd1e50n);
+  assert.deepEqual(bits(fit.stats.rms_position_axes_km), [
+    "0x3f0ab48fe4491db2",
+    "0x3ef562b5e3f709df",
+    "0x3f119467e55ede03",
+  ]);
+  assert.equal(f64Bits(fit.stats.rms_velocity_km_s), 0x3e9c2faecae62509n);
+  assert.equal(f64Bits(fit.stats.tle_rms_position_km), 0x3f7ec36ba1b07a29n);
+  assert.equal(fit.stats.status, 3);
+  assert.equal(fit.stats.nfev, 14);
+  assert.equal(fit.stats.njev, 7);
+  assert.equal(f64Bits(fit.stats.cost), 0x3e5e99e8d0000000n);
+  assert.equal(f64Bits(fit.stats.optimality), 0x3f8af39c2b993179n);
+  assert.equal(fit.stats.bstar_observable, false);
+  assert.equal(fit.stats.seed_refine_passes, 2);
+
+  assert.equal(f64Bits(fit.elements.epoch[0]), 0x4142c15f80000000n);
+  assert.equal(f64Bits(fit.elements.epoch[1]), 0x3fd3d1fa48800000n);
+  assert.equal(f64Bits(fit.elements.bstar), 0x3edcf4f54ed84169n);
+  assert.equal(f64Bits(fit.elements.eccentricity), 0x3f39ec4ed0714d2an);
+  assert.equal(f64Bits(fit.elements.argument_of_perigee_deg), 0x406ceed54ef04e01n);
+  assert.equal(f64Bits(fit.elements.inclination_deg), 0x4049d2268084f515n);
+  assert.equal(f64Bits(fit.elements.mean_anomaly_deg), 0x40606f302ff8e5d7n);
+  assert.equal(f64Bits(fit.elements.mean_motion_rev_per_day), 0x402f15872a417487n);
+  assert.equal(f64Bits(fit.elements.right_ascension_deg), 0x407151f5ba40ee40n);
+  assert.equal(fit.elements.catalog_number, 25544);
+
+  const fitted = new Tle(fit.line1, fit.line2);
+  const check = fitted.propagate(BigInt64Array.from([epochs[3]]));
+  assert.deepEqual(bits(check.positionKm), [
+    "0x409066f98d3f8924",
+    "0xc0ba29d1a62fd437",
+    "0x4070aa459703f1cc",
+  ]);
+  assert.deepEqual(bits(check.velocityKmS), [
+    "0x4012a8eca8872010",
+    "0x3fef32249896b8f0",
+    "0x40180641d28932d3",
+  ]);
+});

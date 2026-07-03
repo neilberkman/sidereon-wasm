@@ -157,5 +157,9 @@ fn covariance6_error_message(error: Covariance6Error) -> &'static str {
         Covariance6Error::NonFinite => "must contain only finite values",
         Covariance6Error::Asymmetric => "must be symmetric",
         Covariance6Error::NotPositiveSemidefinite => "must be positive semidefinite",
+        Covariance6Error::NotFactorizable => "must be factorizable",
+        Covariance6Error::InvalidInterpolationParameter => {
+            "must use an interpolation parameter on [0, 1]"
+        }
     }
 }

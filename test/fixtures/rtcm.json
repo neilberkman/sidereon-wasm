@@ -1,5 +1,5 @@
 {
-  "comment": "RTCM 3 byte streams generated from sidereon_core::rtcm encoders. 'stream' is a 1006 station-coordinate frame, a stray 0xD3 preamble to exercise resync, then a 1019 GPS ephemeris frame. 'single1005' is a single 1005 station frame for decodeRtcmFrame.",
-  "stream": "d300153ee7d35742aa3c6d183e4605ff0c82ef2b54843a983e601700d312d3003d3fb3bff07b2e2a753000fff90789002ae0c01194c0000000fe0001406f400258a13b06407530fff63b9aca00000c23c346001b58ca5b1700fff830fb010bbcd5",
+  "comment": "RTCM 3 byte streams generated from sidereon_core::rtcm encoders. 'stream' is a 1006 station-coordinate frame followed by a 1019 GPS ephemeris frame. 'single1005' is a single 1005 station frame for decodeRtcmFrame.",
+  "stream": "d300153ee7d30302aa3c6d183e4605ff0c02ef2b54843a98d8b487d3003d3fb207b07ffb2a03e800fffd00c0e42aff9100deffed2979ffce003d0900003ca0eebb0003e8000700087a23fff7000f423f014dfff421cffffc00fd0076821c",
   "single1005": "d300133ed7d35742aa3c6d183e4605ff0c82ef2b54842dc4c8"
 }

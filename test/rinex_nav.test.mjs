@@ -12,7 +12,11 @@ import {
   parseRinexGlonassRecords,
   parseRinexIonoCorrections,
   parseRinexLeapSeconds,
+  BroadcastDelayTerm,
+  CnavSignal,
   NavMessage,
+  cnavUraNominalM,
+  civilToJ2000Seconds,
   navMessageLabel,
 } from "../pkg-node/sidereon.js";
 
@@ -21,6 +25,7 @@ import { fixture, fixtureJson, f64Bits, hexToF64, norm } from "./helpers.mjs";
 const ESBC = "nav/ESBC00DNK_R_20201770000_01D_MN.rnx";
 const BRDC = "nav/BRDC00GOP_R_20210010000_01D_MN.rnx";
 const KMS = "nav/KMS300DNK_R_20221591000_01H_MN.rnx";
+const BRD4 = "nav/BRD400DLR_S_20261800000_01H_MN_trim.rnx";
 
 const MESSAGE_LABEL_BY_GOLDEN = {
   GPS_LNAV: "gps_lnav",
@@ -133,6 +138,70 @@ test("rinex v4 nav records parse", () => {
   const store = parseRinexNav(fixture(KMS));
   assert.ok(store.recordCount > 0);
   assert.equal(store.leapSeconds, 18.0);
+});
+
+test("CNAV/RINEX-4 record evaluation exposes URA and ISC terms", () => {
+  const records = parseRinexNavRecords(fixture(BRD4));
+  assert.equal(records.length, 6);
+  assert.deepEqual(
+    countBy(records, (r) => navMessageLabel(r.message)),
+    {
+      gps_lnav: 2,
+      gps_cnav: 2,
+      qzss_cnav: 1,
+      qzss_cnav2: 1,
+    },
+  );
+
+  const record = records.find(
+    (r) => r.satellite === "G01" && navMessageLabel(r.message) === "gps_cnav",
+  );
+  assert.equal(record.week, 2425);
+  assert.equal(record.elements.toeSow, 91800);
+  assert.equal(record.issue, 306);
+  assert.equal(record.issueMessage, NavMessage.GpsCnav);
+  assert.notEqual(record.cnav, undefined);
+
+  assert.equal(f64Bits(record.cnav.adotMS), 0x3f629ffffffffb7fn);
+  assert.equal(f64Bits(record.cnav.deltaN0DotRadS2), 0xbd2006eb857c7c91n);
+  assert.equal(record.cnav.topWeek, 2424);
+  assert.equal(record.cnav.topTowS, 603900);
+  assert.equal(record.cnav.uraEdIndex, 0);
+  assert.equal(f64Bits(record.cnav.uraNedM(record.week, record.cnav.topTowS)), 0x406f1fc2e2000000n);
+  assert.equal(cnavUraNominalM(15), undefined);
+  assert.equal(cnavUraNominalM(3), 5.7);
+
+  assert.equal(
+    f64Bits(record.groupDelays.cnavSingleFrequencyCorrectionS(CnavSignal.L1Ca)),
+    0xbe425ffffffffffan,
+  );
+  assert.equal(
+    f64Bits(record.groupDelays.get(BroadcastDelayTerm.CnavIscL1Ca)),
+    0xbdf3fffffffffd34n,
+  );
+
+  const state = record.evaluate(record.elements.toeSow);
+  assert.equal(f64Bits(state.clockS), 0x3f2ee71f5f4100cdn);
+  assert.deepEqual(
+    [state.xM, state.yM, state.zM].map((x) => `0x${f64Bits(x).toString(16).padStart(16, "0")}`),
+    ["0xc1746a00f3ea856e", "0xc16e037eb4cce2ab", "0xc1364141082327d0"],
+  );
+});
+
+test("BroadcastEphemeris.evaluate selects a store record by GPST-like J2000 seconds", () => {
+  const store = parseRinexNav(fixture(BRD4));
+  const record = store.records[0];
+  const gpsEpoch = civilToJ2000Seconds(1980, 1, 6, 0, 0, 0);
+  const query = gpsEpoch + record.week * 604800 + record.elements.toeSow;
+  const state = store.evaluate(record.satellite, query);
+
+  assert.equal(state.satellite, "G01");
+  assert.equal(state.tJ2000S, 835970400);
+  assert.equal(f64Bits(state.clockS), 0x3f2ee69457945987n);
+  assert.deepEqual(
+    Array.from(state.positionM, (x) => `0x${f64Bits(x).toString(16).padStart(16, "0")}`),
+    ["0xc1735dc3f3f5a2d5", "0xc16dee83fc993d03", "0xc15ac9a1aad952c8"],
+  );
 });
 
 test("broadcast record evaluate matches the core golden bit-exact", () => {

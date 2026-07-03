@@ -3,6 +3,7 @@
 //! satellite (and its parsed elements) built once from the two TLE lines,
 //! unchanged.
 
+use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
 use sidereon::passes::{
@@ -11,14 +12,19 @@ use sidereon::passes::{
     GroundStation as CoreGroundStation, PassFinderOptions, SatellitePass as CoreSatellitePass,
     UtcInstant, VisibleSatellite as CoreVisibleSatellite,
 };
-use sidereon::sgp4::{parse_tle_file_with_opsmode, OpsMode, Satellite};
+use sidereon::sgp4::{
+    fit_tle as core_fit_tle, parse_tle_file_with_opsmode, FitConfig, FitEpoch, FitSample,
+    JulianDate as CoreJulianDate, Loss, OpsMode, Satellite, TleFit as CoreTleFit, TleMetadata,
+    XScale,
+};
 use sidereon::tle::{
     encode as encode_tle, parse as parse_tle, ChecksumWarning as CoreChecksumWarning, TleElements,
 };
 use sidereon_core::geometry::visible_at_elevation_mask;
 
 use crate::error::{engine_error, range_error, type_error};
-use crate::marshal::instants;
+use crate::marshal::{instants, vec3_finite};
+use crate::omm::Omm;
 
 /// A geodetic ground station: WGS84 latitude/longitude in degrees, altitude in
 /// metres. Pass to [`Tle.lookAngles`] / [`Tle.findPasses`].
@@ -203,6 +209,237 @@ impl Tle {
     pub(crate) fn core_satellite(&self) -> &Satellite {
         &self.satellite
     }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FitSampleInput {
+    epoch: Vec<f64>,
+    position_teme_km: Vec<f64>,
+    #[serde(default)]
+    velocity_teme_km_s: Option<Vec<f64>>,
+}
+
+fn split_jd(values: &[f64], name: &str) -> Result<CoreJulianDate, JsValue> {
+    if values.len() != 2 {
+        return Err(type_error(&format!(
+            "{name} must have length 2 as [jdWhole, jdFraction], got {}",
+            values.len()
+        )));
+    }
+    if !values[0].is_finite() || !values[1].is_finite() {
+        return Err(range_error(&format!("{name} values must be finite")));
+    }
+    Ok(CoreJulianDate(values[0], values[1]))
+}
+
+impl FitSampleInput {
+    fn to_core(&self, index: usize) -> Result<FitSample, JsValue> {
+        Ok(FitSample {
+            epoch: split_jd(&self.epoch, &format!("samples[{index}].epoch"))?,
+            position_teme_km: vec3_finite(
+                &format!("samples[{index}].positionTemeKm"),
+                &self.position_teme_km,
+            )?,
+            velocity_teme_km_s: self
+                .velocity_teme_km_s
+                .as_ref()
+                .map(|velocity| vec3_finite(&format!("samples[{index}].velocityTemeKmS"), velocity))
+                .transpose()?,
+        })
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct FitMetadataInput {
+    catalog_number: Option<u32>,
+    classification: Option<String>,
+    international_designator: Option<String>,
+    element_set_number: Option<i32>,
+    rev_at_epoch: Option<i64>,
+    object_name: Option<String>,
+}
+
+impl FitMetadataInput {
+    fn to_core(&self) -> TleMetadata {
+        let defaults = TleMetadata::default();
+        TleMetadata {
+            catalog_number: self.catalog_number.unwrap_or(defaults.catalog_number),
+            classification: self
+                .classification
+                .clone()
+                .unwrap_or(defaults.classification),
+            international_designator: self
+                .international_designator
+                .clone()
+                .unwrap_or(defaults.international_designator),
+            element_set_number: self
+                .element_set_number
+                .unwrap_or(defaults.element_set_number),
+            rev_at_epoch: self.rev_at_epoch.unwrap_or(defaults.rev_at_epoch),
+            object_name: self.object_name.clone().unwrap_or(defaults.object_name),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum XScaleInput {
+    Label(String),
+    Values(Vec<f64>),
+}
+
+fn x_scale(input: Option<XScaleInput>) -> Result<Option<XScale>, JsValue> {
+    match input {
+        None => Ok(None),
+        Some(XScaleInput::Label(label)) => match label.as_str() {
+            "unit" => Ok(Some(XScale::Unit)),
+            "jac" => Ok(Some(XScale::Jac)),
+            other => Err(type_error(&format!(
+                "invalid xScale {other:?}: expected \"unit\", \"jac\", or a numeric array"
+            ))),
+        },
+        Some(XScaleInput::Values(values)) => Ok(Some(XScale::Values(values))),
+    }
+}
+
+fn loss(label: Option<&str>) -> Result<Loss, JsValue> {
+    match label.unwrap_or("linear") {
+        "linear" => Ok(Loss::Linear),
+        "softL1" | "soft_l1" => Ok(Loss::SoftL1),
+        "huber" => Ok(Loss::Huber),
+        "cauchy" => Ok(Loss::Cauchy),
+        "arctan" => Ok(Loss::Arctan),
+        other => Err(type_error(&format!(
+            "invalid loss {other:?}: expected \"linear\", \"softL1\", \"huber\", \"cauchy\", or \"arctan\""
+        ))),
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct FitConfigInput {
+    epoch: Option<String>,
+    epoch_sample_index: Option<usize>,
+    epoch_jd: Option<Vec<f64>>,
+    fit_bstar: Option<bool>,
+    bstar_seed: Option<f64>,
+    use_velocity: Option<bool>,
+    velocity_weight_s: Option<f64>,
+    weights: Option<Vec<f64>>,
+    ops_mode: Option<String>,
+    ftol: Option<f64>,
+    xtol: Option<f64>,
+    gtol: Option<f64>,
+    max_nfev: Option<usize>,
+    x_scale: Option<XScaleInput>,
+    loss: Option<String>,
+    f_scale: Option<f64>,
+    metadata: Option<FitMetadataInput>,
+}
+
+fn fit_epoch(input: &FitConfigInput) -> Result<FitEpoch, JsValue> {
+    if let Some(jd) = &input.epoch_jd {
+        return Ok(FitEpoch::Jd(split_jd(jd, "epochJd")?));
+    }
+    if let Some(index) = input.epoch_sample_index {
+        return Ok(FitEpoch::Sample(index));
+    }
+    match input.epoch.as_deref().unwrap_or("midpoint") {
+        "midpoint" => Ok(FitEpoch::Midpoint),
+        "first" => Ok(FitEpoch::First),
+        "last" => Ok(FitEpoch::Last),
+        "sample" => Err(type_error(
+            "epoch \"sample\" requires epochSampleIndex to be set",
+        )),
+        other => Err(type_error(&format!(
+            "invalid fit epoch {other:?}: expected \"midpoint\", \"first\", or \"last\""
+        ))),
+    }
+}
+
+fn fit_config(value: JsValue) -> Result<FitConfig, JsValue> {
+    let input: FitConfigInput = if value.is_null() || value.is_undefined() {
+        FitConfigInput::default()
+    } else {
+        serde_wasm_bindgen::from_value(value)
+            .map_err(|e| type_error(&format!("invalid TLE fit config: {e}")))?
+    };
+    let defaults = FitConfig::default();
+    Ok(FitConfig {
+        epoch: fit_epoch(&input)?,
+        fit_bstar: input.fit_bstar.unwrap_or(defaults.fit_bstar),
+        bstar_seed: input.bstar_seed.unwrap_or(defaults.bstar_seed),
+        use_velocity: input.use_velocity.unwrap_or(defaults.use_velocity),
+        velocity_weight_s: input.velocity_weight_s,
+        weights: input.weights,
+        opsmode: ops_mode(input.ops_mode)?,
+        ftol: input.ftol,
+        xtol: input.xtol,
+        gtol: input.gtol,
+        max_nfev: input.max_nfev,
+        x_scale: x_scale(input.x_scale)?,
+        loss: loss(input.loss.as_deref())?,
+        f_scale: input.f_scale.unwrap_or(defaults.f_scale),
+        metadata: input
+            .metadata
+            .map(|metadata| metadata.to_core())
+            .unwrap_or(defaults.metadata),
+    })
+}
+
+/// Result of fitting a TLE to TEME samples.
+#[wasm_bindgen]
+pub struct TleFit {
+    inner: CoreTleFit,
+}
+
+#[wasm_bindgen]
+impl TleFit {
+    #[wasm_bindgen(getter)]
+    pub fn elements(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.inner.elements).map_err(|e| type_error(&e.to_string()))
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn line1(&self) -> String {
+        self.inner.line1.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn line2(&self) -> String {
+        self.inner.line2.clone()
+    }
+
+    #[wasm_bindgen(js_name = toLines)]
+    pub fn to_lines(&self) -> Vec<String> {
+        vec![self.inner.line1.clone(), self.inner.line2.clone()]
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn omm(&self) -> Omm {
+        Omm::from_core(self.inner.omm.clone())
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn stats(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.inner.stats).map_err(|e| type_error(&e.to_string()))
+    }
+}
+
+/// Fit SGP4 mean elements and optional B* to TEME state samples.
+#[wasm_bindgen(js_name = fitTle)]
+pub fn fit_tle(samples: JsValue, config: JsValue) -> Result<TleFit, JsValue> {
+    let sample_inputs: Vec<FitSampleInput> = serde_wasm_bindgen::from_value(samples)
+        .map_err(|e| type_error(&format!("invalid TLE fit samples: {e}")))?;
+    let core_samples: Vec<_> = sample_inputs
+        .iter()
+        .enumerate()
+        .map(|(index, sample)| sample.to_core(index))
+        .collect::<Result<_, _>>()?;
+    let inner = core_fit_tle(&core_samples, &fit_config(config)?).map_err(engine_error)?;
+    Ok(TleFit { inner })
 }
 
 #[wasm_bindgen]

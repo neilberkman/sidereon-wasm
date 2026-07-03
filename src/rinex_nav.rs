@@ -5,13 +5,18 @@
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::ephemeris::{
-    is_beidou_geo, satellite_state, BroadcastEphemeris as CoreBroadcastStore, BroadcastRecord,
-    ClockPolynomial, GlonassRecord, IonoCorrections, KeplerianElements, KlobucharAlphaBeta,
-    SatelliteState,
+    cnav_ura_ned_m as core_cnav_ura_ned_m, cnav_ura_nominal_m as core_cnav_ura_nominal_m,
+    is_beidou_geo, satellite_state, BroadcastEphemeris as CoreBroadcastStore,
+    BroadcastGroupDelayTerm, BroadcastGroupDelays, BroadcastRecord, ClockPolynomial,
+    CnavParameters, CnavSignal as CoreCnavSignal, GlonassRecord, IonoCorrections,
+    KeplerianElements, KlobucharAlphaBeta, SatelliteState,
 };
+use sidereon_core::prelude::EphemerisSource;
 use sidereon_core::rinex::nav::{
     encode_nav, parse_glonass, parse_iono_corrections, parse_leap_seconds, parse_nav,
 };
+use sidereon_core::{astro::time::GnssWeekTow, GnssSatelliteId};
+use std::str::FromStr;
 
 use crate::error::{engine_error, range_error, utf8_text};
 
@@ -21,6 +26,14 @@ use crate::error::{engine_error, range_error, utf8_text};
 pub enum NavMessage {
     /// GPS legacy LNAV.
     GpsLnav,
+    /// GPS CNAV.
+    GpsCnav,
+    /// GPS CNAV-2.
+    GpsCnav2,
+    /// QZSS CNAV.
+    QzssCnav,
+    /// QZSS CNAV-2.
+    QzssCnav2,
     /// Galileo I/NAV.
     GalileoInav,
     /// Galileo F/NAV.
@@ -31,10 +44,76 @@ pub enum NavMessage {
     BeidouD2,
 }
 
+/// GPS/QZSS signal used for CNAV inter-signal correction accessors.
+#[wasm_bindgen]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CnavSignal {
+    L1Ca,
+    L2C,
+    L5I5,
+    L5Q5,
+    L1Cp,
+    L1Cd,
+}
+
+fn core_cnav_signal(signal: CnavSignal) -> CoreCnavSignal {
+    match signal {
+        CnavSignal::L1Ca => CoreCnavSignal::L1Ca,
+        CnavSignal::L2C => CoreCnavSignal::L2C,
+        CnavSignal::L5I5 => CoreCnavSignal::L5I5,
+        CnavSignal::L5Q5 => CoreCnavSignal::L5Q5,
+        CnavSignal::L1Cp => CoreCnavSignal::L1Cp,
+        CnavSignal::L1Cd => CoreCnavSignal::L1Cd,
+    }
+}
+
+/// Broadcast group-delay term selector.
+#[wasm_bindgen]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BroadcastDelayTerm {
+    GpsTgd,
+    GalileoBgdE5aE1,
+    GalileoBgdE5bE1,
+    BeidouTgd1,
+    BeidouTgd2,
+    CnavIscL1Ca,
+    CnavIscL2C,
+    CnavIscL5I5,
+    CnavIscL5Q5,
+    CnavIscL1Cd,
+    CnavIscL1Cp,
+}
+
+fn core_delay_term(term: BroadcastDelayTerm) -> BroadcastGroupDelayTerm {
+    match term {
+        BroadcastDelayTerm::GpsTgd => BroadcastGroupDelayTerm::GpsTgd,
+        BroadcastDelayTerm::GalileoBgdE5aE1 => BroadcastGroupDelayTerm::GalileoBgdE5aE1,
+        BroadcastDelayTerm::GalileoBgdE5bE1 => BroadcastGroupDelayTerm::GalileoBgdE5bE1,
+        BroadcastDelayTerm::BeidouTgd1 => BroadcastGroupDelayTerm::BeidouTgd1,
+        BroadcastDelayTerm::BeidouTgd2 => BroadcastGroupDelayTerm::BeidouTgd2,
+        BroadcastDelayTerm::CnavIscL1Ca => BroadcastGroupDelayTerm::CnavIscL1Ca,
+        BroadcastDelayTerm::CnavIscL2C => BroadcastGroupDelayTerm::CnavIscL2C,
+        BroadcastDelayTerm::CnavIscL5I5 => BroadcastGroupDelayTerm::CnavIscL5I5,
+        BroadcastDelayTerm::CnavIscL5Q5 => BroadcastGroupDelayTerm::CnavIscL5Q5,
+        BroadcastDelayTerm::CnavIscL1Cd => BroadcastGroupDelayTerm::CnavIscL1Cd,
+        BroadcastDelayTerm::CnavIscL1Cp => BroadcastGroupDelayTerm::CnavIscL1Cp,
+    }
+}
+
+/// Nominal GPS/QZSS CNAV URA meters for an ED/NED0 index.
+#[wasm_bindgen(js_name = cnavUraNominalM)]
+pub fn cnav_ura_nominal_m(index: i8) -> Option<f64> {
+    core_cnav_ura_nominal_m(index)
+}
+
 fn map_nav_message(message: sidereon_core::ephemeris::NavMessage) -> NavMessage {
     use sidereon_core::ephemeris::NavMessage as Core;
     match message {
         Core::GpsLnav => NavMessage::GpsLnav,
+        Core::GpsCnav => NavMessage::GpsCnav,
+        Core::GpsCnav2 => NavMessage::GpsCnav2,
+        Core::QzssCnav => NavMessage::QzssCnav,
+        Core::QzssCnav2 => NavMessage::QzssCnav2,
         Core::GalileoInav => NavMessage::GalileoInav,
         Core::GalileoFnav => NavMessage::GalileoFnav,
         Core::BeidouD1 => NavMessage::BeidouD1,
@@ -47,6 +126,10 @@ fn map_nav_message(message: sidereon_core::ephemeris::NavMessage) -> NavMessage 
 pub fn nav_message_label(message: NavMessage) -> String {
     match message {
         NavMessage::GpsLnav => "gps_lnav",
+        NavMessage::GpsCnav => "gps_cnav",
+        NavMessage::GpsCnav2 => "gps_cnav2",
+        NavMessage::QzssCnav => "qzss_cnav",
+        NavMessage::QzssCnav2 => "qzss_cnav2",
         NavMessage::GalileoInav => "galileo_inav",
         NavMessage::GalileoFnav => "galileo_fnav",
         NavMessage::BeidouD1 => "beidou_d1",
@@ -231,7 +314,98 @@ impl BroadcastEvaluation {
 /// One GPS, Galileo, or BeiDou broadcast ephemeris record from RINEX NAV.
 #[wasm_bindgen]
 pub struct BroadcastRecordJs {
-    inner: BroadcastRecord,
+    pub(crate) inner: BroadcastRecord,
+}
+
+impl BroadcastRecordJs {
+    pub(crate) fn from_core(inner: BroadcastRecord) -> Self {
+        Self { inner }
+    }
+}
+
+/// CNAV/CNAV-2 fields with no legacy LNAV counterpart.
+#[wasm_bindgen]
+pub struct CnavParametersJs {
+    inner: CnavParameters,
+}
+
+#[wasm_bindgen]
+impl CnavParametersJs {
+    #[wasm_bindgen(getter, js_name = adotMS)]
+    pub fn adot_m_s(&self) -> f64 {
+        self.inner.adot_m_s
+    }
+
+    #[wasm_bindgen(getter, js_name = deltaN0DotRadS2)]
+    pub fn delta_n0_dot_rad_s2(&self) -> f64 {
+        self.inner.delta_n0_dot_rad_s2
+    }
+
+    #[wasm_bindgen(getter, js_name = topWeek)]
+    pub fn top_week(&self) -> u32 {
+        self.inner.top.week
+    }
+
+    #[wasm_bindgen(getter, js_name = topTowS)]
+    pub fn top_tow_s(&self) -> f64 {
+        self.inner.top.tow_s
+    }
+
+    #[wasm_bindgen(getter, js_name = uraEdIndex)]
+    pub fn ura_ed_index(&self) -> i8 {
+        self.inner.ura_ed_index
+    }
+
+    #[wasm_bindgen(getter, js_name = uraNed0Index)]
+    pub fn ura_ned0_index(&self) -> i8 {
+        self.inner.ura_ned0_index
+    }
+
+    #[wasm_bindgen(getter, js_name = uraNed1Index)]
+    pub fn ura_ned1_index(&self) -> u8 {
+        self.inner.ura_ned1_index
+    }
+
+    #[wasm_bindgen(getter, js_name = uraNed2Index)]
+    pub fn ura_ned2_index(&self) -> u8 {
+        self.inner.ura_ned2_index
+    }
+
+    #[wasm_bindgen(getter, js_name = transmissionTimeSow)]
+    pub fn transmission_time_sow(&self) -> f64 {
+        self.inner.transmission_time_sow
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn flags(&self) -> Option<u32> {
+        self.inner.flags
+    }
+
+    #[wasm_bindgen(js_name = uraNedM)]
+    pub fn ura_ned_m(&self, week: u32, tow_s: f64) -> Result<Option<f64>, JsValue> {
+        let t = GnssWeekTow::new(self.inner.top.system, week, tow_s).map_err(engine_error)?;
+        Ok(core_cnav_ura_ned_m(&self.inner, t))
+    }
+}
+
+/// Per-signal broadcast group-delay terms retained from a NAV record.
+#[wasm_bindgen]
+pub struct BroadcastGroupDelaysJs {
+    inner: BroadcastGroupDelays,
+}
+
+#[wasm_bindgen]
+impl BroadcastGroupDelaysJs {
+    #[wasm_bindgen(js_name = get)]
+    pub fn get(&self, term: BroadcastDelayTerm) -> Option<f64> {
+        self.inner.get(core_delay_term(term))
+    }
+
+    #[wasm_bindgen(js_name = cnavSingleFrequencyCorrectionS)]
+    pub fn cnav_single_frequency_correction_s(&self, signal: CnavSignal) -> Option<f64> {
+        self.inner
+            .cnav_single_frequency_correction_s(core_cnav_signal(signal))
+    }
 }
 
 #[wasm_bindgen]
@@ -246,6 +420,18 @@ impl BroadcastRecordJs {
     #[wasm_bindgen(getter)]
     pub fn message(&self) -> NavMessage {
         map_nav_message(self.inner.message)
+    }
+
+    /// Native issue-of-data value.
+    #[wasm_bindgen(getter)]
+    pub fn issue(&self) -> u32 {
+        self.inner.issue_of_data.issue
+    }
+
+    /// Message family attached to the issue-of-data value.
+    #[wasm_bindgen(getter, js_name = issueMessage)]
+    pub fn issue_message(&self) -> NavMessage {
+        map_nav_message(self.inner.issue_of_data.message)
     }
 
     /// Continuous constellation week number from the broadcast record.
@@ -292,6 +478,20 @@ impl BroadcastRecordJs {
     #[wasm_bindgen(getter, js_name = fitIntervalS)]
     pub fn fit_interval_s(&self) -> Option<f64> {
         self.inner.fit_interval_s
+    }
+
+    /// Broadcast group-delay terms carried by this record.
+    #[wasm_bindgen(getter, js_name = groupDelays)]
+    pub fn group_delays(&self) -> BroadcastGroupDelaysJs {
+        BroadcastGroupDelaysJs {
+            inner: self.inner.group_delays,
+        }
+    }
+
+    /// CNAV-family extension fields, or `undefined` for legacy records.
+    #[wasm_bindgen(getter)]
+    pub fn cnav(&self) -> Option<CnavParametersJs> {
+        self.inner.cnav.map(|inner| CnavParametersJs { inner })
     }
 
     /// Evaluate the broadcast record at a seconds-of-week epoch. `tSowS` is in
@@ -405,6 +605,12 @@ pub struct IonoCorrectionsJs {
     inner: IonoCorrections,
 }
 
+impl IonoCorrectionsJs {
+    pub(crate) fn from_core(inner: IonoCorrections) -> Self {
+        Self { inner }
+    }
+}
+
 #[wasm_bindgen]
 impl IonoCorrectionsJs {
     /// GPS Klobuchar coefficients, if the header has GPSA and GPSB.
@@ -430,6 +636,38 @@ pub struct BroadcastEphemeris {
     leap_seconds: Option<f64>,
 }
 
+/// Store-level broadcast ephemeris evaluation at a J2000 query epoch.
+#[wasm_bindgen]
+pub struct BroadcastStoreEvaluation {
+    satellite: String,
+    t_j2000_s: f64,
+    position_m: [f64; 3],
+    clock_s: f64,
+}
+
+#[wasm_bindgen]
+impl BroadcastStoreEvaluation {
+    #[wasm_bindgen(getter)]
+    pub fn satellite(&self) -> String {
+        self.satellite.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = tJ2000S)]
+    pub fn t_j2000_s(&self) -> f64 {
+        self.t_j2000_s
+    }
+
+    #[wasm_bindgen(getter, js_name = positionM)]
+    pub fn position_m(&self) -> Vec<f64> {
+        self.position_m.to_vec()
+    }
+
+    #[wasm_bindgen(getter, js_name = clockS)]
+    pub fn clock_s(&self) -> f64 {
+        self.clock_s
+    }
+}
+
 #[wasm_bindgen]
 impl BroadcastEphemeris {
     /// Usable GPS, Galileo, and BeiDou broadcast records in file order.
@@ -439,7 +677,7 @@ impl BroadcastEphemeris {
             .records()
             .iter()
             .copied()
-            .map(|inner| BroadcastRecordJs { inner })
+            .map(BroadcastRecordJs::from_core)
             .collect()
     }
 
@@ -480,6 +718,31 @@ impl BroadcastEphemeris {
         self.inner.glonass_records().len()
     }
 
+    /// Evaluate the store-selected broadcast state for `satellite` at GPST-like
+    /// J2000 seconds. Returns `undefined` when no usable record covers the query.
+    #[wasm_bindgen]
+    pub fn evaluate(
+        &self,
+        satellite: &str,
+        t_j2000_s: f64,
+    ) -> Result<Option<BroadcastStoreEvaluation>, JsValue> {
+        if !t_j2000_s.is_finite() {
+            return Err(range_error("tJ2000S must be a finite number"));
+        }
+        let sat = GnssSatelliteId::from_str(satellite).map_err(|_| {
+            crate::error::type_error(&format!("invalid satellite token: {satellite}"))
+        })?;
+        Ok(self
+            .inner
+            .position_clock_at_j2000_s(sat, t_j2000_s)
+            .map(|(position_m, clock_s)| BroadcastStoreEvaluation {
+                satellite: sat.to_string(),
+                t_j2000_s,
+                position_m,
+                clock_s,
+            }))
+    }
+
     /// Serialize the usable GPS, Galileo, and BeiDou broadcast records to
     /// standard RINEX 3 navigation text. Deterministic: the same record set
     /// always produces byte-identical text, and re-parsing the output yields the
@@ -518,7 +781,7 @@ pub fn parse_rinex_nav_records(bytes: &[u8]) -> Result<Vec<BroadcastRecordJs>, J
     Ok(parse_nav(&text)
         .map_err(engine_error)?
         .into_iter()
-        .map(|inner| BroadcastRecordJs { inner })
+        .map(BroadcastRecordJs::from_core)
         .collect())
 }
 

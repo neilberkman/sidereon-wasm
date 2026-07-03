@@ -24,6 +24,7 @@ mod broadcast_comparison;
 mod cdm;
 mod conjunction;
 mod constellation;
+mod covariance;
 mod coverage;
 mod crinex;
 mod dgnss;
@@ -46,7 +47,9 @@ mod least_squares;
 mod lnav;
 mod marshal;
 mod moving_baseline;
+mod nmea;
 mod normality;
+mod ntrip;
 mod observables;
 mod observation;
 mod oem;
@@ -64,6 +67,7 @@ mod rf;
 mod rinex_clock;
 mod rinex_nav;
 mod rinex_obs;
+mod rinex_qc;
 mod rtcm;
 mod rtk;
 mod rtk_arc;
@@ -72,6 +76,7 @@ mod sgp4;
 mod sky;
 mod sp3;
 mod sp3_merge;
+mod space_weather;
 mod spk;
 mod spp;
 mod ssr;
@@ -107,6 +112,10 @@ pub use constellation::{
     gnss_sp3_id_js, is_valid_js, merge_navcen_js, parse_navcen, to_csv_js,
     validate_against_sp3_ids_js, validate_js,
 };
+pub use covariance::{
+    propagate_covariance, transport_covariance_js, CovarianceEphemeris, CovarianceFrame,
+    CovarianceTransportResult,
+};
 pub use coverage::{coverage_look_angles, CoverageGrid};
 pub use crinex::{decode_crinex, decode_crinex_lines, encode_crinex, load_crinex};
 pub use dgnss::{dgnss_apply, AppliedCorrections, CorrectionEntry, DgnssSolution};
@@ -137,8 +146,9 @@ pub use frames::{
     GnssWeekTow, Instant, JulianDate, LeapSecondTable, TimeScale, Ut1Coverage,
 };
 pub use geoid::{
-    egm96_ellipsoidal_height_m, egm96_orthometric_height_m, egm96_undulation, ellipsoidal_height_m,
-    geoid_undulation, orthometric_height_m, GeoidGrid,
+    egm96_ellipsoidal_height_m, egm96_orthometric_height_m, egm96_undulation,
+    egm96_undulations_deg, egm96_undulations_rad, ellipsoidal_height_m, geoid_undulation,
+    geoid_undulations_deg, geoid_undulations_rad, orthometric_height_m, GeoidGrid,
 };
 pub use gnss::{carrier_band_name, gnss_system_label, gnss_system_letter, CarrierBand, GnssSystem};
 pub use ils::{bounded_ils_search_js, lambda_ils_search_js};
@@ -154,7 +164,11 @@ pub use lnav::{
     LnavDecoded, LnavSubframes,
 };
 pub use moving_baseline::{solve_moving_baseline, MovingBaselineSolution};
+pub use nmea::{nmea_epochs, nmea_write_gga, parse_nmea, NmeaAccumulator, NmeaParseResult};
 pub use normality::{jarque_bera, kurtosis, moments, shapiro_wilk, skewness};
+pub use ntrip::{
+    ntrip_request_bytes, parse_ntrip_sourcetable, NtripClientMachine, NtripState, NtripVersion,
+};
 pub use observables::{
     acquire, ca_chip, ca_code, carrier_frequency_hz, coherent_loss, coherent_loss_db, correlate,
     default_pair, default_spp_frequency_hz_js, detect_cycle_slips, doppler_to_range_rate, gamma,
@@ -210,19 +224,26 @@ pub use rinex_clock::{
     ClockEpoch, ClockSeries, RinexClock,
 };
 pub use rinex_nav::{
-    load_rinex_nav, parse_rinex_glonass_records, parse_rinex_iono_corrections,
-    parse_rinex_leap_seconds, parse_rinex_nav, parse_rinex_nav_records, BroadcastEphemeris,
-    BroadcastEvaluation, BroadcastRecordJs, ClockPolynomialJs, GlonassRecordJs, IonoCorrectionsJs,
-    KeplerianElementsJs, KlobucharAlphaBetaJs, NavMessage,
+    cnav_ura_nominal_m, load_rinex_nav, parse_rinex_glonass_records, parse_rinex_iono_corrections,
+    parse_rinex_leap_seconds, parse_rinex_nav, parse_rinex_nav_records, BroadcastDelayTerm,
+    BroadcastEphemeris, BroadcastEvaluation, BroadcastGroupDelaysJs, BroadcastRecordJs,
+    BroadcastStoreEvaluation, ClockPolynomialJs, CnavParametersJs, CnavSignal, GlonassRecordJs,
+    IonoCorrectionsJs, KeplerianElementsJs, KlobucharAlphaBetaJs, NavMessage,
 };
 pub use rinex_obs::{
     load_rinex_obs, observation_kind_label, parse_rinex_obs, CarrierPhaseSeries, ObsEpoch,
     ObsEpochTime, ObsHeader, ObsPhaseShift, ObservationFilter, ObservationKind,
     ObservationValueSeries, PseudorangeSeries, RinexObs, SignalPolicy,
 };
+pub use rinex_qc::{
+    lint_rinex_nav, lint_rinex_obs, observation_qc, repair_rinex_nav, repair_rinex_obs,
+    RinexNavRepair, RinexObsRepair,
+};
 pub use rtcm::{
-    decode_rtcm, decode_rtcm_frame, decode_rtcm_message, encode_rtcm, encode_rtcm_frame,
-    rtcm_message_number, FrameScanner,
+    decode_rtcm, decode_rtcm_frame, decode_rtcm_message, decode_rtcm_stream, encode_rtcm,
+    encode_rtcm_frame, rtcm_derive_lli, rtcm_lli_bits, rtcm_message_number,
+    rtcm_minimum_lock_time_ms, rtcm_msm_epoch_dt_ms, rtcm_msm_signal_rinex_code, FrameScanner,
+    RtcmLockTimeTracker,
 };
 pub use rtk::{solve_rtk_fixed, solve_rtk_float, RtkFixedSolution, RtkFloatSolution};
 pub use rtk_arc::{
@@ -231,9 +252,9 @@ pub use rtk_arc::{
 };
 pub use sbas::{decode_sbas_message, sbas_corrected_state, solve_spp_sbas, SbasCorrectionStore};
 pub use sgp4::{
-    parse_tle_file, propagate_batch, visible_from_satellites_js, ChecksumWarning, Constellation,
-    FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles, NamedTle, ParsedTleFile,
-    SatellitePass, Tle, TlePropagation, VisibilitySeries, VisibleSatellite,
+    fit_tle, parse_tle_file, propagate_batch, visible_from_satellites_js, ChecksumWarning,
+    Constellation, FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles, NamedTle,
+    ParsedTleFile, SatellitePass, Tle, TleFit, TlePropagation, VisibilitySeries, VisibleSatellite,
 };
 pub use sky::{
     find_moon_elevation_crossings, find_moon_transits, moon_az_el, moon_elevation_deg,
@@ -241,6 +262,10 @@ pub use sky::{
 };
 pub use sp3::{load_sp3, Sp3, Sp3ClockReferenceOffset, Sp3Interpolation, Sp3State};
 pub use sp3_merge::{merge_sp3, Sp3MergeFlag, Sp3MergeReport, Sp3MergeResult};
+pub use space_weather::{
+    estimate_decay_with_space_weather, parse_space_weather, parse_space_weather_csv,
+    parse_space_weather_txt, SpaceWeatherTable,
+};
 pub use spk::{Spk, SpkSegment, SpkState};
 pub use spp::{SppBatchSolution, SppSolution};
 pub use ssr::{decode_ssr, ssr_corrected_state, ssr_source_label, SsrCorrectionStore, SsrSource};

@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 
 import {
   egm96Undulation,
+  egm96UndulationsDeg,
+  egm96UndulationsRad,
   egm96OrthometricHeightM,
   egm96EllipsoidalHeightM,
   geoidUndulation,
@@ -33,4 +35,12 @@ test("egm96 orthometric/ellipsoidal conversions are exact inverses", () => {
 test("egm96 grid is the genuine model, distinct from the coarse built-in", () => {
   // The 1-degree EGM96 lookup differs from the coarse 30-degree fallback.
   assert.notEqual(egm96Undulation(lat, lon), geoidUndulation(lat, lon));
+});
+
+test("egm96 batch additions match core fixture values", () => {
+  assert.deepEqual(
+    Array.from(egm96UndulationsDeg(Float64Array.from([0, 0, 45.625, 12.375, 0.125, -179.875]))),
+    [17.16, 45.1728125, 20.79671875],
+  );
+  assert.equal(egm96UndulationsRad(Float64Array.from([lat, lon]))[0], egm96Undulation(lat, lon));
 });
