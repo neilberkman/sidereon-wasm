@@ -71,6 +71,7 @@ mod qc;
 mod raim;
 mod reduced_orbit;
 mod relative;
+mod reliability;
 mod rf;
 mod rinex_clock;
 mod rinex_nav;
@@ -80,6 +81,7 @@ mod rtcm;
 mod rtk;
 mod rtk_arc;
 mod sbas;
+mod sbas_pl;
 mod sgp4;
 mod sidereal;
 mod sky;
@@ -250,6 +252,7 @@ pub use relative::{
     cw_propagate, cw_stm, lvlh_rotation, mean_motion_circular, mean_motion_from_state,
     relative_state, ric_rotation, rsw_rotation, rtn_rotation,
 };
+pub use reliability::{reliability_araim, reliability_design, wtest_noncentrality};
 pub use rf::{cn0, dish_gain, eirp, fspl, wavelength, LinkBudget};
 pub use rinex_clock::{
     load_rinex_clock, load_rinex_clock_lossy, parse_rinex_clock, parse_rinex_clock_lossy,
@@ -285,6 +288,10 @@ pub use rtk_arc::{
 pub use sbas::{
     decode_sbas_message, sat_to_sbas_prn, sbas_corrected_state, sbas_prn_to_sat, solve_spp_sbas,
     SbasCorrectionStore,
+};
+pub use sbas_pl::{
+    sbas_pl_error_label, sbas_protection_levels, AirborneModel, DegradationParams, SbasErrorModel,
+    SbasKMultipliers, SbasPlError, SbasProtection, SbasSisError,
 };
 pub use sgp4::{
     fit_tle, parse_tle_file, propagate_batch, visible_from_satellites_js, ChecksumWarning,

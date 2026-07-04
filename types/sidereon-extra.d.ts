@@ -3459,3 +3459,155 @@ export type RtcmMessageInput =
   | RtcmGpsEphemerisInput
   | RtcmGlonassEphemerisInput
   | RtcmUnsupportedInput;
+
+// ---------------------------------------------------------------------------
+// Classical reliability and SBAS protection-level plain objects
+// ---------------------------------------------------------------------------
+
+/** Result returned by `wtestNoncentrality(alpha, power)`. */
+export interface WtestNoncentrality {
+  /** Two-sided false-alarm probability supplied by the caller. */
+  alpha: number;
+  /** Detection power supplied by the caller. */
+  power: number;
+  /** Missed-detection probability passed to the core calculation. */
+  beta: number;
+  /** Baarda w-test noncentrality distance. */
+  delta0: number;
+  /** Squared noncentrality distance. */
+  lambda0: number;
+}
+
+/** One range-observation row accepted by `reliabilityDesign`. */
+export interface RangeReliabilityRow {
+  /** Observation identifier echoed into the report. */
+  id: string;
+  /** Linearized design row for this range observation. */
+  designRow: number[];
+  /** Externally supplied one-sigma range model, metres. */
+  sigmaM: number;
+}
+
+/** Options accepted by `reliabilityDesign` and `reliabilityAraim`. */
+export interface ReliabilityOptions {
+  /** Two-sided false-alarm probability for the one-dimensional w-test. */
+  alpha?: number;
+  /** Detection power. Mutually exclusive with `beta`. Defaults to 0.80. */
+  power?: number;
+  /** Missed-detection probability. Mutually exclusive with `power`. */
+  beta?: number;
+  /** Optional precomputed noncentrality parameter. */
+  lambda0Override?: number;
+  /** Alias for `lambda0Override`. */
+  lambda0?: number;
+  /** Redundancy floor below which an observation is uncheckable. */
+  minRedundancy?: number;
+}
+
+/** Reliability diagnostics for one observation. */
+export interface ObservationReliability {
+  /** Observation identifier echoed from the input row. */
+  id: string;
+  /** Redundancy number for this observation. */
+  redundancy: number;
+  /** Minimal detectable bias, metres, or `null` when uncheckable. */
+  mdbM: number | null;
+  /** External effect vector, metres, or `null` when unavailable. */
+  externalEnuM: [number, number, number] | null;
+  /** Bias-to-noise ratio in state space, or `null` when uncheckable. */
+  biasToNoise: number | null;
+  /** True when redundancy is below the reporting floor. */
+  uncheckable: boolean;
+}
+
+/** Observation carrying the largest finite MDB in a reliability report. */
+export interface ReliabilityMaxMdb {
+  /** Observation identifier. */
+  id: string;
+  /** Largest finite MDB, metres. */
+  mdbM: number;
+}
+
+/** Observation carrying the smallest redundancy number. */
+export interface ReliabilityMinRedundancy {
+  /** Observation identifier. */
+  id: string;
+  /** Smallest redundancy number. */
+  redundancy: number;
+}
+
+/** Aggregate reliability diagnostics for a design. */
+export interface ReliabilitySummary {
+  /** Number of observations in the design. */
+  nObs: number;
+  /** Number of estimated parameters in the design. */
+  nParams: number;
+  /** Algebraic degrees of freedom, `nObs - nParams`. */
+  dof: number;
+  /** Sum of per-observation redundancy numbers. */
+  sumRedundancy: number;
+  /** Noncentrality parameter used for MDB calculations. */
+  lambda0: number;
+  /** Largest finite MDB, or `null` if no observation is checkable. */
+  maxMdbM: ReliabilityMaxMdb | null;
+  /** Smallest redundancy number and its observation identifier. */
+  minRedundancy: ReliabilityMinRedundancy;
+  /** Count of observations reported as uncheckable. */
+  nUncheckable: number;
+}
+
+/** Full reliability design report. */
+export interface ReliabilityReport {
+  /** Per-observation reliability diagnostics, in input order. */
+  perObservation: ObservationReliability[];
+  /** Aggregate design diagnostics. */
+  summary: ReliabilitySummary;
+}
+
+/** One SBAS or ARAIM protection-geometry row. */
+export interface ProtectionRow {
+  /** Satellite token such as `"G01"`. */
+  id: string;
+  /** ECEF line-of-sight unit vector. */
+  lineOfSight: [number, number, number];
+  /** Optional GNSS system label. Defaults to the system encoded in `id`. */
+  system?: string;
+  /** Satellite elevation angle, radians. */
+  elevationRad: number;
+}
+
+/** Receiver coordinates used by SBAS and ARAIM protection geometry. */
+export interface ProtectionReceiver {
+  /** Geodetic latitude, radians. */
+  latRad: number;
+  /** Geodetic longitude, radians east. */
+  lonRad: number;
+  /** Ellipsoidal height above WGS84, metres. */
+  heightM: number;
+}
+
+/** Protection geometry accepted by `sbasProtectionLevels` and `reliabilityAraim`. */
+export interface ProtectionGeometry {
+  /** Satellite rows in input order. */
+  rows: ProtectionRow[];
+  /** Receiver geodetic coordinates. */
+  receiver: ProtectionReceiver;
+  /** Active receiver clock systems, such as `["G"]`. */
+  clockSystems: string[];
+}
+
+/** Plain-object row accepted by `new SbasErrorModel(rows)`. */
+export interface SbasSisErrorInput {
+  /** Satellite token matching a protection-geometry row. */
+  id: string;
+  /** Total one-sigma range term, metres. Mutually exclusive with components. */
+  sigmaM?: number;
+  /** Fast and long-term correction residual sigma, metres. */
+  sigmaFltM?: number;
+  /** User ionospheric range-error sigma, metres. */
+  sigmaUireM?: number;
+  /** Airborne receiver noise, divergence, and multipath sigma, metres. */
+  sigmaAirM?: number;
+  /** Tropospheric residual sigma, metres. */
+  sigmaTropoM?: number;
+}

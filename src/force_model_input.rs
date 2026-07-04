@@ -22,7 +22,7 @@ use crate::error::{engine_error, type_error};
 #[serde(untagged)]
 pub(crate) enum ForceModelInput {
     Label(String),
-    Object(ForceModelObject),
+    Object(Box<ForceModelObject>),
 }
 
 #[derive(Clone, Deserialize, Default)]

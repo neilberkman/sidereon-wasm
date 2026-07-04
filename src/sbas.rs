@@ -436,7 +436,7 @@ pub fn decode_sbas_message(bytes: &[u8], form: Option<String>) -> Result<JsValue
 /// Ingest raw SBAS messages with a source GEO and GNSS time, then query decoded
 /// fast, long-term, ionospheric, and GEO navigation correction records.
 pub struct SbasCorrectionStore {
-    inner: CoreSbasCorrectionStore,
+    pub(crate) inner: CoreSbasCorrectionStore,
 }
 
 impl Default for SbasCorrectionStore {

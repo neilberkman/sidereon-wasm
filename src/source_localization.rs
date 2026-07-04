@@ -327,19 +327,21 @@ fn parse_options(value: JsValue) -> Result<CoreSourceLocateOptions, JsValue> {
     } else {
         from_js(value, "source locate options")?
     };
-    let mut options = CoreSourceLocateOptions::default();
-    options.mode = parse_mode_parts(input.mode.as_deref(), input.reference_sensor)?;
+    let mut options = CoreSourceLocateOptions {
+        mode: parse_mode_parts(input.mode.as_deref(), input.reference_sensor)?,
+        loss: parse_loss(input.loss.as_deref())?,
+        ftol: input.ftol,
+        xtol: input.xtol,
+        gtol: input.gtol,
+        max_nfev: input.max_nfev,
+        ..CoreSourceLocateOptions::default()
+    };
     if let Some(timing_sigma_s) = input.timing_sigma_s {
         options.timing_sigma_s = timing_sigma_s;
     }
-    options.loss = parse_loss(input.loss.as_deref())?;
     if let Some(f_scale_s) = input.f_scale_s {
         options.f_scale_s = f_scale_s;
     }
-    options.ftol = input.ftol;
-    options.xtol = input.xtol;
-    options.gtol = input.gtol;
-    options.max_nfev = input.max_nfev;
     Ok(options)
 }
 

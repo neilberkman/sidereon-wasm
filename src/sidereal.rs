@@ -51,24 +51,13 @@ struct TemplateMethodObjectInput {
     alpha: Option<f64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct SiderealFilterOptionsInput {
     sample_interval_s: Option<f64>,
     prior_periods: Option<usize>,
     min_coverage: Option<usize>,
     template_method: Option<TemplateMethodInput>,
-}
-
-impl Default for SiderealFilterOptionsInput {
-    fn default() -> Self {
-        Self {
-            sample_interval_s: None,
-            prior_periods: None,
-            min_coverage: None,
-            template_method: None,
-        }
-    }
 }
 
 fn template_method(
