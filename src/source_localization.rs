@@ -5,8 +5,8 @@
 //! caller-chosen 2D or 3D Cartesian metres, not geodetic coordinates. Arrival
 //! times and residuals are seconds, propagation speeds are metres per second,
 //! covariance position blocks are square metres, and DOP values multiply timing
-//! sigma in seconds to produce position metres. The reported redundancy is
-//! `residualCount - parameterCount`, saturated at zero.
+//! sigma in seconds to produce position metres. Geometry observability is
+//! reported through the shared `GeometryQuality` object.
 
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -16,7 +16,6 @@ use sidereon_core::source_localization::{
     chan_ho_initial_guess as core_chan_ho_initial_guess, locate_source as core_locate_source,
     source_crlb as core_source_crlb, source_dop as core_source_dop, Loss, Sensor as CoreSensor,
     SourceCovariance as CoreSourceCovariance, SourceCrlb as CoreSourceCrlb,
-    SourceGeometryQuality as CoreSourceGeometryQuality,
     SourceInitialGuess as CoreSourceInitialGuess, SourceLocalizationError,
     SourceLocateOptions as CoreSourceLocateOptions, SourceResidual as CoreSourceResidual,
     SourceSensorInfluence as CoreSourceSensorInfluence, SourceSolution as CoreSourceSolution,
@@ -24,6 +23,7 @@ use sidereon_core::source_localization::{
 };
 
 use crate::error::{engine_error, range_error, type_error};
+use crate::geometry_quality::GeometryQualityJs;
 
 fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     value
@@ -219,35 +219,13 @@ impl From<CoreSourceCovariance> for SourceCovarianceJs {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SourceGeometryQualityJs {
-    residual_count: usize,
-    parameter_count: usize,
-    redundancy: usize,
-    covariance_available: bool,
-    rank_deficient: bool,
-}
-
-impl From<CoreSourceGeometryQuality> for SourceGeometryQualityJs {
-    fn from(value: CoreSourceGeometryQuality) -> Self {
-        Self {
-            residual_count: value.residual_count,
-            parameter_count: value.parameter_count,
-            redundancy: value.redundancy,
-            covariance_available: value.covariance_available,
-            rank_deficient: value.rank_deficient,
-        }
-    }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct SourceSolutionJs {
     position_m: Vec<f64>,
     origin_time_s: Option<f64>,
     covariance: Option<SourceCovarianceJs>,
     residuals: Vec<SourceResidualJs>,
     per_sensor_influence: Vec<SourceSensorInfluenceJs>,
-    geometry_quality: SourceGeometryQualityJs,
+    geometry_quality: GeometryQualityJs,
     initial_guess: SourceInitialGuessJs,
     status: i32,
     nfev: usize,

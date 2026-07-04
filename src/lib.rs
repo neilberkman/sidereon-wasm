@@ -40,6 +40,7 @@ mod events;
 mod forces;
 mod frames;
 mod geoid;
+mod geometry_quality;
 mod gnss;
 mod ils;
 mod iod;
@@ -167,6 +168,7 @@ pub use geoid::{
     egm96_undulations_deg, egm96_undulations_rad, ellipsoidal_height_m, geoid_undulation,
     geoid_undulations_deg, geoid_undulations_rad, orthometric_height_m, GeoidGrid,
 };
+pub use geometry_quality::{observability_tier_label, GeometryQuality, ObservabilityTier};
 pub use gnss::{carrier_band_name, gnss_system_label, gnss_system_letter, CarrierBand, GnssSystem};
 pub use ils::{bounded_ils_search_js, lambda_ils_search_js};
 pub use iod::{iod_gauss_angles, iod_gibbs, iod_herrick_gibbs, IodState, IodVelocity};

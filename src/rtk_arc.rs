@@ -32,6 +32,7 @@ use sidereon_core::rtk_filter::{
 };
 
 use crate::error::{engine_error, type_error};
+use crate::geometry_quality::GeometryQualityJs;
 use crate::rtk::{FixedOptionsInput, FloatOptionsInput, MeasModelInput, ResidualOptionsInput};
 
 // --- input objects ----------------------------------------------------------
@@ -703,6 +704,7 @@ struct FloatSolutionObject {
     phase_rms_m: f64,
     weighted_rms_m: f64,
     n_observations: usize,
+    geometry_quality: GeometryQualityJs,
 }
 
 impl From<&FloatBaselineSolution> for FloatSolutionObject {
@@ -720,6 +722,7 @@ impl From<&FloatBaselineSolution> for FloatSolutionObject {
             phase_rms_m: s.phase_rms_m,
             weighted_rms_m: s.weighted_rms_m,
             n_observations: s.n_observations,
+            geometry_quality: s.geometry_quality.into(),
         }
     }
 }
@@ -844,6 +847,7 @@ impl From<&ValidatedFixedBaselineSolution> for ValidatedFixedSolutionObject {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StaticArcSolutionObject {
+    geometry_quality: GeometryQualityJs,
     references: BTreeMap<String, String>,
     ambiguity_ids: Vec<String>,
     ambiguity_satellites: BTreeMap<String, String>,
@@ -857,6 +861,7 @@ struct StaticArcSolutionObject {
 impl From<&RtkStaticArcSolution> for StaticArcSolutionObject {
     fn from(s: &RtkStaticArcSolution) -> Self {
         Self {
+            geometry_quality: s.geometry_quality.into(),
             references: s.references.clone(),
             ambiguity_ids: s.ambiguity_ids.clone(),
             ambiguity_satellites: s.ambiguity_satellites.clone(),
@@ -887,6 +892,7 @@ struct EpochSolutionObject {
     used_satellite_ids: Vec<String>,
     search: Option<SearchSummary>,
     residuals: Vec<ResidualObject>,
+    geometry_quality: GeometryQualityJs,
     innovation_screen: Option<InnovationScreenObject>,
 }
 
@@ -904,6 +910,7 @@ impl From<&RtkArcEpochSolution> for EpochSolutionObject {
             used_satellite_ids: e.used_satellite_ids.clone(),
             search: e.search.as_ref().map(SearchSummary::from),
             residuals: e.residuals.iter().map(ResidualObject::from).collect(),
+            geometry_quality: e.geometry_quality.into(),
             innovation_screen: e
                 .innovation_screen
                 .as_ref()
@@ -1080,6 +1087,7 @@ impl From<&RtkDualFrequencyArcEpoch> for DualFrequencyArcEpochObject {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WideLaneArcSolutionObject {
+    geometry_quality: GeometryQualityJs,
     references: BTreeMap<String, String>,
     wide_lane_cycles: BTreeMap<String, i64>,
     epochs: Vec<DualFrequencyArcEpochObject>,
@@ -1090,6 +1098,7 @@ struct WideLaneArcSolutionObject {
 impl From<&RtkWideLaneArcSolution> for WideLaneArcSolutionObject {
     fn from(s: &RtkWideLaneArcSolution) -> Self {
         Self {
+            geometry_quality: s.geometry_quality.into(),
             references: s.references.clone(),
             wide_lane_cycles: s.wide_lane_cycles.clone(),
             epochs: s

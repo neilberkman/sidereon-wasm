@@ -116,6 +116,131 @@ export interface SppBatchOptions {
   maxPdop?: number;
 }
 
+/** Serialized observability tier label. Handle getters return the generated
+ * `ObservabilityTier` enum; serde-returning APIs use these stable labels. */
+export type ObservabilityTierLabel =
+  | "RankDeficient"
+  | "ZeroRedundancy"
+  | "Weak"
+  | "Nominal";
+
+/** Geometry observability and covariance-validation diagnostics.
+ * `ZeroRedundancy` marks a full-rank design with no residual degrees of freedom,
+ * so snapshot covariance bounds are unvalidated unless a propagated prior is
+ * present. `Weak` means a condition-number or GDOP cutoff was exceeded; the
+ * returned bounds are reported as computed and are not clamped. */
+export interface GeometryQualityObject {
+  tier: ObservabilityTierLabel;
+  /** Observation redundancy, `nObs - nParams`. */
+  redundancy: number;
+  /** Rank of the design matrix used by the solve. */
+  rank: number;
+  /** Singular-value condition number of the design matrix. */
+  conditionNumber: number;
+  /** Geometric dilution of precision for the solved state. */
+  gdop: number;
+  /** Whether residual-based RAIM can test the solve. */
+  raimCheckable: boolean;
+  /** Whether residuals or a propagated prior validated the covariance bound. */
+  covarianceValidated: boolean;
+}
+
+// --- Source localization ----------------------------------------------------
+//
+// Source-localization functions deserialize inputs and serialize outputs through
+// serde, so wasm-bindgen types them as `any`. Import:
+//
+//   import { locateSource } from "@neilberkman/sidereon";
+//   import type { SourceSensor, SourceLocateOptions, SourceSolution } from "@neilberkman/sidereon/types";
+
+/** One source-localization sensor. Coordinates are caller-chosen Cartesian metres. */
+export interface SourceSensor {
+  positionM: number[];
+  /** Per-sensor propagation speed, metres per second. */
+  propagationSpeedMS?: number;
+}
+
+/** Source solve mode selector. */
+export type SourceSolveMode = "toa" | { mode: "tdoa"; referenceSensor: number };
+
+/** Options for `locateSource`. */
+export interface SourceLocateOptions {
+  mode?: "toa" | "tdoa";
+  referenceSensor?: number;
+  timingSigmaS?: number;
+  loss?: "linear" | "softL1" | "soft_l1" | "huber" | "cauchy" | "arctan";
+  fScaleS?: number;
+  ftol?: number;
+  xtol?: number;
+  gtol?: number;
+  maxNfev?: number;
+}
+
+/** Closed-form seed used by source localization. */
+export interface SourceInitialGuess {
+  positionM: number[];
+  originTimeS?: number;
+  residualRmsS: number;
+}
+
+/** One source-localization residual row. */
+export interface SourceResidual {
+  sensorIndex: number;
+  referenceSensorIndex?: number;
+  residualS: number;
+}
+
+/** Per-sensor source-localization influence diagnostic. */
+export interface SourceSensorInfluence {
+  sensorIndex: number;
+  residualS: number;
+  leaveOneOutResidualS?: number;
+  positionDeltaM?: number;
+  originTimeDeltaS?: number;
+  lossWeight: number;
+  score: number;
+}
+
+/** Source-localization covariance. */
+export interface SourceCovariance {
+  state: number[][];
+  positionM2: number[][];
+  originTimeS2?: number;
+  timingSigmaS: number;
+}
+
+/** Source solution returned by `locateSource`. */
+export interface SourceSolution {
+  positionM: number[];
+  originTimeS?: number;
+  covariance?: SourceCovariance;
+  residuals: SourceResidual[];
+  perSensorInfluence: SourceSensorInfluence[];
+  geometryQuality: GeometryQualityObject;
+  initialGuess: SourceInitialGuess;
+  status: number;
+  nfev: number;
+  njev: number;
+  cost: number;
+  optimality: number;
+}
+
+/** DOP scalars returned by `sourceDop` and nested in `sourceCrlb`. */
+export interface SourceDop {
+  gdop: number;
+  pdop: number;
+  hdop: number;
+  vdop: number;
+  tdop: number;
+  systemTdops: { system: string; tdop: number }[];
+}
+
+/** Cramer-Rao lower bound returned by `sourceCrlb`. */
+export interface SourceCrlb {
+  dop: SourceDop;
+  covariance: SourceCovariance;
+}
+
 // --- Observable-domain plain-object inputs ----------------------------------
 //
 // The wasm-bindgen surface types these arguments as `any` because they cross
@@ -2683,6 +2808,7 @@ export interface RtkStaticArcFloatSolution {
   phaseRmsM: number;
   weightedRmsM: number;
   nObservations: number;
+  geometryQuality: GeometryQualityObject;
 }
 
 /** Static fixed RTK solution returned inside `RtkStaticArcSolution`. */
@@ -2734,6 +2860,7 @@ export interface RtkValidatedFixedSolution {
 
 /** The full static RTK arc solution returned by `solveStaticRtkArc`. */
 export interface RtkStaticArcSolution {
+  geometryQuality: GeometryQualityObject;
   references: Record<string, string>;
   ambiguityIds: string[];
   ambiguitySatellites: Record<string, string>;
@@ -2774,6 +2901,7 @@ export interface RtkArcEpochSolution {
   usedSatelliteIds: string[];
   search?: RtkArcSearchSummary;
   residuals: RtkArcResidual[];
+  geometryQuality: GeometryQualityObject;
   /** Per-epoch innovation-screen result, present only when the screen is enabled
    * for the arc via `updateOpts.innovationScreen`. */
   innovationScreen?: RtkArcInnovationScreenResult;
@@ -2881,6 +3009,7 @@ export interface RtkWideLaneArcConfig {
 
 /** The wide-lane RTK arc solution returned by `fixWideLaneRtkArc`. */
 export interface RtkWideLaneArcSolution {
+  geometryQuality: GeometryQualityObject;
   references: Record<string, string>;
   wideLaneCycles: Record<string, number>;
   epochs: RtkDualFrequencyArcEpoch[];

@@ -22,6 +22,7 @@ use sidereon_core::rtk_filter::{
 };
 
 use crate::error::{engine_error, type_error};
+use crate::geometry_quality::GeometryQuality;
 
 // --- input objects ----------------------------------------------------------
 
@@ -382,6 +383,27 @@ impl RtkFloatSolution {
     pub fn n_observations(&self) -> usize {
         self.inner.n_observations
     }
+
+    /// Geometry observability and covariance-validation diagnostics for the
+    /// final double-difference design. `ZeroRedundancy` bounds are unvalidated
+    /// for snapshot solves, `Weak` bounds are unclamped, and rank-deficient
+    /// designs are returned as a singular-geometry `Error`.
+    #[wasm_bindgen(getter, js_name = geometryQuality)]
+    pub fn geometry_quality(&self) -> GeometryQuality {
+        self.inner.geometry_quality.into()
+    }
+
+    /// Observation redundancy, `nObs - nParams`, for the float design.
+    #[wasm_bindgen(getter)]
+    pub fn redundancy(&self) -> i32 {
+        self.inner.geometry_quality.redundancy
+    }
+
+    /// Whether residual-based RAIM can test the float design.
+    #[wasm_bindgen(getter, js_name = raimCheckable)]
+    pub fn raim_checkable(&self) -> bool {
+        self.inner.geometry_quality.raim_checkable
+    }
 }
 
 /// Validated fixed RTK baseline solution.
@@ -424,6 +446,27 @@ impl RtkFixedSolution {
     #[wasm_bindgen(getter)]
     pub fn converged(&self) -> bool {
         self.inner.fixed_solution.converged
+    }
+
+    /// Geometry observability and covariance-validation diagnostics for the
+    /// float design used by the integer-fixed solve.
+    #[wasm_bindgen(getter, js_name = geometryQuality)]
+    pub fn geometry_quality(&self) -> GeometryQuality {
+        self.inner.float_solution.geometry_quality.into()
+    }
+
+    /// Observation redundancy, `nObs - nParams`, for the float design used by
+    /// the integer-fixed solve.
+    #[wasm_bindgen(getter)]
+    pub fn redundancy(&self) -> i32 {
+        self.inner.float_solution.geometry_quality.redundancy
+    }
+
+    /// Whether residual-based RAIM can test the float design used by the
+    /// integer-fixed solve.
+    #[wasm_bindgen(getter, js_name = raimCheckable)]
+    pub fn raim_checkable(&self) -> bool {
+        self.inner.float_solution.geometry_quality.raim_checkable
     }
 }
 
