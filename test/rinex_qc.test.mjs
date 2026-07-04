@@ -152,11 +152,11 @@ test("observationQc reports the core summary and selected signal statistics", ()
   assertClose(beidouMultipath.mp2.rmsM, 0.07335406047173548);
 
   const rendered = qc.renderText();
-  assert.match(rendered, /^G   GPS/m);
-  assert.match(rendered, /^R   GLONASS/m);
-  assert.match(rendered, /^E   Galileo/m);
-  assert.match(rendered, /^C   BeiDou/m);
-  assert.match(rendered, /^S   SBAS/m);
+  assert.match(rendered, /^G {3}GPS/m);
+  assert.match(rendered, /^R {3}GLONASS/m);
+  assert.match(rendered, /^E {3}Galileo/m);
+  assert.match(rendered, /^C {3}BeiDou/m);
+  assert.match(rendered, /^S {3}SBAS/m);
   assert.match(qc.renderHtml(), /RINEX Observation QC/);
 
   const json = JSON.parse(qc.toJson());
