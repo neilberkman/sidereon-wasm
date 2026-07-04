@@ -17,7 +17,9 @@ use sidereon_core::astro::angles::{
     sun_angle as core_sun_angle, sun_elevation as core_sun_elevation,
 };
 use sidereon_core::astro::events::eclipse::{
-    shadow_fraction as core_shadow_fraction, status as core_status, EclipseStatus,
+    shadow_fraction as core_shadow_fraction,
+    shadow_fraction_with_model as core_shadow_fraction_with_model, status as core_status,
+    EarthShadowModel as CoreEarthShadowModel, EclipseStatus,
 };
 
 use crate::error::engine_error;
@@ -28,6 +30,25 @@ fn status_label(status: EclipseStatus) -> &'static str {
         EclipseStatus::Sunlit => "sunlit",
         EclipseStatus::Penumbra => "penumbra",
         EclipseStatus::Umbra => "umbra",
+    }
+}
+
+/// Earth figure used for conical eclipse shadow geometry.
+#[wasm_bindgen]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EarthShadowModel {
+    /// Spherical Earth using the core mean Earth radius.
+    Spherical,
+    /// WGS84 oblate Earth approximation by polar-axis scaling.
+    Wgs84Oblate,
+}
+
+impl From<EarthShadowModel> for CoreEarthShadowModel {
+    fn from(model: EarthShadowModel) -> Self {
+        match model {
+            EarthShadowModel::Spherical => Self::Spherical,
+            EarthShadowModel::Wgs84Oblate => Self::Wgs84Oblate,
+        }
     }
 }
 
@@ -52,6 +73,34 @@ pub fn shadow_fraction(
     sats.iter()
         .zip(suns.iter())
         .map(|(&sat, &sun)| core_shadow_fraction(sat, sun).map_err(engine_error))
+        .collect()
+}
+
+/// Shadow fraction in `[0, 1]` for position batches with an explicit Earth
+/// shadow model.
+///
+/// `satellitePositionKm` and `sunPositionKm` are flat row-major `(n, 3)`
+/// `Float64Array`s. `EarthShadowModel.Spherical` is bit-identical to
+/// [`shadowFraction`].
+#[wasm_bindgen(js_name = shadowFractionWithModel)]
+pub fn shadow_fraction_with_model(
+    satellite_position_km: &[f64],
+    sun_position_km: &[f64],
+    model: EarthShadowModel,
+) -> Result<Vec<f64>, JsValue> {
+    let sats = rows3("satellitePositionKm", satellite_position_km, true)?;
+    let suns = rows3("sunPositionKm", sun_position_km, true)?;
+    reject_empty("satellitePositionKm", &sats)?;
+    same_len(
+        "satellitePositionKm",
+        sats.len(),
+        "sunPositionKm",
+        suns.len(),
+    )?;
+    let model = model.into();
+    sats.iter()
+        .zip(suns.iter())
+        .map(|(&sat, &sun)| core_shadow_fraction_with_model(sat, sun, model).map_err(engine_error))
         .collect()
 }
 

@@ -16,7 +16,8 @@ use sidereon_core::geoid::{
     ellipsoidal_height_m as core_ellipsoidal_height_m, geoid_undulation as core_geoid_undulation,
     geoid_undulations_deg as core_geoid_undulations_deg,
     geoid_undulations_rad as core_geoid_undulations_rad,
-    orthometric_height_m as core_orthometric_height_m, GeoidGrid as CoreGeoidGrid,
+    orthometric_height_m as core_orthometric_height_m,
+    Egm2008GridSpacing as CoreEgm2008GridSpacing, Egm2008RasterWindow, GeoidGrid as CoreGeoidGrid,
 };
 
 use crate::error::{engine_error, type_error};
@@ -32,6 +33,25 @@ fn points_from_flat(name: &str, values: &[f64]) -> Result<Vec<(f64, f64)>, JsVal
         .chunks_exact(2)
         .map(|pair| (pair[0], pair[1]))
         .collect())
+}
+
+/// EGM2008 raster spacing for NGA row-framed interpolation grids.
+#[wasm_bindgen]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Egm2008GridSpacing {
+    /// The 1-arcminute EGM2008 grid.
+    OneMinute,
+    /// The 2.5-arcminute EGM2008 grid.
+    TwoPointFiveMinute,
+}
+
+impl From<Egm2008GridSpacing> for CoreEgm2008GridSpacing {
+    fn from(spacing: Egm2008GridSpacing) -> Self {
+        match spacing {
+            Egm2008GridSpacing::OneMinute => Self::OneMinute,
+            Egm2008GridSpacing::TwoPointFiveMinute => Self::TwoPointFiveMinute,
+        }
+    }
 }
 
 /// Geoid undulation `N` (metres above the WGS84 ellipsoid) at a geodetic
@@ -182,6 +202,44 @@ impl GeoidGrid {
     #[wasm_bindgen(js_name = fromEgm96Dac)]
     pub fn from_egm96_dac(bytes: &[u8]) -> Result<GeoidGrid, JsValue> {
         let inner = CoreGeoidGrid::from_egm96_dac(bytes).map_err(engine_error)?;
+        Ok(GeoidGrid { inner })
+    }
+
+    /// Parse a full NGA EGM2008 row-framed interpolation raster.
+    ///
+    /// The byte stream must contain one north-to-south Fortran sequential record
+    /// per latitude row at the requested spacing. Use
+    /// [`fromEgm2008RasterWindow`] for small cropped fixtures or partial loads.
+    #[wasm_bindgen(js_name = fromEgm2008Raster)]
+    pub fn from_egm2008_raster(
+        bytes: &[u8],
+        spacing: Egm2008GridSpacing,
+    ) -> Result<GeoidGrid, JsValue> {
+        let inner =
+            CoreGeoidGrid::from_egm2008_raster(bytes, spacing.into()).map_err(engine_error)?;
+        Ok(GeoidGrid { inner })
+    }
+
+    /// Parse a cropped NGA EGM2008 row-framed interpolation raster window.
+    ///
+    /// `latMinDeg` and `lonMinDeg` are the southwest node of the loaded grid.
+    /// `nLat` and `nLon` are the latitude and longitude node counts in the byte
+    /// stream. Queries use the same undulation methods as every other
+    /// [`GeoidGrid`].
+    #[wasm_bindgen(js_name = fromEgm2008RasterWindow)]
+    pub fn from_egm2008_raster_window(
+        bytes: &[u8],
+        spacing: Egm2008GridSpacing,
+        lat_min_deg: f64,
+        lon_min_deg: f64,
+        n_lat: usize,
+        n_lon: usize,
+    ) -> Result<GeoidGrid, JsValue> {
+        let window =
+            Egm2008RasterWindow::new(spacing.into(), lat_min_deg, lon_min_deg, n_lat, n_lon)
+                .map_err(engine_error)?;
+        let inner =
+            CoreGeoidGrid::from_egm2008_raster_window(bytes, window).map_err(engine_error)?;
         Ok(GeoidGrid { inner })
     }
 

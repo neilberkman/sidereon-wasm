@@ -9,7 +9,7 @@ use wasm_bindgen::prelude::*;
 
 use sidereon_core::quality::{
     reliability_araim as core_reliability_araim, reliability_design as core_reliability_design,
-    wtest_noncentrality as core_wtest_noncentrality,
+    wtest_noncentrality_components as core_wtest_noncentrality_components,
     ObservationReliability as CoreObservationReliability, QualityError,
     RangeReliabilityRow as CoreRangeReliabilityRow, ReliabilityOptions as CoreReliabilityOptions,
     ReliabilityReport as CoreReliabilityReport, ReliabilitySummary as CoreReliabilitySummary,
@@ -211,18 +211,17 @@ fn parse_options(value: JsValue) -> Result<CoreReliabilityOptions, JsValue> {
 ///
 /// `alpha` is the two-sided false-alarm probability. `power` is detection power,
 /// so the core missed-detection probability is `1 - power`. The returned object
-/// contains `delta0` and `lambda0 = delta0 * delta0`.
+/// contains the core-provided `delta0` and `lambda0` values.
 #[wasm_bindgen(js_name = wtestNoncentrality)]
 pub fn wtest_noncentrality(alpha: f64, power: f64) -> Result<JsValue, JsValue> {
     let beta = 1.0 - power;
-    let lambda0 = core_wtest_noncentrality(alpha, beta).map_err(quality_error)?;
-    let delta0 = lambda0.sqrt();
+    let components = core_wtest_noncentrality_components(alpha, beta).map_err(quality_error)?;
     to_js(&WtestNoncentralityJs {
         alpha,
         power,
         beta,
-        delta0,
-        lambda0: delta0 * delta0,
+        delta0: components.delta0,
+        lambda0: components.lambda0,
     })
 }
 

@@ -10,13 +10,16 @@ use wasm_bindgen::prelude::*;
 use sidereon_core::astro::constants::{J2_EARTH, MU_EARTH, RE_EARTH};
 use sidereon_core::astro::forces::{
     DragForce as CoreDragForce, DragParameters, SchwarzschildRelativity, SolarRadiationPressure,
-    SpaceWeather, ThirdBodyBodies, ThirdBodyGravity, ZonalCoefficients, ZonalDegrees, ZonalGravity,
+    SpaceWeather, SphericalHarmonicGravityConfig, ThirdBodyBodies, ThirdBodyGravity,
+    ZonalCoefficients, ZonalDegrees, ZonalGravity,
 };
 use sidereon_core::astro::propagator::{
     ForceModelComponents, ForceModelKind, IntegratorKind, IntegratorOptions,
 };
 
 use crate::error::{engine_error, type_error};
+
+const DEFAULT_SPHERICAL_HARMONIC_DEGREE: u16 = 8;
 
 #[derive(Clone, Deserialize)]
 #[serde(untagged)]
@@ -34,7 +37,13 @@ pub(crate) struct ForceModelObject {
     mu_km3_s2: Option<f64>,
     re_km: Option<f64>,
     j2: Option<f64>,
+    max_degree: Option<u16>,
+    max_order: Option<u16>,
+    degree: Option<u16>,
+    order: Option<u16>,
     zonal: Option<ComponentInput<ZonalInput>>,
+    spherical_harmonic: Option<ComponentInput<SphericalHarmonicInput>>,
+    geopotential: Option<ComponentInput<SphericalHarmonicInput>>,
     third_body: Option<ComponentInput<ThirdBodyInput>>,
     solar_radiation_pressure: Option<ComponentInput<SolarRadiationPressureInput>>,
     srp: Option<ComponentInput<SolarRadiationPressureInput>>,
@@ -82,6 +91,16 @@ struct ZonalCoefficientsInput {
     j4: Option<f64>,
     j5: Option<f64>,
     j6: Option<f64>,
+}
+
+#[derive(Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct SphericalHarmonicInput {
+    model: Option<String>,
+    max_degree: Option<u16>,
+    max_order: Option<u16>,
+    degree: Option<u16>,
+    order: Option<u16>,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -213,6 +232,13 @@ pub(crate) fn force_model_kind(
     }
 }
 
+pub(crate) fn force_model_requires_body_fixed_frame(kind: &ForceModelKind) -> bool {
+    match kind {
+        ForceModelKind::Composite { components } => components.spherical_harmonic.is_some(),
+        _ => false,
+    }
+}
+
 fn force_model_label(
     label: &str,
     mu_override_km3_s2: Option<f64>,
@@ -225,14 +251,18 @@ fn force_model_label(
             re_km: RE_EARTH,
             j2: J2_EARTH,
         }),
-        "earth_phase_a" | "earthPhaseA" => {
-            Ok(ForceModelKind::earth_phase_a(None))
-        }
+        "earth_phase_a" | "earthPhaseA" => Ok(ForceModelKind::earth_phase_a(None)),
+        "earth_phase_b" | "earthPhaseB" => ForceModelKind::earth_phase_b(
+            DEFAULT_SPHERICAL_HARMONIC_DEGREE,
+            DEFAULT_SPHERICAL_HARMONIC_DEGREE,
+            None,
+        )
+        .map_err(engine_error),
         "composite" => Ok(ForceModelKind::composite(
             ForceModelComponents::earth_two_body().with_two_body_mu(mu),
         )),
         other => Err(type_error(&format!(
-            "invalid forceModel {other:?}: expected \"two_body\", \"two_body_j2\", \"composite\", or \"earth_phase_a\""
+            "invalid forceModel {other:?}: expected \"two_body\", \"two_body_j2\", \"composite\", \"earth_phase_a\", or \"earth_phase_b\""
         ))),
     }
 }
@@ -265,16 +295,45 @@ fn force_model_object(
             };
             Ok(ForceModelKind::earth_phase_a(srp))
         }
+        "earth_phase_b" | "earthPhaseB" => {
+            let (max_degree, max_order) = spherical_degree_order(
+                object.max_degree,
+                object.degree,
+                object.max_order,
+                object.order,
+            );
+            let srp = match object
+                .solar_radiation_pressure
+                .as_ref()
+                .or(object.srp.as_ref())
+            {
+                None => None,
+                Some(input) => component_srp(input)?,
+            };
+            ForceModelKind::earth_phase_b(max_degree, max_order, srp).map_err(engine_error)
+        }
         "composite" => composite_object(object, mu),
         other => Err(type_error(&format!(
-            "invalid forceModel.kind {other:?}: expected \"two_body\", \"two_body_j2\", \"composite\", or \"earth_phase_a\""
+            "invalid forceModel.kind {other:?}: expected \"two_body\", \"two_body_j2\", \"composite\", \"earth_phase_a\", or \"earth_phase_b\""
         ))),
     }
 }
 
 fn composite_object(object: &ForceModelObject, mu: f64) -> Result<ForceModelKind, JsValue> {
     let include_two_body = object.two_body.unwrap_or(true);
-    let zonal = object.zonal.as_ref().map(component_zonal).transpose()?;
+    let zonal = object
+        .zonal
+        .as_ref()
+        .map(component_zonal)
+        .transpose()?
+        .filter(|zonal| zonal.degrees != ZonalDegrees::NONE);
+    let spherical_harmonic = object
+        .spherical_harmonic
+        .as_ref()
+        .or(object.geopotential.as_ref())
+        .map(component_spherical_harmonic)
+        .transpose()?
+        .flatten();
     let third_body = object
         .third_body
         .as_ref()
@@ -295,7 +354,8 @@ fn composite_object(object: &ForceModelObject, mu: f64) -> Result<ForceModelKind
         .transpose()?
         .flatten();
 
-    if third_body.is_none() && srp.is_none() && relativity.is_none() {
+    if third_body.is_none() && srp.is_none() && relativity.is_none() && spherical_harmonic.is_none()
+    {
         if include_two_body && zonal.is_none() {
             return Ok(ForceModelKind::TwoBody { mu_km3_s2: mu });
         }
@@ -316,6 +376,9 @@ fn composite_object(object: &ForceModelObject, mu: f64) -> Result<ForceModelKind
     if let Some(zonal) = zonal {
         components = components.with_zonal(zonal);
     }
+    if let Some(spherical_harmonic) = spherical_harmonic {
+        components = components.with_spherical_harmonic(spherical_harmonic);
+    }
     if let Some(third_body) = third_body {
         components = components.with_third_body(third_body);
     }
@@ -326,6 +389,73 @@ fn composite_object(object: &ForceModelObject, mu: f64) -> Result<ForceModelKind
         components = components.with_relativity(relativity);
     }
     Ok(ForceModelKind::composite(components))
+}
+
+fn spherical_degree_order(
+    max_degree: Option<u16>,
+    degree: Option<u16>,
+    max_order: Option<u16>,
+    order: Option<u16>,
+) -> (u16, u16) {
+    let degree = max_degree
+        .or(degree)
+        .unwrap_or(DEFAULT_SPHERICAL_HARMONIC_DEGREE);
+    let order = max_order.or(order).unwrap_or(degree);
+    (degree, order)
+}
+
+fn component_spherical_harmonic(
+    input: &ComponentInput<SphericalHarmonicInput>,
+) -> Result<Option<SphericalHarmonicGravityConfig>, JsValue> {
+    match input {
+        ComponentInput::Enabled(false) => Ok(None),
+        ComponentInput::Enabled(true) => Ok(Some(spherical_harmonic_config(
+            "earth",
+            DEFAULT_SPHERICAL_HARMONIC_DEGREE,
+            DEFAULT_SPHERICAL_HARMONIC_DEGREE,
+        )?)),
+        ComponentInput::Label(label) => match label.as_str() {
+            "none" => Ok(None),
+            "earth" | "egm96" => Ok(Some(spherical_harmonic_config(
+                label,
+                DEFAULT_SPHERICAL_HARMONIC_DEGREE,
+                DEFAULT_SPHERICAL_HARMONIC_DEGREE,
+            )?)),
+            other => Err(type_error(&format!(
+                "invalid sphericalHarmonic selector {other:?}: expected \"none\", \"earth\", \"egm96\", or an object"
+            ))),
+        },
+        ComponentInput::Object(input) => Ok(Some(spherical_harmonic_from_object(input)?)),
+    }
+}
+
+fn spherical_harmonic_from_object(
+    input: &SphericalHarmonicInput,
+) -> Result<SphericalHarmonicGravityConfig, JsValue> {
+    let (max_degree, max_order) =
+        spherical_degree_order(input.max_degree, input.degree, input.max_order, input.order);
+    spherical_harmonic_config(
+        input.model.as_deref().unwrap_or("earth"),
+        max_degree,
+        max_order,
+    )
+}
+
+fn spherical_harmonic_config(
+    model: &str,
+    max_degree: u16,
+    max_order: u16,
+) -> Result<SphericalHarmonicGravityConfig, JsValue> {
+    match model {
+        "earth" => SphericalHarmonicGravityConfig::earth(max_degree, max_order),
+        "egm96" | "EGM96" => SphericalHarmonicGravityConfig::egm96(max_degree, max_order),
+        other => {
+            return Err(type_error(&format!(
+                "invalid sphericalHarmonic.model {other:?}: expected \"earth\" or \"egm96\""
+            )));
+        }
+    }
+    .map_err(engine_error)
 }
 
 fn is_default_j2_only(zonal: &ZonalGravity, mu: f64) -> bool {

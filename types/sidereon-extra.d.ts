@@ -415,6 +415,20 @@ export interface ZonalForceConfig {
   };
 }
 
+/** Embedded EGM96 spherical-harmonic geopotential selector. */
+export interface SphericalHarmonicForceConfig {
+  /** Constant set used with the embedded EGM96 coefficient table. Defaults to "earth". */
+  model?: "earth" | "egm96" | "EGM96";
+  /** Highest active harmonic degree. Defaults to 8 when omitted. */
+  maxDegree?: number;
+  /** Highest active harmonic order. Defaults to `maxDegree` when omitted. */
+  maxOrder?: number;
+  /** Alias for `maxDegree`. */
+  degree?: number;
+  /** Alias for `maxOrder`. */
+  order?: number;
+}
+
 /** Sun/Moon third-body force selector. */
 export interface ThirdBodyForceConfig {
   sun?: boolean;
@@ -436,6 +450,9 @@ export interface CompositeForceModelConfig {
   twoBodyMuKm3S2?: number;
   muKm3S2?: number;
   zonal?: boolean | "none" | "j2" | "j2_j6" | "j2ThroughJ6" | ZonalForceConfig;
+  sphericalHarmonic?: boolean | "none" | "earth" | "egm96" | SphericalHarmonicForceConfig;
+  /** Alias for `sphericalHarmonic`. */
+  geopotential?: boolean | "none" | "earth" | "egm96" | SphericalHarmonicForceConfig;
   thirdBody?: boolean | "none" | "sun" | "moon" | "sun_moon" | "sunMoon" | ThirdBodyForceConfig;
   solarRadiationPressure?: false | "none" | SolarRadiationPressureConfig;
   srp?: false | "none" | SolarRadiationPressureConfig;
@@ -449,14 +466,31 @@ export interface EarthPhaseAForceModelConfig {
   srp?: false | "none" | SolarRadiationPressureConfig;
 }
 
+/** Canonical Earth Phase B perturbation set with embedded spherical harmonics. */
+export interface EarthPhaseBForceModelConfig {
+  kind: "earth_phase_b" | "earthPhaseB";
+  /** Highest active harmonic degree. Defaults to 8 when omitted. */
+  maxDegree?: number;
+  /** Highest active harmonic order. Defaults to `maxDegree` when omitted. */
+  maxOrder?: number;
+  /** Alias for `maxDegree`. */
+  degree?: number;
+  /** Alias for `maxOrder`. */
+  order?: number;
+  solarRadiationPressure?: false | "none" | SolarRadiationPressureConfig;
+  srp?: false | "none" | SolarRadiationPressureConfig;
+}
+
 /** Numerical state-propagation force model selector. */
 export type ForceModel =
   | "two_body"
   | "two_body_j2"
   | "composite"
   | "earth_phase_a"
+  | "earth_phase_b"
   | CompositeForceModelConfig
-  | EarthPhaseAForceModelConfig;
+  | EarthPhaseAForceModelConfig
+  | EarthPhaseBForceModelConfig;
 
 /** Numerical state-propagation integrator selector. */
 export type Integrator = "dp54" | "rk4";
@@ -786,7 +820,7 @@ export interface OrbitResidualLedger {
   arcSpan: { timeScale: string; startJ2000S: number; endJ2000S: number; durationS: number };
 }
 
-/** Report returned by `fitSp3PreciseOrbit` and `fitPreciseEphemerisSampleOrbit`. */
+/** Report returned by the SP3, ECEF SP3, and sample-backed orbit-fit entries. */
 export interface OrbitFitReport {
   fits: OrbitFitSolution[];
   ledger: OrbitResidualLedger;
