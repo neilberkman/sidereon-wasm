@@ -1,6 +1,6 @@
 {
   "name": "@neilberkman/sidereon",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "WebAssembly / JavaScript interface over the sidereon GNSS + astrodynamics engine: SP3 loading and multi-product merge, SPP / RTK (float + fixed) / PPP (float + fixed) positioning, IONEX slant delay, SGP4 and numerical orbit propagation, RINEX observation/navigation/clock parsing, CRINEX (Hatanaka) decoding, observable-domain math (carrier combinations, cycle slips, Hatch smoothing, weighting, velocity, GPS C/A signal), and the astro domain (scale-tagged time, frame transforms, Sun/Moon ephemerides, eclipse / body angles, DOP, passes / visibility, conjunction + collision probability, CDM / OMM / ANTEX parsing, RF link budget)",
   "type": "module",
   "license": "MIT",
