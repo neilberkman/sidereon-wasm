@@ -21,10 +21,15 @@ use sidereon_core::astro::time::civil::j2000_seconds_from_split;
 use sidereon_core::astro::time::model::{Instant, InstantRepr, JulianDateSplit, TimeScale};
 use sidereon_core::constants::{J2000_JD, SECONDS_PER_DAY};
 use sidereon_core::ephemeris::{
-    sample as core_sample, EphemerisSampleStatus, PreciseEphemerisSample as CoreSample,
-    PreciseEphemerisSamples as CoreSamples, PreciseSamplesError,
+    sample as core_sample, EphemerisSampleStatus, ObservableStateBatch as CoreObservableStateBatch,
+    ObservableStateElementStatus as CoreObservableStateElementStatus,
+    PreciseEphemerisInterpolant as CorePreciseEphemerisInterpolant,
+    PreciseEphemerisSample as CoreSample, PreciseEphemerisSamples as CoreSamples,
+    PreciseSamplesError, OBSERVABLE_STATE_MISSING_POSITION_ECEF_M,
 };
 use sidereon_core::observables::{
+    observable_states_at_j2000_s as core_observable_states_at_j2000_s,
+    observable_states_at_shared_j2000_s as core_observable_states_at_shared_j2000_s,
     predict_ranges as core_predict_ranges, ObservableEphemerisSource, RangePrediction,
     RangePredictionRequest,
 };
@@ -93,6 +98,25 @@ struct SampleJs {
     clock_event: bool,
 }
 
+fn decode_core_samples(samples: JsValue) -> Result<Vec<CoreSample>, JsValue> {
+    let samples: Vec<SampleJs> = serde_wasm_bindgen::from_value(samples)
+        .map_err(|e| type_error(&format!("invalid samples: {e}")))?;
+
+    let mut core_samples = Vec::with_capacity(samples.len());
+    for sample in samples {
+        let sat = parse_sat(&sample.sat)?;
+        let split = j2000_to_split(sample.epoch)?;
+        core_samples.push(CoreSample {
+            sat,
+            epoch: Instant::from_julian_date(TimeScale::Gpst, split),
+            position_ecef_m: sample.position_ecef_m,
+            clock_s: sample.clock_s,
+            clock_event: sample.clock_event,
+        });
+    }
+    Ok(core_samples)
+}
+
 /// Map a sample-source validation failure to the JS exception a caller expects.
 fn samples_error(err: PreciseSamplesError) -> JsValue {
     range_error(&err.to_string())
@@ -123,6 +147,38 @@ impl PreciseEphemerisSampleSource {
     pub fn predict_ranges(&self, requests: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
         predict_ranges_over(&self.inner, requests, options)
     }
+
+    /// Query ECEF position and optional clock for parallel satellite and epoch
+    /// arrays against this sample-backed precise source.
+    ///
+    /// `satellites[i]` is evaluated at `epochsJ2000S[i]`, where epochs are
+    /// seconds since J2000 on the source time scale. The returned plain object
+    /// has aligned `positionsEcefM`, `clocksS`, `statuses`, and
+    /// `elementResults` arrays. Failed elements use the core missing-position
+    /// sentinel and carry the scalar engine error in `elementResults[i].error`.
+    #[wasm_bindgen(js_name = observableStatesAtJ2000S)]
+    pub fn observable_states_at_j2000_s(
+        &self,
+        satellites: JsValue,
+        epochs_j2000_s: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        observable_states_at_j2000_s_over(&self.inner, satellites, epochs_j2000_s)
+    }
+
+    /// Query ECEF position and optional clock for many satellites at one epoch
+    /// against this sample-backed precise source.
+    ///
+    /// `epochJ2000S` is seconds since J2000 on the source time scale. The
+    /// returned plain object follows the same contract as
+    /// [`observableStatesAtJ2000S`](Self::observable_states_at_j2000_s).
+    #[wasm_bindgen(js_name = observableStatesAtSharedJ2000S)]
+    pub fn observable_states_at_shared_j2000_s(
+        &self,
+        satellites: JsValue,
+        epoch_j2000_s: f64,
+    ) -> Result<JsValue, JsValue> {
+        observable_states_at_shared_j2000_s_over(&self.inner, satellites, epoch_j2000_s)
+    }
 }
 
 /// Build a sample-backed precise-ephemeris source from an array of samples.
@@ -138,24 +194,116 @@ impl PreciseEphemerisSampleSource {
 pub fn precise_ephemeris_samples_from_samples(
     samples: JsValue,
 ) -> Result<PreciseEphemerisSampleSource, JsValue> {
-    let samples: Vec<SampleJs> = serde_wasm_bindgen::from_value(samples)
-        .map_err(|e| type_error(&format!("invalid samples: {e}")))?;
-
-    let mut core_samples = Vec::with_capacity(samples.len());
-    for sample in samples {
-        let sat = parse_sat(&sample.sat)?;
-        let split = j2000_to_split(sample.epoch)?;
-        core_samples.push(CoreSample {
-            sat,
-            epoch: Instant::from_julian_date(TimeScale::Gpst, split),
-            position_ecef_m: sample.position_ecef_m,
-            clock_s: sample.clock_s,
-            clock_event: sample.clock_event,
-        });
-    }
-
+    let core_samples = decode_core_samples(samples)?;
     let inner = CoreSamples::from_samples(core_samples).map_err(samples_error)?;
     Ok(PreciseEphemerisSampleSource { inner })
+}
+
+/// A reusable precise-ephemeris interpolant with cached per-satellite nodes.
+///
+/// Build this handle once from a parsed [`Sp3`] product, raw precise samples, or
+/// a [`PreciseEphemerisSampleSource`], then reuse it for many state or range
+/// queries. The handle delegates to
+/// `sidereon_core::ephemeris::PreciseEphemerisInterpolant`; ECEF positions are
+/// metres, clocks are seconds, and query epochs are seconds since J2000 in the
+/// source time scale.
+#[wasm_bindgen]
+pub struct PreciseEphemerisInterpolant {
+    inner: CorePreciseEphemerisInterpolant,
+}
+
+#[wasm_bindgen]
+impl PreciseEphemerisInterpolant {
+    /// Build a cached interpolant from a parsed SP3 precise product.
+    ///
+    /// Nodes are copied from the product's native SP3 records. Query epochs are
+    /// seconds since J2000 in the SP3 product time scale.
+    #[wasm_bindgen(js_name = fromSp3)]
+    pub fn from_sp3(sp3: &Sp3) -> PreciseEphemerisInterpolant {
+        PreciseEphemerisInterpolant {
+            inner: CorePreciseEphemerisInterpolant::from_sp3(&sp3.inner),
+        }
+    }
+
+    /// Build a cached interpolant directly from precise samples.
+    ///
+    /// `samples` is the same array accepted by
+    /// [`preciseEphemerisSamplesFromSamples`]: each item has `{ sat, epoch,
+    /// positionEcefM, clockS?, clockEvent? }`, with epochs in seconds since
+    /// J2000 and positions in ECEF metres. Throws a `TypeError` for malformed
+    /// JS input and a `RangeError` for sample validation failures.
+    #[wasm_bindgen(js_name = fromSamples)]
+    pub fn from_samples(samples: JsValue) -> Result<PreciseEphemerisInterpolant, JsValue> {
+        let core_samples = decode_core_samples(samples)?;
+        let inner = CorePreciseEphemerisInterpolant::from_samples(core_samples)
+            .map_err(|e| range_error(&e.to_string()))?;
+        Ok(PreciseEphemerisInterpolant { inner })
+    }
+
+    /// Build a cached interpolant from an existing sample-backed precise source.
+    #[wasm_bindgen(js_name = fromPreciseEphemerisSamples)]
+    pub fn from_precise_ephemeris_samples(
+        source: &PreciseEphemerisSampleSource,
+    ) -> PreciseEphemerisInterpolant {
+        PreciseEphemerisInterpolant {
+            inner: CorePreciseEphemerisInterpolant::from_precise_ephemeris_samples(&source.inner),
+        }
+    }
+
+    /// Source time-scale abbreviation used by this handle's J2000-second axis,
+    /// such as `"GPST"`.
+    #[wasm_bindgen(getter, js_name = timeScale)]
+    pub fn time_scale(&self) -> String {
+        self.inner.time_scale().abbrev().to_string()
+    }
+
+    /// Satellite tokens this handle can interpolate, ascending.
+    #[wasm_bindgen(getter)]
+    pub fn satellites(&self) -> Vec<String> {
+        self.inner.satellites().map(|sat| sat.to_string()).collect()
+    }
+
+    /// Predict geometric ranges for many `(satellite, receiver, epoch)`
+    /// requests using this cached interpolant.
+    ///
+    /// `requests` is an array of `{ sat, receiverEcefM, tRxJ2000S }` objects.
+    /// Positions are ECEF metres and epochs are seconds since J2000 on this
+    /// handle's time scale. The output matches [`Sp3.predictRanges`].
+    #[wasm_bindgen(js_name = predictRanges)]
+    pub fn predict_ranges(&self, requests: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
+        predict_ranges_over(&self.inner, requests, options)
+    }
+
+    /// Query ECEF position and optional clock for parallel satellite and epoch
+    /// arrays using this cached interpolant.
+    ///
+    /// `satellites[i]` is evaluated at `epochsJ2000S[i]`, where epochs are
+    /// seconds since J2000 on this handle's time scale. The returned plain
+    /// object has aligned `positionsEcefM`, `clocksS`, `statuses`, and
+    /// `elementResults` arrays.
+    #[wasm_bindgen(js_name = observableStatesAtJ2000S)]
+    pub fn observable_states_at_j2000_s(
+        &self,
+        satellites: JsValue,
+        epochs_j2000_s: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        observable_states_at_j2000_s_over(&self.inner, satellites, epochs_j2000_s)
+    }
+
+    /// Query ECEF position and optional clock for many satellites at one epoch
+    /// using this cached interpolant.
+    ///
+    /// `epochJ2000S` is seconds since J2000 on this handle's time scale. The
+    /// returned object follows the same contract as
+    /// [`observableStatesAtJ2000S`](Self::observable_states_at_j2000_s).
+    #[wasm_bindgen(js_name = observableStatesAtSharedJ2000S)]
+    pub fn observable_states_at_shared_j2000_s(
+        &self,
+        satellites: JsValue,
+        epoch_j2000_s: f64,
+    ) -> Result<JsValue, JsValue> {
+        observable_states_at_shared_j2000_s_over(&self.inner, satellites, epoch_j2000_s)
+    }
 }
 
 /// Extract a parsed SP3 product as the canonical precise-ephemeris samples, one
@@ -223,6 +371,107 @@ fn sample_status_label(status: EphemerisSampleStatus) -> &'static str {
     }
 }
 
+fn observable_state_status_label(status: CoreObservableStateElementStatus) -> &'static str {
+    match status {
+        CoreObservableStateElementStatus::Valid => "valid",
+        CoreObservableStateElementStatus::Gap => "gap",
+        CoreObservableStateElementStatus::Error => "error",
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ObservableStateElementResultJs {
+    ok: bool,
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ObservableStateBatchJs {
+    count: usize,
+    positions_ecef_m: Vec<[f64; 3]>,
+    clocks_s: Vec<Option<f64>>,
+    statuses: Vec<&'static str>,
+    element_results: Vec<ObservableStateElementResultJs>,
+}
+
+fn parse_satellites_value(value: JsValue) -> Result<Vec<GnssSatelliteId>, JsValue> {
+    let tokens: Vec<String> = serde_wasm_bindgen::from_value(value)
+        .map_err(|e| type_error(&format!("invalid satellites: {e}")))?;
+    tokens
+        .iter()
+        .map(|sat| parse_sat(sat))
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn parse_epochs_value(value: JsValue) -> Result<Vec<f64>, JsValue> {
+    serde_wasm_bindgen::from_value(value)
+        .map_err(|e| type_error(&format!("invalid epochsJ2000S: {e}")))
+}
+
+fn observable_state_batch_to_js(batch: CoreObservableStateBatch) -> Result<JsValue, JsValue> {
+    let statuses = (0..batch.len())
+        .map(|index| {
+            observable_state_status_label(
+                batch
+                    .element_status(index)
+                    .unwrap_or(CoreObservableStateElementStatus::Error),
+            )
+        })
+        .collect::<Vec<_>>();
+    let element_results = batch
+        .element_results
+        .iter()
+        .map(|result| match result {
+            Ok(()) => ObservableStateElementResultJs {
+                ok: true,
+                error: None,
+            },
+            Err(error) => ObservableStateElementResultJs {
+                ok: false,
+                error: Some(error.to_string()),
+            },
+        })
+        .collect::<Vec<_>>();
+    to_js(&ObservableStateBatchJs {
+        count: batch.len(),
+        positions_ecef_m: batch.positions_ecef_m,
+        clocks_s: batch.clocks_s,
+        statuses,
+        element_results,
+    })
+}
+
+fn observable_states_at_j2000_s_over(
+    source: &dyn ObservableEphemerisSource,
+    satellites: JsValue,
+    epochs_j2000_s: JsValue,
+) -> Result<JsValue, JsValue> {
+    let satellites = parse_satellites_value(satellites)?;
+    let epochs_j2000_s = parse_epochs_value(epochs_j2000_s)?;
+    if satellites.len() != epochs_j2000_s.len() {
+        return Err(type_error(&format!(
+            "satellites ({}) and epochsJ2000S ({}) must have the same length",
+            satellites.len(),
+            epochs_j2000_s.len()
+        )));
+    }
+    let batch = core_observable_states_at_j2000_s(source, &satellites, &epochs_j2000_s)
+        .map_err(engine_error)?;
+    observable_state_batch_to_js(batch)
+}
+
+fn observable_states_at_shared_j2000_s_over(
+    source: &dyn ObservableEphemerisSource,
+    satellites: JsValue,
+    epoch_j2000_s: f64,
+) -> Result<JsValue, JsValue> {
+    let satellites = parse_satellites_value(satellites)?;
+    let batch = core_observable_states_at_shared_j2000_s(source, &satellites, epoch_j2000_s);
+    observable_state_batch_to_js(batch)
+}
+
 fn sample_over(
     source: &dyn ObservableEphemerisSource,
     satellites: Vec<String>,
@@ -275,6 +524,86 @@ pub fn sample_broadcast_ephemeris(
         stop_j2000_s,
         step_s,
     )
+}
+
+/// Missing-position sentinel used in failed observable-state batch elements.
+///
+/// The returned JS value is `[NaN, NaN, NaN]`, matching
+/// `sidereon_core::ephemeris::OBSERVABLE_STATE_MISSING_POSITION_ECEF_M`. Always
+/// check `elementResults[i].ok` or `statuses[i]` before using
+/// `positionsEcefM[i]`.
+#[wasm_bindgen(js_name = observableStateMissingPositionEcefM)]
+pub fn observable_state_missing_position_ecef_m() -> Result<JsValue, JsValue> {
+    to_js(&OBSERVABLE_STATE_MISSING_POSITION_ECEF_M)
+}
+
+#[wasm_bindgen]
+impl Sp3 {
+    /// Query ECEF position and optional clock for parallel satellite and epoch
+    /// arrays against this parsed SP3 product.
+    ///
+    /// `satellites[i]` is evaluated at `epochsJ2000S[i]`, where epochs are
+    /// seconds since J2000 in the product time scale. The returned plain object
+    /// has aligned `positionsEcefM`, `clocksS`, `statuses`, and
+    /// `elementResults` arrays. Failed elements use the core missing-position
+    /// sentinel and carry the scalar engine error in `elementResults[i].error`.
+    #[wasm_bindgen(js_name = observableStatesAtJ2000S)]
+    pub fn observable_states_at_j2000_s(
+        &self,
+        satellites: JsValue,
+        epochs_j2000_s: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        observable_states_at_j2000_s_over(&self.inner, satellites, epochs_j2000_s)
+    }
+
+    /// Query ECEF position and optional clock for many satellites at one epoch
+    /// against this parsed SP3 product.
+    ///
+    /// `epochJ2000S` is seconds since J2000 in the product time scale. The
+    /// returned object follows the same contract as
+    /// [`observableStatesAtJ2000S`](Self::observable_states_at_j2000_s).
+    #[wasm_bindgen(js_name = observableStatesAtSharedJ2000S)]
+    pub fn observable_states_at_shared_j2000_s(
+        &self,
+        satellites: JsValue,
+        epoch_j2000_s: f64,
+    ) -> Result<JsValue, JsValue> {
+        observable_states_at_shared_j2000_s_over(&self.inner, satellites, epoch_j2000_s)
+    }
+}
+
+#[wasm_bindgen]
+impl BroadcastEphemeris {
+    /// Query ECEF position and clock for parallel satellite and epoch arrays
+    /// against this parsed broadcast ephemeris store.
+    ///
+    /// `satellites[i]` is evaluated at `epochsJ2000S[i]`, where epochs are
+    /// seconds since J2000 in GPST for GNSS broadcast records. The returned
+    /// plain object has aligned `positionsEcefM`, `clocksS`, `statuses`, and
+    /// `elementResults` arrays.
+    #[wasm_bindgen(js_name = observableStatesAtJ2000S)]
+    pub fn observable_states_at_j2000_s(
+        &self,
+        satellites: JsValue,
+        epochs_j2000_s: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        observable_states_at_j2000_s_over(&self.inner, satellites, epochs_j2000_s)
+    }
+
+    /// Query ECEF position and clock for many satellites at one epoch against
+    /// this parsed broadcast ephemeris store.
+    ///
+    /// `epochJ2000S` is seconds since J2000 in GPST. The returned object follows
+    /// the same contract as
+    /// [`observableStatesAtJ2000S`](Self::observable_states_at_j2000_s).
+    #[wasm_bindgen(js_name = observableStatesAtSharedJ2000S)]
+    pub fn observable_states_at_shared_j2000_s(
+        &self,
+        satellites: JsValue,
+        epoch_j2000_s: f64,
+    ) -> Result<JsValue, JsValue> {
+        observable_states_at_shared_j2000_s_over(&self.inner, satellites, epoch_j2000_s)
+    }
 }
 
 /// Predict geometric ranges for many `(satellite, receiver, epoch)` requests in
