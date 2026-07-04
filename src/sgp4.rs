@@ -464,9 +464,9 @@ impl Tle {
     /// checksums), as a `[line1, line2]` string array. For a well-formed input
     /// the round-trip is character-exact.
     #[wasm_bindgen(js_name = toLines)]
-    pub fn to_lines(&self) -> Vec<String> {
-        let (line1, line2) = encode_tle(&self.elements);
-        vec![line1, line2]
+    pub fn to_lines(&self) -> Result<Vec<String>, JsValue> {
+        let (line1, line2) = encode_tle(&self.elements).map_err(crate::error::engine_error)?;
+        Ok(vec![line1, line2])
     }
 
     /// Advisory checksum discrepancies found while parsing. Empty when both
