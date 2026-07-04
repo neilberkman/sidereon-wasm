@@ -18,8 +18,8 @@ crate-type = ["cdylib", "rlib"]
 # binding only ever calls the serial paths (solve_spp, propagate_teme_arc,
 # look_angle_arc), never the rayon `*_parallel` variants, so no thread pool is
 # spawned under wasm32. Release CI resolves these crates from crates.io only.
-sidereon = "0.14.0"
-sidereon-core = "0.14.0"
+sidereon = "0.15.0"
+sidereon-core = "0.15.0"
 trust-region-least-squares = "0.9.1"
 wasm-bindgen = "0.2"
 # Typed access to the JS Error / TypeError / RangeError constructors so failures

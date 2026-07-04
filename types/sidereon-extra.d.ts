@@ -118,11 +118,7 @@ export interface SppBatchOptions {
 
 /** Serialized observability tier label. Handle getters return the generated
  * `ObservabilityTier` enum; serde-returning APIs use these stable labels. */
-export type ObservabilityTierLabel =
-  | "RankDeficient"
-  | "ZeroRedundancy"
-  | "Weak"
-  | "Nominal";
+export type ObservabilityTierLabel = "RankDeficient" | "ZeroRedundancy" | "Weak" | "Nominal";
 
 /** Geometry observability and covariance-validation diagnostics.
  * `ZeroRedundancy` marks a full-rank design with no residual degrees of freedom,
@@ -372,8 +368,95 @@ export interface AcquisitionOptions {
 //   import { propagateState } from "@neilberkman/sidereon";
 //   import type { PropagateStateRequest } from "@neilberkman/sidereon/types";
 
+/** Space-weather constants for a drag request. */
+export interface SpaceWeatherConfig {
+  f107?: number;
+  f107a?: number;
+  ap?: number;
+}
+
+/** Atmospheric drag parameterization. */
+export interface DragConfig {
+  bcFactorM2Kg?: number;
+  ballisticCoefficientKgM2?: number;
+  cd?: number;
+  areaM2?: number;
+  massKg?: number;
+  cutoffAltitudeKm?: number;
+  spaceWeather?: SpaceWeatherConfig;
+}
+
+/** Cannonball solar-radiation-pressure parameters. */
+export interface SolarRadiationPressureConfig {
+  cr: number;
+  areaToMassM2Kg?: number;
+  areaM2?: number;
+  massKg?: number;
+  pressureNM2?: number;
+  auKm?: number;
+}
+
+/** Zonal harmonic gravity selector. */
+export interface ZonalForceConfig {
+  maxDegree?: 2 | 3 | 4 | 5 | 6;
+  j2?: boolean;
+  j3?: boolean;
+  j4?: boolean;
+  j5?: boolean;
+  j6?: boolean;
+  muKm3S2?: number;
+  reKm?: number;
+  coefficients?: {
+    j2?: number;
+    j3?: number;
+    j4?: number;
+    j5?: number;
+    j6?: number;
+  };
+}
+
+/** Sun/Moon third-body force selector. */
+export interface ThirdBodyForceConfig {
+  sun?: boolean;
+  moon?: boolean;
+  gmSunKm3S2?: number;
+  gmMoonKm3S2?: number;
+}
+
+/** Schwarzschild relativity force selector. */
+export interface RelativityForceConfig {
+  muKm3S2?: number;
+  cKmS?: number;
+}
+
+/** Additive numerical force-model composition. */
+export interface CompositeForceModelConfig {
+  kind: "composite";
+  twoBody?: boolean;
+  twoBodyMuKm3S2?: number;
+  muKm3S2?: number;
+  zonal?: boolean | "none" | "j2" | "j2_j6" | "j2ThroughJ6" | ZonalForceConfig;
+  thirdBody?: boolean | "none" | "sun" | "moon" | "sun_moon" | "sunMoon" | ThirdBodyForceConfig;
+  solarRadiationPressure?: false | "none" | SolarRadiationPressureConfig;
+  srp?: false | "none" | SolarRadiationPressureConfig;
+  relativity?: boolean | "none" | "schwarzschild" | RelativityForceConfig;
+}
+
+/** Canonical Earth Phase A perturbation set. */
+export interface EarthPhaseAForceModelConfig {
+  kind: "earth_phase_a" | "earthPhaseA";
+  solarRadiationPressure?: false | "none" | SolarRadiationPressureConfig;
+  srp?: false | "none" | SolarRadiationPressureConfig;
+}
+
 /** Numerical state-propagation force model selector. */
-export type ForceModel = "two_body" | "two_body_j2";
+export type ForceModel =
+  | "two_body"
+  | "two_body_j2"
+  | "composite"
+  | "earth_phase_a"
+  | CompositeForceModelConfig
+  | EarthPhaseAForceModelConfig;
 
 /** Numerical state-propagation integrator selector. */
 export type Integrator = "dp54" | "rk4";
@@ -407,6 +490,306 @@ export interface PropagateStateRequest {
   maxSteps?: number;
   /** Gravitational parameter, km^3/s^2. Defaults to Earth's MU_EARTH. */
   muKm3S2?: number;
+  /** Atmospheric drag layered on the selected force model. */
+  drag?: DragConfig;
+}
+
+// --- 0.15 capability payloads ----------------------------------------------
+
+/** Sidereal filter template selector. */
+export type SiderealTemplateMethod =
+  "mean" | "robustMad" | "robust_mad" | { method: "ewma"; alpha: number };
+
+/** Options for `siderealFilter(series, periodS, options)`. */
+export interface SiderealFilterOptions {
+  sampleIntervalS?: number;
+  priorPeriods?: number;
+  minCoverage?: number;
+  templateMethod?: SiderealTemplateMethod;
+}
+
+/** Result returned by `siderealFilter`. */
+export interface SiderealFilterOutput {
+  filtered: number[];
+  template: number[];
+  coverage: number[];
+  underCovered: boolean[];
+}
+
+/** One period score returned by `periodicityStrength`. */
+export interface PeriodicityStrength {
+  periodS: number;
+  strength: number;
+}
+
+/** WGS84 geodetic coordinate in radians and metres. */
+export interface GeodeticCoordinate {
+  latRad: number;
+  lonRad: number;
+  heightM?: number;
+}
+
+/** One geodetic time-series sample. */
+export interface PositionTimeSeriesSample {
+  epochYear: number;
+  positionM: [number, number, number];
+  covarianceM2?: [[number, number, number], [number, number, number], [number, number, number]];
+}
+
+/** Position-series frame selector. */
+export type PositionSeriesFrame =
+  "enu" | { kind: "enu" } | { kind: "ecef"; reference: GeodeticCoordinate };
+
+/** Station position time series passed to geodetic time-series functions. */
+export interface PositionTimeSeries {
+  samples: PositionTimeSeriesSample[];
+  frame?: PositionSeriesFrame;
+}
+
+/** MIDAS velocity options. */
+export interface MidasOptions {
+  dominantPeriodYears?: number;
+  periodToleranceYears?: number;
+  minPairs?: number;
+}
+
+/** One MIDAS component diagnostic. */
+export interface MidasComponentStats {
+  pairCount: number;
+  retainedPairCount: number;
+  slopeSigmaMPerYr: number;
+  effectivePairCount: number;
+}
+
+/** Result returned by `velocityMidas`. */
+export interface MidasVelocity {
+  rateEnuMPerYr: [number, number, number];
+  sigmaEnuMPerYr: [number, number, number];
+  covarianceEnuM2PerYr2: [
+    [number, number, number],
+    [number, number, number],
+    [number, number, number],
+  ];
+  componentStats: [MidasComponentStats, MidasComponentStats, MidasComponentStats];
+  sampleCount: number;
+  spanYears: number;
+  quality: "nominal" | "shortSpan";
+}
+
+/** Trajectory model controls for `fitTrajectory`. */
+export interface TrajectoryModelOptions {
+  referenceEpochYear?: number;
+  includeAnnual?: boolean;
+  includeSemiannual?: boolean;
+  offsetEpochsYear?: number[];
+}
+
+/** Trajectory fit options. */
+export interface TrajectoryFitOptions {
+  loss?: "linear" | "softL1" | "soft_l1" | "huber" | "cauchy" | "arctan";
+  fScaleM?: number;
+  maxNfev?: number;
+}
+
+/** One term in a fitted trajectory model. */
+export interface TrajectoryTerm {
+  kind:
+    | "position"
+    | "velocity"
+    | "annualSin"
+    | "annualCos"
+    | "semiannualSin"
+    | "semiannualCos"
+    | "offset";
+  index?: number;
+  epochYear?: number;
+}
+
+/** One ENU component in a trajectory fit. */
+export interface TrajectoryComponent {
+  positionM: number;
+  velocityMPerYr: number;
+  annualSinM?: number;
+  annualCosM?: number;
+  semiannualSinM?: number;
+  semiannualCosM?: number;
+  offsetsM: number[];
+}
+
+/** Result returned by `fitTrajectory`. */
+export interface TrajectoryFit {
+  referenceEpochYear: number;
+  terms: TrajectoryTerm[];
+  components: [TrajectoryComponent, TrajectoryComponent, TrajectoryComponent];
+  parameterCovariance: number[][];
+  residualRmsEnuM: [number, number, number];
+  geometryQuality: GeometryQualityObject;
+  status: number;
+  nfev: number;
+  njev: number;
+  cost: number;
+  optimality: number;
+}
+
+/** Step detection options. */
+export interface StepDetectionOptions {
+  windowYears?: number;
+  scoreThreshold?: number;
+  minOffsetM?: number;
+  minSamplesEachSide?: number;
+  minSeparationYears?: number;
+  midas?: MidasOptions;
+}
+
+/** Candidate returned by `detectSteps`. */
+export interface StepCandidate {
+  epochYear: number;
+  offsetEnuM: [number, number, number];
+  score: number;
+  beforeCount: number;
+  afterCount: number;
+  heuristic: "detrendedSlidingMedian";
+}
+
+/** Network field request passed to `networkField`. */
+export interface NetworkFieldRequest {
+  frame: { origin: GeodeticCoordinate; removeCommonMode?: boolean };
+  stations: { id: string; reference: GeodeticCoordinate; series: PositionTimeSeries }[];
+}
+
+/** Result returned by `networkField`. */
+export interface NetworkField {
+  frame: { origin: Required<GeodeticCoordinate>; removeCommonMode: boolean };
+  stations: {
+    id: string;
+    rateEnuMPerYr: [number, number, number];
+    rawRateEnuMPerYr: [number, number, number];
+    sigmaEnuMPerYr: [number, number, number];
+    localVelocity: MidasVelocity;
+  }[];
+  commonModeEnuMPerYr: [number, number, number];
+}
+
+/** Minimal kinematic solution accepted by `metricsFromKinematicSolution`. */
+export interface KinematicMetricInput {
+  positionM: [number, number, number];
+  positionCovarianceM2: [
+    [number, number, number],
+    [number, number, number],
+    [number, number, number],
+  ];
+  clockM?: number;
+  ztdResidualM?: number;
+  usedSats?: string[];
+  innovationRmsM?: number;
+}
+
+/** Allan-family deviation curve used by `fitPowerLawNoise`. */
+export interface AllanDeviationCurve {
+  tauS: number[];
+  deviation: number[];
+  n: number[];
+}
+
+/** Power-law clock-noise fit options. */
+export interface PowerLawNoiseOptions {
+  minPointsPerOctave?: number;
+  slopeTolerance?: number;
+  scatterTolerance?: number;
+  basicTauS?: number;
+  measurementBandwidthHz?: number;
+}
+
+/** Power-law octave decision. */
+export type PowerLawOctaveDominance =
+  | {
+      kind: "dominant";
+      noiseType: "randomWalkFM" | "flickerFM" | "whiteFM" | "flickerPM" | "whitePM";
+    }
+  | { kind: "ambiguous" }
+  | { kind: "flagged"; flag: "underSampled" | "degenerateDeviation" | "missingModifiedAllan" };
+
+/** One classified clock-noise tau octave. */
+export interface PowerLawOctave {
+  tauStartS: number;
+  tauEndS: number;
+  pointCount: number;
+  adevSlope?: number;
+  mdevSlope?: number;
+  slopeScatter?: number;
+  dominance: PowerLawOctaveDominance;
+}
+
+/** One fitted clock-noise coefficient region. */
+export interface PowerLawNoiseRegion {
+  noiseType: "randomWalkFM" | "flickerFM" | "whiteFM" | "flickerPM" | "whitePM";
+  tauStartS: number;
+  tauEndS: number;
+  octaveCount: number;
+  pointCount: number;
+  meanSlope: number;
+  coefficient: number;
+}
+
+/** Result returned by `fitPowerLawNoise`. */
+export interface PowerLawNoiseFit {
+  dominantPerOctave: PowerLawOctave[];
+  coefficients: [number, number, number, number, number];
+  regions: PowerLawNoiseRegion[];
+}
+
+/** Numerical orbit-fit options. */
+export interface OrbitFitOptions {
+  forceModel?: ForceModel;
+  muKm3S2?: number;
+  integrator?: Integrator;
+  integratorOptions?: Pick<
+    PropagateStateRequest,
+    "absTol" | "relTol" | "initialStepS" | "minStepS" | "maxStepS" | "maxSteps"
+  >;
+  solverOptions?: { gtol?: number; ftol?: number; xtol?: number; maxNfev?: number };
+  linearSolve?: "nalgebraLu" | "nalgebra_lu" | "ownedGaussianFirstTie" | "owned_gaussian_first_tie";
+  minLedgerSamples?: number;
+  drag?: DragConfig;
+}
+
+/** Fitted orbit covariance marker. */
+export type OrbitFitCovariance = { kind: "estimated"; matrix: number[][] } | { kind: "unbounded" };
+
+/** One satellite solution in an orbit-fit report. */
+export interface OrbitFitSolution {
+  satellite: string;
+  initialEpochS: number;
+  initialPositionKm: [number, number, number];
+  initialVelocityKmS: [number, number, number];
+  covariance: OrbitFitCovariance;
+  geometryQuality: GeometryQualityObject;
+  seedRms3dM: number;
+  fitRms3dM: number;
+  iterations: number;
+}
+
+/** One RTN residual ledger entry. */
+export interface OrbitResidualStats {
+  radialRmsM: number;
+  alongRmsM: number;
+  crossRmsM: number;
+  rms3dM: number;
+  n: number;
+  lowSampleCount: boolean;
+}
+
+/** Orbit residual ledger returned in an orbit-fit report. */
+export interface OrbitResidualLedger {
+  perSatellite: { satellite: string; stats: OrbitResidualStats }[];
+  perConstellation: { system: string; stats: OrbitResidualStats }[];
+  arcSpan: { timeScale: string; startJ2000S: number; endJ2000S: number; durationS: number };
+}
+
+/** Report returned by `fitSp3PreciseOrbit` and `fitPreciseEphemerisSampleOrbit`. */
+export interface OrbitFitReport {
+  fits: OrbitFitSolution[];
+  ledger: OrbitResidualLedger;
 }
 
 // --- Covariance propagation -------------------------------------------------

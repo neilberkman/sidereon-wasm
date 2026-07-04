@@ -107,7 +107,7 @@ impl Wgs84Geodetic {
 }
 
 impl Wgs84Geodetic {
-    fn to_core(self) -> Result<CoreWgs84, JsValue> {
+    pub(crate) fn to_core(self) -> Result<CoreWgs84, JsValue> {
         CoreWgs84::new(self.lat_rad, self.lon_rad, self.height_m)
             .map_err(|e| range_error(&e.to_string()))
     }
