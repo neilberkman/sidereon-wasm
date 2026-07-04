@@ -17,11 +17,13 @@
 mod almanac;
 mod anomaly;
 mod antex;
+mod araim;
 mod atmosphere;
 mod bias;
 mod bodies;
 mod broadcast_comparison;
 mod cdm;
+mod clock_stability;
 mod conjunction;
 mod constellation;
 mod covariance;
@@ -96,12 +98,17 @@ pub use anomaly::{
     solve_kepler, true_to_eccentric, true_to_mean,
 };
 pub use antex::{load_antex, Antenna, Antex, AntexDateTime};
+pub use araim::{araim, araim_fault_modes, araim_lpv_200_allocation};
 pub use atmosphere::{atmosphere_density, AtmosphereDensity};
 pub use bias::{
     load_bias_sinex, load_bias_sinex_lossy, load_code_dcb, load_code_dcb_lossy, BiasSet,
 };
 pub use bodies::{sun_moon_ecef_batch, sun_moon_eci, SunMoon};
 pub use cdm::{parse_cdm_kvn, parse_cdm_xml, Cdm, CdmObject};
+pub use clock_stability::{
+    allan_deviation, compute_allan_deviations, hadamard_deviation, modified_adev, overlapping_adev,
+    time_deviation,
+};
 pub use conjunction::{
     collision_probability, covariance_is_positive_semidefinite, covariance_is_symmetric,
     encounter_frame, encounter_plane_covariance, rtn_to_eci_covariance, CollisionProbability,
@@ -153,7 +160,7 @@ pub use geoid::{
 pub use gnss::{carrier_band_name, gnss_system_label, gnss_system_letter, CarrierBand, GnssSystem};
 pub use ils::{bounded_ils_search_js, lambda_ils_search_js};
 pub use iod::{iod_gauss_angles, iod_gibbs, iod_herrick_gibbs, IodState, IodVelocity};
-pub use ionex::{load_ionex, Ionex};
+pub use ionex::{ionex_from_node_samples, ionex_from_samples, load_ionex, Ionex};
 pub use ionosphere::{
     galileo_nequick_delay, klobuchar_delay, nequick_g_delay_m_js, nequick_g_stec_tecu_js,
 };
@@ -250,7 +257,10 @@ pub use rtk_arc::{
     fix_wide_lane_rtk_arc_js, prepare_ionosphere_free_rtk_arc_js, solve_rtk_arc_js,
     solve_static_rtk_arc_js,
 };
-pub use sbas::{decode_sbas_message, sbas_corrected_state, solve_spp_sbas, SbasCorrectionStore};
+pub use sbas::{
+    decode_sbas_message, sat_to_sbas_prn, sbas_corrected_state, sbas_prn_to_sat, solve_spp_sbas,
+    SbasCorrectionStore,
+};
 pub use sgp4::{
     fit_tle, parse_tle_file, propagate_batch, visible_from_satellites_js, ChecksumWarning,
     Constellation, FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles, NamedTle,

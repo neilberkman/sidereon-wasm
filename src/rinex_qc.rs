@@ -523,7 +523,11 @@ fn cycle_slip_qc_js(value: &CycleSlipQc) -> CycleSlipQcJs {
         observations: value.observations,
         total_slips: value.total_slips,
         observations_per_slip: value.observations_per_slip,
-        by_system: value.by_system.iter().map(system_cycle_slip_qc_js).collect(),
+        by_system: value
+            .by_system
+            .iter()
+            .map(system_cycle_slip_qc_js)
+            .collect(),
     }
 }
 
