@@ -35,6 +35,7 @@ mod doppler;
 mod elements;
 mod equinoctial;
 mod error;
+mod estimation;
 mod events;
 mod forces;
 mod frames;
@@ -76,6 +77,7 @@ mod rtk_arc;
 mod sbas;
 mod sgp4;
 mod sky;
+mod source_localization;
 mod sp3;
 mod sp3_merge;
 mod space_weather;
@@ -137,6 +139,13 @@ pub use doppler::{doppler_range_rate, doppler_shift_js, DopplerShift};
 pub use elements::{coe2rv, rv2coe};
 pub use equinoctial::{
     coe2eq, coe2mee, eq2coe, eq2rv, mee2coe, mee2rv, rv2eq, rv2mee, RetrogradeFactor,
+};
+pub use estimation::{
+    alpha_beta_apply_measurement, alpha_beta_filter_step, alpha_beta_predict,
+    alpha_beta_steady_state_gains, cfar_ca_false_alarm_probability, cfar_ca_multiplier_from_pfa,
+    cfar_ca_pfa_from_multiplier, cfar_ca_threshold, ewma_update, ewma_update_power_of_two,
+    kalman_cv_steady_state_gains, mad_gaussian_consistency, mad_spread, nis, nis_expected_value,
+    nis_gate, nis_gate_threshold, normalized_innovation,
 };
 pub use events::{
     angular_separation, angular_separation_coords, beta_angle, beta_angle_from_state,
@@ -210,8 +219,9 @@ pub use ppp::{
 pub use ppp_corrections::ppp_corrections;
 pub use ppp_corrections::ppp_corrections_with_code_bias;
 pub use precise_samples::{
-    precise_ephemeris_samples_from_samples, sample_broadcast_ephemeris, sample_sp3_ephemeris,
-    sp3_precise_ephemeris_samples, PreciseEphemerisSampleSource,
+    observable_state_missing_position_ecef_m, precise_ephemeris_samples_from_samples,
+    sample_broadcast_ephemeris, sample_sp3_ephemeris, sp3_precise_ephemeris_samples,
+    PreciseEphemerisInterpolant, PreciseEphemerisSampleSource,
 };
 pub use propagation::{propagate_state, Ephemeris};
 pub use qc::FdeSolution;
@@ -270,6 +280,10 @@ pub use sgp4::{
 pub use sky::{
     find_moon_elevation_crossings, find_moon_transits, moon_az_el, moon_elevation_deg,
     moon_illumination, sun_az_el, MoonElevationCrossing, MoonTransit,
+};
+pub use source_localization::{
+    chan_ho_initial_guess, locate_source, source_crlb, source_dop, source_solve_mode_tdoa,
+    source_solve_mode_toa,
 };
 pub use sp3::{load_sp3, Sp3, Sp3ClockReferenceOffset, Sp3Interpolation, Sp3State};
 pub use sp3_merge::{merge_sp3, Sp3MergeFlag, Sp3MergeReport, Sp3MergeResult};
