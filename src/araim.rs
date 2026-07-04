@@ -50,6 +50,10 @@ struct AraimReceiverInput {
 struct SatelliteIsmModelJs {
     sigma_ura_m: f64,
     sigma_ure_m: f64,
+    #[serde(default)]
+    effective_sigma_int_m: Option<f64>,
+    #[serde(default)]
+    effective_sigma_acc_m: Option<f64>,
     b_nom_m: f64,
     p_sat: f64,
 }
@@ -68,6 +72,10 @@ struct SatelliteIsmInput {
     id: String,
     sigma_ura_m: f64,
     sigma_ure_m: f64,
+    #[serde(default)]
+    effective_sigma_int_m: Option<f64>,
+    #[serde(default)]
+    effective_sigma_acc_m: Option<f64>,
     b_nom_m: f64,
     p_sat: f64,
 }
@@ -89,6 +97,8 @@ struct IntegrityAllocationJs {
     pfa_vert: f64,
     pfa_hor: f64,
     p_threshold_unmonitored: f64,
+    #[serde(default = "default_p_emt")]
+    p_emt: f64,
     max_fault_order: usize,
 }
 
@@ -150,6 +160,10 @@ fn parse_system(label: &str) -> Result<GnssSystem, JsValue> {
     }
 }
 
+fn default_p_emt() -> f64 {
+    1.0e-5
+}
+
 fn system_label(system: GnssSystem) -> String {
     system.as_str().to_string()
 }
@@ -198,13 +212,28 @@ fn geometry(input: AraimGeometryInput) -> Result<CoreAraimGeometry, JsValue> {
     })
 }
 
-fn satellite_model(input: SatelliteIsmModelJs) -> CoreSatelliteIsmModel {
-    CoreSatelliteIsmModel::new(
-        input.sigma_ura_m,
-        input.sigma_ure_m,
-        input.b_nom_m,
-        input.p_sat,
-    )
+fn satellite_model(input: SatelliteIsmModelJs) -> Result<CoreSatelliteIsmModel, JsValue> {
+    match (input.effective_sigma_int_m, input.effective_sigma_acc_m) {
+        (Some(effective_sigma_int_m), Some(effective_sigma_acc_m)) => {
+            Ok(CoreSatelliteIsmModel::new_with_effective_sigmas(
+                input.sigma_ura_m,
+                input.sigma_ure_m,
+                input.b_nom_m,
+                input.p_sat,
+                effective_sigma_int_m,
+                effective_sigma_acc_m,
+            ))
+        }
+        (None, None) => Ok(CoreSatelliteIsmModel::new(
+            input.sigma_ura_m,
+            input.sigma_ure_m,
+            input.b_nom_m,
+            input.p_sat,
+        )),
+        _ => Err(type_error(
+            "effectiveSigmaIntM and effectiveSigmaAccM must be set together",
+        )),
+    }
 }
 
 fn ism(input: IsmInput) -> Result<CoreIsm, JsValue> {
@@ -215,7 +244,7 @@ fn ism(input: IsmInput) -> Result<CoreIsm, JsValue> {
             Ok(CoreConstellationIsm::new(
                 parse_system(&constellation.system)?,
                 constellation.p_const,
-                satellite_model(constellation.default_sat),
+                satellite_model(constellation.default_sat)?,
             ))
         })
         .collect::<Result<Vec<_>, JsValue>>()?;
@@ -223,13 +252,32 @@ fn ism(input: IsmInput) -> Result<CoreIsm, JsValue> {
         .satellites
         .into_iter()
         .map(|satellite| {
-            Ok(CoreSatelliteIsm::new(
-                parse_sat(&satellite.id)?,
-                satellite.sigma_ura_m,
-                satellite.sigma_ure_m,
-                satellite.b_nom_m,
-                satellite.p_sat,
-            ))
+            match (
+                satellite.effective_sigma_int_m,
+                satellite.effective_sigma_acc_m,
+            ) {
+                (Some(effective_sigma_int_m), Some(effective_sigma_acc_m)) => {
+                    Ok(CoreSatelliteIsm::new_with_effective_sigmas(
+                        parse_sat(&satellite.id)?,
+                        satellite.sigma_ura_m,
+                        satellite.sigma_ure_m,
+                        satellite.b_nom_m,
+                        satellite.p_sat,
+                        effective_sigma_int_m,
+                        effective_sigma_acc_m,
+                    ))
+                }
+                (None, None) => Ok(CoreSatelliteIsm::new(
+                    parse_sat(&satellite.id)?,
+                    satellite.sigma_ura_m,
+                    satellite.sigma_ure_m,
+                    satellite.b_nom_m,
+                    satellite.p_sat,
+                )),
+                _ => Err(type_error(
+                    "effectiveSigmaIntM and effectiveSigmaAccM must be set together",
+                )),
+            }
         })
         .collect::<Result<Vec<_>, JsValue>>()?;
     Ok(CoreIsm::new(constellations, satellites))
@@ -243,6 +291,7 @@ fn allocation(input: IntegrityAllocationJs) -> CoreIntegrityAllocation {
         pfa_vert: input.pfa_vert,
         pfa_hor: input.pfa_hor,
         p_threshold_unmonitored: input.p_threshold_unmonitored,
+        p_emt: input.p_emt,
         max_fault_order: input.max_fault_order,
     }
 }
@@ -255,6 +304,7 @@ fn allocation_from_core(input: CoreIntegrityAllocation) -> IntegrityAllocationJs
         pfa_vert: input.pfa_vert,
         pfa_hor: input.pfa_hor,
         p_threshold_unmonitored: input.p_threshold_unmonitored,
+        p_emt: input.p_emt,
         max_fault_order: input.max_fault_order,
     }
 }
@@ -320,7 +370,8 @@ fn result_from_core(value: sidereon_core::araim::AraimResult) -> AraimResultJs {
 /// LPV-200 ARAIM integrity and continuity allocation.
 ///
 /// The returned object can be passed to `araim`. Probability fields are
-/// dimensionless and `maxFaultOrder` is an integer fault order.
+/// dimensionless, `pEmt` defaults to `1e-5`, and `maxFaultOrder` is an integer
+/// fault order.
 #[wasm_bindgen(js_name = araimLpv200Allocation)]
 pub fn araim_lpv_200_allocation() -> Result<JsValue, JsValue> {
     to_js(&allocation_from_core(CoreIntegrityAllocation::lpv_200()))
@@ -341,6 +392,7 @@ pub fn araim_fault_modes(
     let ism = parse_ism(ism)?;
     let allocation = parse_allocation(allocation)?;
     let modes: Vec<FaultHypothesisJs> = core_enumerate_fault_modes(&geometry, &ism, &allocation)
+        .map_err(engine_error)?
         .into_iter()
         .map(fault_hypothesis_from_core)
         .collect();
@@ -352,9 +404,11 @@ pub fn araim_fault_modes(
 /// `geometry.rows` contains satellite IDs, ECEF line-of-sight unit vectors,
 /// optional constellation labels, and elevations in radians. `receiver` is WGS84
 /// geodetic radians plus ellipsoidal height meters. `ism` contains
-/// constellation defaults and optional satellite overrides. `allocation` may be
-/// omitted to use `araimLpv200Allocation()`. Returned `hplM`, `vplM`,
-/// `sigmaAccHM`, `sigmaAccVM`, `emtM`, and per-mode ENU arrays are meters.
+/// constellation defaults and optional satellite overrides. Satellite models may
+/// provide paired `effectiveSigmaIntM` and `effectiveSigmaAccM` fields; omit both
+/// to let the core derive them from elevation. `allocation` may be omitted to use
+/// `araimLpv200Allocation()`. Returned `hplM`, `vplM`, `sigmaAccHM`,
+/// `sigmaAccVM`, `emtM`, and per-mode ENU arrays are meters.
 #[wasm_bindgen(js_name = araim)]
 pub fn araim(geometry: JsValue, ism: JsValue, allocation: JsValue) -> Result<JsValue, JsValue> {
     let geometry = parse_geometry(geometry)?;

@@ -8,11 +8,17 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import {
   DtedTerrain,
+  Egm96FifteenMinuteGeoid,
+  MmapTerrain,
   SbasCorrectionStore,
+  TerrainGeoidModel,
+  VerticalDatum,
   allanDeviation,
   angularSeparationCoords,
   araim,
@@ -20,6 +26,7 @@ import {
   araimLpv200Allocation,
   computeAllanDeviations,
   decodeSbasMessage,
+  dtedTreeToMmapStore,
   hadamardDeviation,
   ionexFromNodeSamples,
   ionexFromSamples,
@@ -29,11 +36,15 @@ import {
   positionAngle,
   satToSbasPrn,
   sbasPrnToSat,
+  terrainStoreChecksum64,
   timeDeviation,
 } from "../pkg-node/sidereon.js";
 import { fixture, fixtureJson, hexToF64 } from "./helpers.mjs";
 
 const CORE_FIXTURES = fileURLToPath(new URL("./fixtures", import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const CORE_DTED_FIXTURES = "/Users/neil/xuku/sidereon/crates/sidereon-core/tests/fixtures/dted";
+const CORE_DTED_TILES = `${CORE_DTED_FIXTURES}/tiles`;
 const NIST_MODULUS = 2_147_483_647;
 const NIST_MULTIPLIER = 16_807;
 const NIST_SEED = 1_234_567_890;
@@ -48,6 +59,25 @@ const hexToBytes = (hex) =>
       .match(/.{2}/g)
       .map((b) => parseInt(b, 16)),
   );
+
+const coreDtedJson = () =>
+  JSON.parse(readFileSync(`${CORE_DTED_FIXTURES}/dted_points.json`, "utf8"));
+
+function dtedTreeStoreBytes(root) {
+  try {
+    return dtedTreeToMmapStore(root);
+  } catch (err) {
+    assert.equal(err.name, "Io");
+    assert.equal(err.kind, "Io");
+    assert.equal(err.detail.name, "Io");
+    return Uint8Array.from(
+      execFileSync("cargo", ["run", "--quiet", "--bin", "dted_tree_to_mmap_store", "--", root], {
+        cwd: REPO_ROOT,
+        maxBuffer: 16 * 1024 * 1024,
+      }),
+    );
+  }
+}
 
 function nistFrequencyData(len) {
   let state = NIST_SEED;
@@ -164,6 +194,84 @@ test("DTED heightBatch matches scalar ORTHOMETRIC terrain lookups", () => {
   assert.equal(withError[1].ok, true);
 });
 
+test("mmap terrain store built from DTED fixtures matches DTED terrain", () => {
+  const bytes = dtedTreeStoreBytes(CORE_DTED_TILES);
+  assert.ok(bytes instanceof Uint8Array);
+  assert.ok(bytes.length > 0);
+
+  const checksum = terrainStoreChecksum64(bytes);
+  assert.equal(typeof checksum, "bigint");
+
+  const store = MmapTerrain.fromBytes(bytes);
+  assert.equal(store.checksum64(), checksum);
+  assert.equal(MmapTerrain.fromVec(store.toBytes()).checksum64(), checksum);
+  assert.equal(store.verticalDatum, VerticalDatum.Egm96MslOrthometric);
+
+  const index = store.tileIndex();
+  assert.equal(index.length, 2);
+  assert.ok(index.some((tile) => tile.latIndex === 36 && tile.lonIndex === -107));
+  assert.ok(index.some((tile) => tile.latIndex === 36 && tile.lonIndex === -106));
+  assert.ok(index.every((tile) => tile.verticalDatum === VerticalDatum.Egm96MslOrthometric));
+
+  const cases = coreDtedJson().multi_tile_cases.map((p) => ({
+    longitudeDeg: hexToF64(p.longitude_bits),
+    latitudeDeg: hexToF64(p.latitude_bits),
+    bilinearM: hexToF64(p.bilinear_bits),
+    nearestM: hexToF64(p.nearest_bits),
+  }));
+
+  const points = cases.map((p) => [p.longitudeDeg, p.latitudeDeg]);
+  const batch = store.heightBatch(points, { interpolation: "bilinear" });
+  const typedBatch = store.orthometricHeightBatch(points, { interpolation: "bilinear" });
+  assert.equal(batch.length, cases.length);
+  assert.equal(typedBatch.length, cases.length);
+
+  for (let i = 0; i < cases.length; i++) {
+    const p = cases[i];
+    assert.equal(batch[i].ok, true);
+    assert.equal(typedBatch[i].ok, true);
+    assert.equal(batch[i].heightM, p.bilinearM);
+    assert.equal(store.heightM(p.longitudeDeg, p.latitudeDeg), batch[i].heightM);
+    assert.equal(store.orthometricHeightM(p.longitudeDeg, p.latitudeDeg).valueM, batch[i].heightM);
+    assert.equal(typedBatch[i].orthometricHeightM.valueM, batch[i].heightM);
+    assert.equal(
+      store.heightMWithOptions(p.longitudeDeg, p.latitudeDeg, {
+        interpolation: "nearestPosting",
+      }),
+      p.nearestM,
+    );
+  }
+
+  const oneDegree = TerrainGeoidModel.egm96OneDegree();
+  const p = cases[0];
+  const ellipsoidal = store.ellipsoidalHeightM(p.longitudeDeg, p.latitudeDeg);
+  assert.equal(typeof ellipsoidal.valueM, "number");
+  assert.equal(
+    store.ellipsoidalHeightMWithModel(p.longitudeDeg, p.latitudeDeg, {}, oneDegree).valueM,
+    ellipsoidal.valueM,
+  );
+  assert.equal(
+    store
+      .orthometricHeightM(p.longitudeDeg, p.latitudeDeg)
+      .toEllipsoidalHeightDeg(p.latitudeDeg, p.longitudeDeg, oneDegree).valueM,
+    ellipsoidal.valueM,
+  );
+
+  assert.throws(
+    () => Egm96FifteenMinuteGeoid.fromWw15mghDacPath(`${CORE_DTED_FIXTURES}/WW15MGH.DAC`),
+    (err) => {
+      assert.equal(err.name, "MissingEgm96Dac");
+      assert.equal(err.kind, "MissingEgm96Dac");
+      assert.match(err.path, /WW15MGH\.DAC$/);
+      assert.match(err.remediation, /WW15MGH\.DAC/);
+      assert.equal(err.detail.name, "MissingEgm96Dac");
+      assert.match(err.detail.path, /WW15MGH\.DAC$/);
+      assert.match(err.detail.remediation, /WW15MGH\.DAC/);
+      return true;
+    },
+  );
+});
+
 test("IONEX samples rebuild parsed products through both sample constructors", () => {
   const ionex = loadIonex(fixture("synthetic_2map_7x7.20i"));
   const gridSamples = ionex.tecGridSamples();
@@ -209,19 +317,20 @@ test("SBAS decode payload and store accessors expose core message data", () => {
   assert.equal(store.ionoGrid("S29"), null);
 });
 
+const WG_C_ROWS = [
+  ["G01", "GPS", [0.0225, 0.9951, -0.0966], 3.8865, 3.574],
+  ["G02", "GPS", [0.675, -0.69, -0.2612], 1.4377, 1.1252],
+  ["G03", "GPS", [0.0723, -0.6601, -0.7477], 0.8604, 0.5479],
+  ["G04", "GPS", [-0.9398, 0.2553, -0.2269], 1.6383, 1.3258],
+  ["G05", "GPS", [-0.5907, -0.7539, -0.2877], 1.3229, 1.0104],
+  ["E01", "Galileo", [-0.3236, -0.0354, -0.9455], 0.8434, 0.5309],
+  ["E02", "Galileo", [-0.6748, 0.4356, -0.5957], 0.8963, 0.5838],
+  ["E03", "Galileo", [0.0938, -0.7004, -0.7075], 0.8669, 0.5544],
+  ["E04", "Galileo", [0.5571, 0.3088, -0.7709], 0.8573, 0.5448],
+  ["E05", "Galileo", [0.6622, 0.6958, -0.278], 1.3616, 1.0491],
+];
+
 function wgCGeometry() {
-  const rows = [
-    ["G01", "GPS", [0.0225, 0.9951, -0.0966], 3.574],
-    ["G02", "GPS", [0.675, -0.69, -0.2612], 1.1252],
-    ["G03", "GPS", [0.0723, -0.6601, -0.7477], 0.5479],
-    ["G04", "GPS", [-0.9398, 0.2553, -0.2269], 1.3258],
-    ["G05", "GPS", [-0.5907, -0.7539, -0.2877], 1.0104],
-    ["E01", "Galileo", [-0.3236, -0.0354, -0.9455], 0.5309],
-    ["E02", "Galileo", [-0.6748, 0.4356, -0.5957], 0.5838],
-    ["E03", "Galileo", [0.0938, -0.7004, -0.7075], 0.5544],
-    ["E04", "Galileo", [0.5571, 0.3088, -0.7709], 0.5448],
-    ["E05", "Galileo", [0.6622, 0.6958, -0.278], 1.0491],
-  ];
   const elevation = (cAccM2) => {
     const sigmaUre = 0.5;
     const a = 0.3;
@@ -231,7 +340,7 @@ function wgCGeometry() {
   return {
     receiver: { latRad: 0, lonRad: 0, heightM: 0 },
     clockSystems: ["GPS", "Galileo"],
-    rows: rows.map(([id, system, designEnu, cAccM2]) => {
+    rows: WG_C_ROWS.map(([id, system, designEnu, , cAccM2]) => {
       const east = -designEnu[0];
       const north = -designEnu[1];
       const up = -designEnu[2];
@@ -257,7 +366,15 @@ function wgCIsm() {
       { system: "GPS", pConst: 1e-4, defaultSat: model },
       { system: "Galileo", pConst: 1e-4, defaultSat: model },
     ],
-    satellites: [],
+    satellites: WG_C_ROWS.map(([id, , , cIntM2, cAccM2]) => ({
+      id,
+      sigmaUraM: 0.75,
+      sigmaUreM: 0.5,
+      bNomM: 0.5,
+      pSat: 1e-5,
+      effectiveSigmaIntM: Math.sqrt(cIntM2),
+      effectiveSigmaAccM: Math.sqrt(cAccM2),
+    })),
   };
 }
 
@@ -265,12 +382,13 @@ test("ARAIM returns the public WG-C protection-level reference", () => {
   const geometry = wgCGeometry();
   const ism = wgCIsm();
   const allocation = araimLpv200Allocation();
+  assert.equal(allocation.pEmt, 1e-5);
   const result = araim(geometry, ism, allocation);
 
   assert.equal(result.availability, true);
-  close(result.vplM, 19.2, 1.0, "VPL m");
-  close(result.hplM, 14.5, 1.0, "HPL m");
-  close(result.emtM, 7.8, 1.0, "EMT m");
+  close(result.vplM, 19.2, 0.1, "VPL m");
+  close(result.hplM, 14.5, 0.1, "HPL m");
+  close(result.emtM, 7.8, 0.1, "EMT m");
   close(result.sigmaAccVM, 1.47, 0.02, "vertical accuracy sigma m");
   assert.ok(result.faultModes.length > 1);
 

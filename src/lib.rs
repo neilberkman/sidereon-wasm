@@ -85,6 +85,7 @@ mod ssr;
 mod staleness;
 mod tca;
 mod terrain;
+mod terrain_store;
 mod tides;
 mod trls;
 mod tropo;
@@ -287,6 +288,11 @@ pub use tca::{
     find_tca_candidates, find_tca_conjunctions, screen_tca_candidates, screen_tca_conjunctions,
 };
 pub use terrain::DtedTerrain;
+pub use terrain_store::{
+    dted_tree_to_mmap_store, terrain_store_checksum64, write_dted_tree_to_mmap_store,
+    Egm96FifteenMinuteGeoid, EllipsoidalHeightM, MmapTerrain, OrthometricHeightM,
+    TerrainDatumError, TerrainGeoidModel, TerrainStoreError, TerrainStoreTileIndex, VerticalDatum,
+};
 pub use tides::{ocean_tide_loading_js, solid_earth_pole_tide_js, solid_earth_tide_js};
 pub use trls::{
     least_squares, least_squares_drop_one, LeastSquaresDropOneReport, LeastSquaresResult,
