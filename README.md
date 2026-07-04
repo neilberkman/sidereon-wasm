@@ -106,16 +106,30 @@ positions and scalar attributes out.
 
 The wasm surface mirrors the full breadth of the engine:
 
-- **Orbit propagation:** SGP4 from TLE and OMM, numerical propagation with
-  selectable force models including atmospheric drag (space-weather driven) and
-  orbital decay estimation, Kepler two-body propagation, batch constellation
-  propagation, pass prediction, look angles, coverage.
+- **Orbit propagation:** SGP4 from TLE and OMM, numerical propagation with a
+  composable force model (zonal harmonics through J6, Sun/Moon third-body,
+  solar radiation pressure, relativistic correction, space-weather-driven
+  atmospheric drag) and orbital decay estimation, Kepler two-body propagation,
+  batch constellation propagation, pass prediction, look angles, coverage, and
+  batch least-squares orbit fitting against precise ephemerides with a
+  per-satellite residual ledger.
 - **GNSS positioning:** SPP, RTK (float/fixed), PPP (float/fixed), DGNSS,
   moving-baseline RTK, DOP, velocity, and a robust SPP driver that runs fault
   detection and exclusion (RAIM/FDE) with iterative reweighting.
+- **Integrity and error bounds:** multi-constellation ARAIM protection levels,
+  SBAS protection levels (DO-229), per-observation reliability (minimal
+  detectable bias, internal/external), observability classification of every
+  solution (rank, redundancy, conditioning), and covariance-derived error
+  metrics (CEP, R95, SEP, error ellipse) that report wide or flagged bounds
+  for weak geometry rather than fabricated confidence.
 - **GNSS corrections and biases:** SBAS message decoding with SBAS-corrected
   solves, RTCM SSR orbit and clock correction streams, Bias-SINEX code and
   phase biases (DCB/OSB).
+- **Timing, estimation, and geodesy:** Allan-family clock stability with
+  power-law noise identification (IEEE 1139), scalar Kalman and alpha-beta
+  trackers, CFAR detection thresholds, source localization (ToA/TDOA), robust
+  station velocity (MIDAS) with trajectory fitting and step detection, and
+  repeating-geometry (sidereal) filtering.
 - **Ephemeris and time:** broadcast ephemeris and SP3 (load/interpolate/merge),
   source-agnostic precise ephemeris sampling (one sampling interface over SP3,
   broadcast, or caller-supplied samples), JPL SPK (DAF/.bsp) kernels,

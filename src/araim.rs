@@ -309,13 +309,13 @@ fn allocation_from_core(input: CoreIntegrityAllocation) -> IntegrityAllocationJs
     }
 }
 
-fn parse_geometry(value: JsValue) -> Result<CoreAraimGeometry, JsValue> {
+pub(crate) fn parse_geometry(value: JsValue) -> Result<CoreAraimGeometry, JsValue> {
     let input: AraimGeometryInput = serde_wasm_bindgen::from_value(value)
         .map_err(|e| type_error(&format!("invalid ARAIM geometry: {e}")))?;
     geometry(input)
 }
 
-fn parse_ism(value: JsValue) -> Result<CoreIsm, JsValue> {
+pub(crate) fn parse_ism(value: JsValue) -> Result<CoreIsm, JsValue> {
     let input: IsmInput = serde_wasm_bindgen::from_value(value)
         .map_err(|e| type_error(&format!("invalid ARAIM ISM: {e}")))?;
     ism(input)

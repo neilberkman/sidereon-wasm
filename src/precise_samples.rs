@@ -98,7 +98,7 @@ struct SampleJs {
     clock_event: bool,
 }
 
-fn decode_core_samples(samples: JsValue) -> Result<Vec<CoreSample>, JsValue> {
+pub(crate) fn decode_core_samples(samples: JsValue) -> Result<Vec<CoreSample>, JsValue> {
     let samples: Vec<SampleJs> = serde_wasm_bindgen::from_value(samples)
         .map_err(|e| type_error(&format!("invalid samples: {e}")))?;
 

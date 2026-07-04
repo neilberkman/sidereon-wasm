@@ -8,11 +8,19 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::clock_stability::{
-    allan_deviation as core_allan_deviation, compute_allan_deviations as core_compute,
+    allan_deviation as core_allan_deviation,
+    allan_deviation_power_law_slope as core_allan_deviation_power_law_slope,
+    allan_variance_power_law_tau_exponent as core_allan_variance_power_law_tau_exponent,
+    compute_allan_deviations as core_compute, fit_power_law_noise as core_fit_power_law_noise,
     hadamard_deviation as core_hadamard_deviation, modified_adev as core_modified_adev,
+    modified_allan_deviation_power_law_slope as core_modified_allan_deviation_power_law_slope,
     overlapping_adev as core_overlapping_adev, time_deviation as core_time_deviation,
     AllanDeviationCurves, AllanEstimatorSet, AllanInput, AllanOptions, AllanResult, AllanSeries,
-    GapPolicy, TauGrid,
+    GapPolicy, PowerLawNoiseFit as CorePowerLawNoiseFit,
+    PowerLawNoiseOptions as CorePowerLawNoiseOptions,
+    PowerLawNoiseRegion as CorePowerLawNoiseRegion, PowerLawNoiseType as CorePowerLawNoiseType,
+    PowerLawOctave as CorePowerLawOctave, PowerLawOctaveDominance as CorePowerLawOctaveDominance,
+    PowerLawOctaveFlag as CorePowerLawOctaveFlag, TauGrid,
 };
 
 use crate::error::{engine_error, range_error, type_error};
@@ -132,6 +140,206 @@ impl From<AllanDeviationCurves> for AllanCurvesJs {
             hdev: curves.hdev.map(AllanResultJs::from),
             tdev: curves.tdev.map(AllanResultJs::from),
         }
+    }
+}
+
+/// IEEE 1139 fractional-frequency PSD power-law noise type.
+#[wasm_bindgen]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PowerLawNoiseType {
+    /// Random-walk frequency modulation, `S_y(f) = h_-2 f^-2`.
+    RandomWalkFM,
+    /// Flicker frequency modulation, `S_y(f) = h_-1 f^-1`.
+    FlickerFM,
+    /// White frequency modulation, `S_y(f) = h_0`.
+    WhiteFM,
+    /// Flicker phase modulation, `S_y(f) = h_1 f`.
+    FlickerPM,
+    /// White phase modulation, `S_y(f) = h_2 f^2`.
+    WhitePM,
+}
+
+impl From<PowerLawNoiseType> for CorePowerLawNoiseType {
+    fn from(value: PowerLawNoiseType) -> Self {
+        match value {
+            PowerLawNoiseType::RandomWalkFM => Self::RandomWalkFM,
+            PowerLawNoiseType::FlickerFM => Self::FlickerFM,
+            PowerLawNoiseType::WhiteFM => Self::WhiteFM,
+            PowerLawNoiseType::FlickerPM => Self::FlickerPM,
+            PowerLawNoiseType::WhitePM => Self::WhitePM,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AllanResultInput {
+    tau_s: Vec<f64>,
+    deviation: Vec<f64>,
+    n: Vec<usize>,
+}
+
+impl From<AllanResultInput> for AllanResult {
+    fn from(value: AllanResultInput) -> Self {
+        AllanResult {
+            tau_s: value.tau_s,
+            deviation: value.deviation,
+            n: value.n,
+        }
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct PowerLawNoiseOptionsInput {
+    min_points_per_octave: Option<usize>,
+    slope_tolerance: Option<f64>,
+    scatter_tolerance: Option<f64>,
+    basic_tau_s: Option<f64>,
+    measurement_bandwidth_hz: Option<f64>,
+}
+
+fn power_law_options(input: PowerLawNoiseOptionsInput) -> CorePowerLawNoiseOptions {
+    let basic_tau_s = input.basic_tau_s.unwrap_or(1.0);
+    let mut options = input.measurement_bandwidth_hz.map_or_else(
+        || CorePowerLawNoiseOptions::sampled_at_nyquist(basic_tau_s),
+        |bandwidth| CorePowerLawNoiseOptions::new(basic_tau_s, bandwidth),
+    );
+    if let Some(value) = input.min_points_per_octave {
+        options.min_points_per_octave = value;
+    }
+    if let Some(value) = input.slope_tolerance {
+        options.slope_tolerance = value;
+    }
+    if let Some(value) = input.scatter_tolerance {
+        options.scatter_tolerance = value;
+    }
+    options
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PowerLawOctaveDominanceJs {
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    noise_type: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    flag: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PowerLawOctaveJs {
+    tau_start_s: f64,
+    tau_end_s: f64,
+    point_count: usize,
+    adev_slope: Option<f64>,
+    mdev_slope: Option<f64>,
+    slope_scatter: Option<f64>,
+    dominance: PowerLawOctaveDominanceJs,
+}
+
+impl From<CorePowerLawOctave> for PowerLawOctaveJs {
+    fn from(value: CorePowerLawOctave) -> Self {
+        Self {
+            tau_start_s: value.tau_start_s,
+            tau_end_s: value.tau_end_s,
+            point_count: value.point_count,
+            adev_slope: value.adev_slope,
+            mdev_slope: value.mdev_slope,
+            slope_scatter: value.slope_scatter,
+            dominance: dominance_js(value.dominance),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PowerLawNoiseRegionJs {
+    noise_type: &'static str,
+    tau_start_s: f64,
+    tau_end_s: f64,
+    octave_count: usize,
+    point_count: usize,
+    mean_slope: f64,
+    coefficient: f64,
+}
+
+impl From<CorePowerLawNoiseRegion> for PowerLawNoiseRegionJs {
+    fn from(value: CorePowerLawNoiseRegion) -> Self {
+        Self {
+            noise_type: noise_type_label(value.noise_type),
+            tau_start_s: value.tau_start_s,
+            tau_end_s: value.tau_end_s,
+            octave_count: value.octave_count,
+            point_count: value.point_count,
+            mean_slope: value.mean_slope,
+            coefficient: value.coefficient,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PowerLawNoiseFitJs {
+    dominant_per_octave: Vec<PowerLawOctaveJs>,
+    coefficients: [f64; 5],
+    regions: Vec<PowerLawNoiseRegionJs>,
+}
+
+impl From<CorePowerLawNoiseFit> for PowerLawNoiseFitJs {
+    fn from(value: CorePowerLawNoiseFit) -> Self {
+        Self {
+            dominant_per_octave: value
+                .dominant_per_octave
+                .into_iter()
+                .map(PowerLawOctaveJs::from)
+                .collect(),
+            coefficients: value.coefficients,
+            regions: value
+                .regions
+                .into_iter()
+                .map(PowerLawNoiseRegionJs::from)
+                .collect(),
+        }
+    }
+}
+
+fn dominance_js(value: CorePowerLawOctaveDominance) -> PowerLawOctaveDominanceJs {
+    match value {
+        CorePowerLawOctaveDominance::Dominant(noise_type) => PowerLawOctaveDominanceJs {
+            kind: "dominant",
+            noise_type: Some(noise_type_label(noise_type)),
+            flag: None,
+        },
+        CorePowerLawOctaveDominance::Ambiguous => PowerLawOctaveDominanceJs {
+            kind: "ambiguous",
+            noise_type: None,
+            flag: None,
+        },
+        CorePowerLawOctaveDominance::Flagged(flag) => PowerLawOctaveDominanceJs {
+            kind: "flagged",
+            noise_type: None,
+            flag: Some(octave_flag_label(flag)),
+        },
+    }
+}
+
+fn noise_type_label(value: CorePowerLawNoiseType) -> &'static str {
+    match value {
+        CorePowerLawNoiseType::RandomWalkFM => "randomWalkFM",
+        CorePowerLawNoiseType::FlickerFM => "flickerFM",
+        CorePowerLawNoiseType::WhiteFM => "whiteFM",
+        CorePowerLawNoiseType::FlickerPM => "flickerPM",
+        CorePowerLawNoiseType::WhitePM => "whitePM",
+    }
+}
+
+fn octave_flag_label(value: CorePowerLawOctaveFlag) -> &'static str {
+    match value {
+        CorePowerLawOctaveFlag::UnderSampled => "underSampled",
+        CorePowerLawOctaveFlag::DegenerateDeviation => "degenerateDeviation",
+        CorePowerLawOctaveFlag::MissingModifiedAllan => "missingModifiedAllan",
     }
 }
 
@@ -363,4 +571,49 @@ pub fn compute_allan_deviations(input: JsValue) -> Result<JsValue, JsValue> {
         })
     })?;
     to_js(&AllanCurvesJs::from(curves))
+}
+
+/// Exact ADEV log-log slope for a power-law noise type.
+#[wasm_bindgen(js_name = allanDeviationPowerLawSlope)]
+pub fn allan_deviation_power_law_slope(noise_type: PowerLawNoiseType) -> f64 {
+    core_allan_deviation_power_law_slope(noise_type.into())
+}
+
+/// Exact MDEV log-log slope for a power-law noise type.
+#[wasm_bindgen(js_name = modifiedAllanDeviationPowerLawSlope)]
+pub fn modified_allan_deviation_power_law_slope(noise_type: PowerLawNoiseType) -> f64 {
+    core_modified_allan_deviation_power_law_slope(noise_type.into())
+}
+
+/// Exact Allan-variance tau exponent for a power-law noise type.
+#[wasm_bindgen(js_name = allanVariancePowerLawTauExponent)]
+pub fn allan_variance_power_law_tau_exponent(noise_type: PowerLawNoiseType) -> i32 {
+    core_allan_variance_power_law_tau_exponent(noise_type.into())
+}
+
+/// Identify power-law clock-noise regions from ADEV and MDEV curves.
+///
+/// `adev` and `mdev` are `{ tauS, deviation, n }` objects, matching the output
+/// from the Allan-family functions. `options` may set `basicTauS`,
+/// `measurementBandwidthHz`, `minPointsPerOctave`, `slopeTolerance`, and
+/// `scatterTolerance`.
+#[wasm_bindgen(js_name = fitPowerLawNoise)]
+pub fn fit_power_law_noise(
+    adev: JsValue,
+    mdev: JsValue,
+    options: JsValue,
+) -> Result<JsValue, JsValue> {
+    let adev: AllanResultInput = serde_wasm_bindgen::from_value(adev)
+        .map_err(|e| type_error(&format!("invalid ADEV curve: {e}")))?;
+    let mdev: AllanResultInput = serde_wasm_bindgen::from_value(mdev)
+        .map_err(|e| type_error(&format!("invalid MDEV curve: {e}")))?;
+    let options = if options.is_undefined() || options.is_null() {
+        PowerLawNoiseOptionsInput::default()
+    } else {
+        serde_wasm_bindgen::from_value(options)
+            .map_err(|e| type_error(&format!("invalid power-law options: {e}")))?
+    };
+    let fit = core_fit_power_law_noise(&adev.into(), &mdev.into(), power_law_options(options))
+        .map_err(allan_error)?;
+    to_js(&PowerLawNoiseFitJs::from(fit))
 }

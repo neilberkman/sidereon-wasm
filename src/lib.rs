@@ -35,10 +35,13 @@ mod doppler;
 mod elements;
 mod equinoctial;
 mod error;
+mod error_metrics;
 mod estimation;
 mod events;
+mod force_model_input;
 mod forces;
 mod frames;
+mod geodetic_time_series;
 mod geoid;
 mod geometry_quality;
 mod gnss;
@@ -59,6 +62,7 @@ mod observation;
 mod oem;
 mod omm;
 mod opm;
+mod orbit_determination;
 mod ppp;
 mod ppp_corrections;
 mod precise_samples;
@@ -67,6 +71,7 @@ mod qc;
 mod raim;
 mod reduced_orbit;
 mod relative;
+mod reliability;
 mod rf;
 mod rinex_clock;
 mod rinex_nav;
@@ -76,7 +81,9 @@ mod rtcm;
 mod rtk;
 mod rtk_arc;
 mod sbas;
+mod sbas_pl;
 mod sgp4;
+mod sidereal;
 mod sky;
 mod source_localization;
 mod sp3;
@@ -110,8 +117,9 @@ pub use bias::{
 pub use bodies::{sun_moon_ecef_batch, sun_moon_eci, SunMoon};
 pub use cdm::{parse_cdm_kvn, parse_cdm_xml, Cdm, CdmObject};
 pub use clock_stability::{
-    allan_deviation, compute_allan_deviations, hadamard_deviation, modified_adev, overlapping_adev,
-    time_deviation,
+    allan_deviation, allan_deviation_power_law_slope, allan_variance_power_law_tau_exponent,
+    compute_allan_deviations, fit_power_law_noise, hadamard_deviation, modified_adev,
+    modified_allan_deviation_power_law_slope, overlapping_adev, time_deviation, PowerLawNoiseType,
 };
 pub use conjunction::{
     collision_probability, covariance_is_positive_semidefinite, covariance_is_symmetric,
@@ -141,6 +149,10 @@ pub use elements::{coe2rv, rv2coe};
 pub use equinoctial::{
     coe2eq, coe2mee, eq2coe, eq2rv, mee2coe, mee2rv, rv2eq, rv2mee, RetrogradeFactor,
 };
+pub use error_metrics::{
+    metrics_from_ecef_covariance_m2, metrics_from_enu_covariance_m2,
+    metrics_from_kinematic_solution, ErrorEllipse, PercentileRadius, PositionErrorMetrics,
+};
 pub use estimation::{
     alpha_beta_apply_measurement, alpha_beta_filter_step, alpha_beta_predict,
     alpha_beta_steady_state_gains, cfar_ca_false_alarm_probability, cfar_ca_multiplier_from_pfa,
@@ -163,6 +175,7 @@ pub use frames::{
     timescale_offset_at_s_js, timescale_offset_s_js, ut1_coverage_info, CivilDateTime, FrameStates,
     GnssWeekTow, Instant, JulianDate, LeapSecondTable, TimeScale, Ut1Coverage,
 };
+pub use geodetic_time_series::{detect_steps, fit_trajectory, network_field, velocity_midas};
 pub use geoid::{
     egm96_ellipsoidal_height_m, egm96_orthometric_height_m, egm96_undulation,
     egm96_undulations_deg, egm96_undulations_rad, ellipsoidal_height_m, geoid_undulation,
@@ -214,6 +227,7 @@ pub use opm::{
     parse_opm_kvn, parse_opm_xml, Opm, OpmCovariance, OpmKeplerian, OpmManeuver, OpmMetadata,
     OpmSpacecraft, OpmState,
 };
+pub use orbit_determination::{fit_precise_ephemeris_sample_orbit, fit_sp3_precise_orbit};
 pub use ppp::{
     solve_ppp_auto_init_fixed_js, solve_ppp_auto_init_float_js, solve_ppp_fixed, solve_ppp_float,
     PppFixedSolution, PppFloatSolution,
@@ -238,6 +252,7 @@ pub use relative::{
     cw_propagate, cw_stm, lvlh_rotation, mean_motion_circular, mean_motion_from_state,
     relative_state, ric_rotation, rsw_rotation, rtn_rotation,
 };
+pub use reliability::{reliability_araim, reliability_design, wtest_noncentrality};
 pub use rf::{cn0, dish_gain, eirp, fspl, wavelength, LinkBudget};
 pub use rinex_clock::{
     load_rinex_clock, load_rinex_clock_lossy, parse_rinex_clock, parse_rinex_clock_lossy,
@@ -274,11 +289,16 @@ pub use sbas::{
     decode_sbas_message, sat_to_sbas_prn, sbas_corrected_state, sbas_prn_to_sat, solve_spp_sbas,
     SbasCorrectionStore,
 };
+pub use sbas_pl::{
+    sbas_pl_error_label, sbas_protection_levels, AirborneModel, DegradationParams, SbasErrorModel,
+    SbasKMultipliers, SbasPlError, SbasProtection, SbasSisError,
+};
 pub use sgp4::{
     fit_tle, parse_tle_file, propagate_batch, visible_from_satellites_js, ChecksumWarning,
     Constellation, FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles, NamedTle,
     ParsedTleFile, SatellitePass, Tle, TleFit, TlePropagation, VisibilitySeries, VisibleSatellite,
 };
+pub use sidereal::{orbit_repeat_lag, periodicity_strength, repeat_period, sidereal_filter};
 pub use sky::{
     find_moon_elevation_crossings, find_moon_transits, moon_az_el, moon_elevation_deg,
     moon_illumination, sun_az_el, MoonElevationCrossing, MoonTransit,
