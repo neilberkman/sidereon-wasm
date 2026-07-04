@@ -43,7 +43,7 @@ import { fixture, fixtureJson, hexToF64 } from "./helpers.mjs";
 
 const CORE_FIXTURES = fileURLToPath(new URL("./fixtures", import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const CORE_DTED_FIXTURES = "/Users/neil/xuku/sidereon/crates/sidereon-core/tests/fixtures/dted";
+const CORE_DTED_FIXTURES = `${CORE_FIXTURES}/dted`;
 const CORE_DTED_TILES = `${CORE_DTED_FIXTURES}/tiles`;
 const NIST_MODULUS = 2_147_483_647;
 const NIST_MULTIPLIER = 16_807;

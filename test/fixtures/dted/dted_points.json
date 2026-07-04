@@ -25,6 +25,48 @@
       "tile_id": "n36_w107"
     }
   ],
+  "multi_tile_cases": [
+    {
+      "bilinear_bits": "0xc032c00000000000",
+      "case_id": "a_interior_1",
+      "latitude_bits": "0x4042100000000000",
+      "longitude_bits": "0xc05ab80000000000",
+      "nearest_bits": "0xc034000000000000",
+      "tile_id": "n36_w107"
+    },
+    {
+      "bilinear_bits": "0xc019000000000000",
+      "case_id": "a_interior_2",
+      "latitude_bits": "0x4042300000000000",
+      "longitude_bits": "0xc05a980000000000",
+      "nearest_bits": "0xc028000000000000",
+      "tile_id": "n36_w107"
+    },
+    {
+      "bilinear_bits": "0x405ab00000000000",
+      "case_id": "b_interior_1",
+      "latitude_bits": "0x4042100000000000",
+      "longitude_bits": "0xc05a780000000000",
+      "nearest_bits": "0x4059000000000000",
+      "tile_id": "n36_w106"
+    },
+    {
+      "bilinear_bits": "0x405e100000000000",
+      "case_id": "b_interior_2",
+      "latitude_bits": "0x4042300000000000",
+      "longitude_bits": "0xc05a580000000000",
+      "nearest_bits": "0x405f000000000000",
+      "tile_id": "n36_w106"
+    },
+    {
+      "bilinear_bits": "0x405e800000000000",
+      "case_id": "shared_meridian_from_b",
+      "latitude_bits": "0x4042400000000000",
+      "longitude_bits": "0xc05a800000000000",
+      "nearest_bits": "0x405e800000000000",
+      "tile_id": "n36_w106"
+    }
+  ],
   "nearest_cases": [
     {
       "elevation_bits": "0xc034000000000000",
@@ -183,5 +225,17 @@
     "format": "DTED UHL/DSI/ACC/data-record byte layout",
     "tile_id": "n36_w107",
     "tile_path": "tiles/n36_w107_1arc_v3.dt2"
-  }
+  },
+  "tiles": [
+    {
+      "elevation_formula": "z_m = -20 + 7 * lon_i - 5 * lat_i + lon_i * lat_i",
+      "tile_id": "n36_w107",
+      "tile_path": "tiles/n36_w107_1arc_v3.dt2"
+    },
+    {
+      "elevation_formula": "z_m = 100 + 3 * lon_i + 11 * lat_i - lon_i * lat_i",
+      "tile_id": "n36_w106",
+      "tile_path": "tiles/n36_w106_1arc_v3.dt2"
+    }
+  ]
 }
