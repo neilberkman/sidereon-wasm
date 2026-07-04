@@ -18,6 +18,7 @@ use sidereon_core::{GnssSatelliteId, GnssSystem};
 
 use crate::dop::Dop;
 use crate::error::{engine_error, range_error, type_error};
+use crate::geometry_quality::GeometryQuality;
 
 /// One constellation's time DOP: `{ system: "gps", tdop: 1.23 }`.
 #[derive(Serialize)]
@@ -481,6 +482,27 @@ impl SppSolution {
     #[wasm_bindgen(getter, js_name = residualsM)]
     pub fn residuals_m(&self) -> Vec<f64> {
         self.inner.residuals_m.clone()
+    }
+
+    /// Geometry observability and covariance-validation diagnostics for this
+    /// solved design. `ZeroRedundancy` marks unvalidated snapshot covariance
+    /// bounds, `Weak` leaves large bounds unclamped, and rank-deficient designs
+    /// are returned as a singular-geometry `Error` rather than a solution.
+    #[wasm_bindgen(getter, js_name = geometryQuality)]
+    pub fn geometry_quality(&self) -> GeometryQuality {
+        self.inner.geometry_quality.into()
+    }
+
+    /// Degrees of freedom in the accepted solve: `usedCount - (3 + clocks)`.
+    #[wasm_bindgen(getter)]
+    pub fn redundancy(&self) -> i32 {
+        self.inner.metadata.redundancy as i32
+    }
+
+    /// Whether residual-based RAIM can test the accepted solve.
+    #[wasm_bindgen(getter, js_name = raimCheckable)]
+    pub fn raim_checkable(&self) -> bool {
+        self.inner.metadata.raim_checkable
     }
 
     /// Dilution-of-precision scalars (GDOP/PDOP/HDOP/VDOP/TDOP) from the

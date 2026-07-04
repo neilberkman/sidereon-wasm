@@ -11,7 +11,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { solveRtkFloat, solveRtkFixed } from "../pkg-node/sidereon.js";
+import {
+  ObservabilityTier,
+  observabilityTierLabel,
+  solveRtkFloat,
+  solveRtkFixed,
+} from "../pkg-node/sidereon.js";
 import { fixtureJson } from "./helpers.mjs";
 
 const BASELINE_TOL = 1e-6; // metres
@@ -89,6 +94,11 @@ test("RTK float baseline matches the engine reference", () => {
 
   assertBaseline(sol.baselineM, fx.expected.float_baseline_m, "float baseline");
   assert.ok(sol.converged);
+  assert.equal(sol.geometryQuality.tier, ObservabilityTier.Nominal);
+  assert.equal(observabilityTierLabel(sol.geometryQuality.tier), "Nominal");
+  assert.equal(sol.geometryQuality.covarianceValidated, true);
+  assert.equal(sol.redundancy, sol.geometryQuality.redundancy);
+  assert.equal(sol.raimCheckable, sol.geometryQuality.raimCheckable);
   // Ambiguities cross as an id-keyed object; one per ambiguity id.
   assert.equal(Object.keys(sol.ambiguitiesM).length, fx.ambiguity_ids.length);
 });
@@ -117,6 +127,10 @@ test("RTK fixed baseline matches the engine reference", () => {
     "validated float baseline",
   );
   assert.equal(sol.integerStatus, fx.expected.fixed_integer_status);
+  assert.equal(sol.geometryQuality.tier, ObservabilityTier.Nominal);
+  assert.equal(sol.geometryQuality.covarianceValidated, true);
+  assert.equal(sol.redundancy, sol.geometryQuality.redundancy);
+  assert.equal(sol.raimCheckable, sol.geometryQuality.raimCheckable);
 });
 
 test("RTK rejects an unknown stochastic model", () => {
@@ -132,5 +146,44 @@ test("RTK rejects an unknown stochastic model", () => {
         options: mapFloatOpts(fx),
       }),
     TypeError,
+  );
+});
+
+test("RTK rank-deficient float geometry throws a singular geometry error", () => {
+  const base = [4_075_580.0, 931_854.0, 4_801_568.0];
+  const refPos = [15_000_000.0, 7_000_000.0, 21_000_000.0];
+  const repeated = [-12_000_000.0, 18_000_000.0, 19_000_000.0];
+  const row = (sat, pos) => ({
+    sat,
+    sdAmbiguityId: sat,
+    baseCodeM: 20_000_000.0,
+    basePhaseM: 20_000_000.0,
+    roverCodeM: 20_000_001.0,
+    roverPhaseM: 20_000_001.0,
+    baseTxPos: pos,
+    roverTxPos: pos,
+    pos,
+  });
+
+  assert.throws(
+    () =>
+      solveRtkFloat({
+        epochs: [
+          {
+            references: [row("G01", refPos)],
+            nonref: [row("G02", repeated), row("G03", repeated), row("G04", repeated)],
+            dtS: 0.0,
+          },
+        ],
+        base,
+        ambiguityIds: ["G02", "G03", "G04"],
+        model: { codeSigmaM: 0.3, phaseSigmaM: 0.003 },
+        initialBaselineM: [1.2, -0.85, 0.91],
+      }),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /RTK float geometry is singular/i);
+      return true;
+    },
   );
 });

@@ -191,9 +191,11 @@ test("0.13 source-localization primitives recover reference vectors", () => {
   const solution = locateSource(sensors3d, times3d, speed, { timingSigmaS: 0.001 });
   assertPositionClose(solution.positionM, source3d, 1e-7, "solution position");
   close(solution.originTimeS, origin, 1e-10, "solution origin");
-  assert.equal(solution.geometryQuality.residualCount, sensors3d.length);
-  assert.equal(solution.geometryQuality.parameterCount, 4);
+  assert.ok(["Weak", "Nominal"].includes(solution.geometryQuality.tier));
+  assert.equal(solution.geometryQuality.rank, 4);
   assert.equal(solution.geometryQuality.redundancy, 1);
+  assert.equal(solution.geometryQuality.raimCheckable, true);
+  assert.equal(solution.geometryQuality.covarianceValidated, true);
   assert.ok(solution.covariance);
   assert.equal(solution.residuals.length, sensors3d.length);
   assert.ok(solution.residuals.every((row) => Math.abs(row.residualS) < 1e-10));

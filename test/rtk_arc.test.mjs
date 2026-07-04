@@ -232,6 +232,9 @@ test("solveRtkArc reports one solution per epoch and carries the filter state", 
   const last = sol.epochs[sol.epochs.length - 1];
   for (const v of last.reportedBaselineM) assert.ok(Number.isFinite(v));
   for (const v of last.floatBaselineM) assert.ok(Number.isFinite(v));
+  assert.ok(["Weak", "Nominal"].includes(last.geometryQuality.tier));
+  assert.equal(last.geometryQuality.covarianceValidated, true);
+  assert.equal(last.geometryQuality.raimCheckable, true);
   // The static arc converges near the batch float baseline (the sequential
   // filter with integer holds is not identical, so a loose metre-scale check).
   const exp = fx.expected.float_baseline_m;
@@ -337,8 +340,11 @@ test("solveStaticRtkArc returns one float and one fixed solution for the arc", (
   const sol = solveStaticRtkArc(arcEpochs, { arc: config });
 
   assert.equal(sol.references.G, "G30");
+  assert.equal(sol.geometryQuality.tier, "Nominal");
+  assert.equal(sol.geometryQuality.covarianceValidated, true);
   assert.ok(sol.ambiguityIds.length > 0);
   assert.equal(sol.floatSolution.baselineM.length, 3);
+  assert.equal(sol.floatSolution.geometryQuality.tier, sol.geometryQuality.tier);
   assert.ok(sol.floatSolution.baselineM.every(Number.isFinite));
   assert.equal(sol.fixedSolution.fixedSolution.baselineM.length, 3);
   assert.ok(sol.fixedSolution.fixedSolution.baselineM.every(Number.isFinite));
@@ -352,6 +358,8 @@ test("fixWideLaneRtkArc fixes wide-lane ambiguities over a dual-frequency arc", 
   const sol = fixWideLaneRtkArc(dualArcEpochs, wideLaneConfig);
 
   assert.ok(sol.references.G);
+  assert.equal(typeof sol.geometryQuality.tier, "string");
+  assert.equal(typeof sol.geometryQuality.covarianceValidated, "boolean");
   assert.equal(sol.epochs.length, dualArcEpochs.length);
   assert.ok(Object.keys(sol.wideLaneCycles).length > 0);
   assert.deepEqual(sol.droppedSats, []);
