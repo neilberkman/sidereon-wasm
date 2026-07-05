@@ -157,6 +157,15 @@ The wasm surface mirrors the full breadth of the engine:
   pole tides, ocean tide loading, DTED terrain elevation lookup.
 - **RF link budget:** free-space path loss, EIRP, C/N0, antenna gain, Doppler
   shift and range rate.
+- **GNSS/INS fusion:** strapdown mechanization with an error-state EKF (UKF
+  option), loose and tight coupling, robust loose updates, an RTS smoother,
+  and a serializable filter state.
+- **Scenario simulation:** deterministic synthetic observables plus a
+  ground-truth error ledger from a versioned scenario; identical bytes for the
+  same scenario and seed.
+- **Signal analysis:** closed-form BPSK/BOC spectra, spectral separation
+  coefficients, DLL jitter, and multipath error envelopes against published
+  constants.
 - **Format parsing and serialization:** TLE/OMM, CCSDS (OEM/OPM/CDM/TDM),
   RINEX observation/navigation/clock, CRINEX (Hatanaka), SP3, IONEX, ANTEX,
   Bias-SINEX, RTCM.
