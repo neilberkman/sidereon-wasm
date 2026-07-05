@@ -107,11 +107,13 @@ positions and scalar attributes out.
 The wasm surface mirrors the full breadth of the engine:
 
 - **Orbit propagation:** SGP4 from TLE and OMM, numerical propagation with a
-  composable force model (zonal harmonics through J6, Sun/Moon third-body,
-  solar radiation pressure, relativistic correction, space-weather-driven
-  atmospheric drag) and orbital decay estimation, Kepler two-body propagation,
+  composable force model (spherical-harmonic geopotential to selectable degree
+  and order, Sun/Moon third-body, solar radiation pressure, relativistic
+  correction, space-weather-driven atmospheric drag) and orbital decay
+  estimation with a post-decay validity latch, Kepler two-body propagation,
   batch constellation propagation, pass prediction, look angles, coverage, and
-  batch least-squares orbit fitting against precise ephemerides with a
+  batch least-squares orbit fitting against precise ephemerides (including
+  terrestrial-frame SP3 through the Earth-orientation chain) with a
   per-satellite residual ledger.
 - **GNSS positioning:** SPP, RTK (float/fixed), PPP (float/fixed), DGNSS,
   moving-baseline RTK, DOP, velocity, and a robust SPP driver that runs fault
@@ -128,8 +130,10 @@ The wasm surface mirrors the full breadth of the engine:
 - **Timing, estimation, and geodesy:** Allan-family clock stability with
   power-law noise identification (IEEE 1139), scalar Kalman and alpha-beta
   trackers, CFAR detection thresholds, source localization (ToA/TDOA), robust
-  station velocity (MIDAS) with trajectory fitting and step detection, and
-  repeating-geometry (sidereal) filtering.
+  station velocity (MIDAS) with trajectory fitting and step detection,
+  repeating-geometry (sidereal) filtering, geodesic direct and inverse
+  problems (Karney), an epoch-aware terrestrial frame catalog (ITRF/ETRF
+  Helmert sets), and EGM2008 geoid grids alongside EGM96.
 - **Ephemeris and time:** broadcast ephemeris and SP3 (load/interpolate/merge),
   source-agnostic precise ephemeris sampling (one sampling interface over SP3,
   broadcast, or caller-supplied samples), JPL SPK (DAF/.bsp) kernels,
@@ -153,8 +157,8 @@ The wasm surface mirrors the full breadth of the engine:
   pole tides, ocean tide loading, DTED terrain elevation lookup.
 - **RF link budget:** free-space path loss, EIRP, C/N0, antenna gain, Doppler
   shift and range rate.
-- **Format parsing and serialization:** TLE/OMM, CCSDS (OEM/OPM/CDM), RINEX
-  observation/navigation/clock, CRINEX (Hatanaka), SP3, IONEX, ANTEX,
+- **Format parsing and serialization:** TLE/OMM, CCSDS (OEM/OPM/CDM/TDM),
+  RINEX observation/navigation/clock, CRINEX (Hatanaka), SP3, IONEX, ANTEX,
   Bias-SINEX, RTCM.
 
 The binding adds no modeling of its own: every result is exactly what the engine
