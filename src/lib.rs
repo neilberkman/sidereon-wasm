@@ -40,7 +40,9 @@ mod estimation;
 mod events;
 mod force_model_input;
 mod forces;
+mod frame_catalog;
 mod frames;
+mod geodesic;
 mod geodetic_time_series;
 mod geoid;
 mod geometry_quality;
@@ -94,6 +96,7 @@ mod spp;
 mod ssr;
 mod staleness;
 mod tca;
+mod tdm;
 mod terrain;
 mod terrain_store;
 mod tides;
@@ -163,10 +166,15 @@ pub use estimation::{
 pub use events::{
     angular_separation, angular_separation_coords, beta_angle, beta_angle_from_state,
     earth_angular_radius, eclipse_status, moon_angle, phase_angle, position_angle, shadow_fraction,
-    sun_angle, sun_elevation,
+    shadow_fraction_with_model, sun_angle, sun_elevation, EarthShadowModel,
 };
 pub use forces::{
     estimate_decay, force_j2_acceleration, force_twobody_acceleration, DragForce, SpaceWeather,
+};
+pub use frame_catalog::{
+    frame_catalog, frame_catalog_entry, frame_catalog_propagate_position, frame_catalog_transform,
+    frame_catalog_transform_from_epoch, terrestrial_frame_label, HelmertParameters, HelmertRates,
+    HelmertTransform, TerrestrialFrame,
 };
 pub use frames::{
     civil_to_j2000_seconds, ecef_to_geodetic, gcrs_to_itrs, geodetic_to_ecef, gps_utc_offset_s,
@@ -175,11 +183,13 @@ pub use frames::{
     timescale_offset_at_s_js, timescale_offset_s_js, ut1_coverage_info, CivilDateTime, FrameStates,
     GnssWeekTow, Instant, JulianDate, LeapSecondTable, TimeScale, Ut1Coverage,
 };
+pub use geodesic::{geodesic_direct, geodesic_error_label, geodesic_inverse, GeodesicError};
 pub use geodetic_time_series::{detect_steps, fit_trajectory, network_field, velocity_midas};
 pub use geoid::{
     egm96_ellipsoidal_height_m, egm96_orthometric_height_m, egm96_undulation,
     egm96_undulations_deg, egm96_undulations_rad, ellipsoidal_height_m, geoid_undulation,
-    geoid_undulations_deg, geoid_undulations_rad, orthometric_height_m, GeoidGrid,
+    geoid_undulations_deg, geoid_undulations_rad, orthometric_height_m, Egm2008GridSpacing,
+    GeoidGrid,
 };
 pub use geometry_quality::{observability_tier_label, GeometryQuality, ObservabilityTier};
 pub use gnss::{carrier_band_name, gnss_system_label, gnss_system_letter, CarrierBand, GnssSystem};
@@ -227,7 +237,10 @@ pub use opm::{
     parse_opm_kvn, parse_opm_xml, Opm, OpmCovariance, OpmKeplerian, OpmManeuver, OpmMetadata,
     OpmSpacecraft, OpmState,
 };
-pub use orbit_determination::{fit_precise_ephemeris_sample_orbit, fit_sp3_precise_orbit};
+pub use orbit_determination::{
+    fit_all_sp3_ecef_precise_orbits, fit_precise_ephemeris_sample_orbit,
+    fit_sp3_ecef_precise_orbit, fit_sp3_ecef_precise_orbits, fit_sp3_precise_orbit,
+};
 pub use ppp::{
     solve_ppp_auto_init_fixed_js, solve_ppp_auto_init_float_js, solve_ppp_fixed, solve_ppp_float,
     PppFixedSolution, PppFloatSolution,
@@ -295,8 +308,9 @@ pub use sbas_pl::{
 };
 pub use sgp4::{
     fit_tle, parse_tle_file, propagate_batch, visible_from_satellites_js, ChecksumWarning,
-    Constellation, FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles, NamedTle,
-    ParsedTleFile, SatellitePass, Tle, TleFit, TlePropagation, VisibilitySeries, VisibleSatellite,
+    Constellation, DecayLatch, FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles,
+    NamedTle, ParsedTleFile, SatellitePass, Tle, TleFit, TlePropagation, VisibilitySeries,
+    VisibleSatellite,
 };
 pub use sidereal::{orbit_repeat_lag, periodicity_strength, repeat_period, sidereal_filter};
 pub use sky::{
@@ -322,6 +336,10 @@ pub use staleness::{
 };
 pub use tca::{
     find_tca_candidates, find_tca_conjunctions, screen_tca_candidates, screen_tca_conjunctions,
+};
+pub use tdm::{
+    parse_tdm_kvn, Tdm, TdmDataRecord, TdmDataSection, TdmField, TdmMetadata, TdmParticipant,
+    TdmPath, TdmScalar, TdmSegment,
 };
 pub use terrain::DtedTerrain;
 pub use terrain_store::{

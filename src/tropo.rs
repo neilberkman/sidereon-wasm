@@ -17,15 +17,22 @@ use sidereon_core::astro::time::model::{Instant, JulianDateSplit, TimeScale};
 use sidereon_core::atmosphere::troposphere::{
     tropo_mapping, tropo_slant, tropo_zenith, MappingModel, Met, TropoModel,
 };
-use sidereon_core::Wgs84Geodetic;
+use sidereon_core::{Error as CoreError, Wgs84Geodetic};
 
-use crate::error::{engine_error, require_finite, type_error};
+use crate::error::{engine_error, range_error, require_finite, type_error};
 
 /// One rounding, matching the core/Python `math.radians` and Elixir's constant.
 const DEG_TO_RAD: f64 = core::f64::consts::PI / 180.0;
 
 fn deg_to_rad(deg: f64) -> f64 {
     deg * DEG_TO_RAD
+}
+
+fn tropo_error(error: CoreError) -> JsValue {
+    match error {
+        CoreError::InvalidInput(_) => range_error(&error.to_string()),
+        _ => engine_error(error),
+    }
 }
 
 /// Surface meteorology: `{ pressureHpa, temperatureK, relativeHumidity }`.
@@ -46,15 +53,17 @@ fn met_from_js(met: JsValue) -> Result<Met, JsValue> {
         input.temperature_k,
         input.relative_humidity,
     )
-    .map_err(engine_error)
+    .map_err(tropo_error)
 }
 
 fn receiver(lat_deg: f64, lon_deg: f64, height_m: f64) -> Result<Wgs84Geodetic, JsValue> {
-    Wgs84Geodetic::new(deg_to_rad(lat_deg), deg_to_rad(lon_deg), height_m).map_err(engine_error)
+    Wgs84Geodetic::new(deg_to_rad(lat_deg), deg_to_rad(lon_deg), height_m)
+        .map_err(|error| range_error(&error.to_string()))
 }
 
 fn epoch(jd_whole: f64, jd_fraction: f64) -> Result<Instant, JsValue> {
-    let split = JulianDateSplit::new(jd_whole, jd_fraction).map_err(engine_error)?;
+    let split = JulianDateSplit::new(jd_whole, jd_fraction)
+        .map_err(|error| range_error(&error.to_string()))?;
     Ok(Instant::from_julian_date(TimeScale::Gpst, split))
 }
 
@@ -116,7 +125,7 @@ pub fn tropo_zenith_delay(
 ) -> Result<ZenithDelay, JsValue> {
     let receiver = receiver(lat_deg, 0.0, height_m)?;
     let met = met_from_js(met)?;
-    let z = tropo_zenith(TropoModel::Saastamoinen, receiver, met).map_err(engine_error)?;
+    let z = tropo_zenith(TropoModel::Saastamoinen, receiver, met).map_err(tropo_error)?;
     Ok(ZenithDelay {
         dry_m: z.dry_m,
         wet_m: z.wet_m,
@@ -144,7 +153,7 @@ pub fn tropo_mapping_factors(
         receiver,
         epoch,
     )
-    .map_err(engine_error)?;
+    .map_err(tropo_error)?;
     Ok(MappingFactors {
         dry: m.dry,
         wet: m.wet,
@@ -180,5 +189,5 @@ pub fn tropo_slant_delay(
     }
     let receiver = receiver(lat_deg, lon_deg, height_m)?;
     let epoch = epoch(jd_whole, jd_fraction)?;
-    tropo_slant(deg_to_rad(elevation_deg), receiver, met, epoch).map_err(engine_error)
+    tropo_slant(deg_to_rad(elevation_deg), receiver, met, epoch).map_err(tropo_error)
 }

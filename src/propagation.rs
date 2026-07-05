@@ -5,14 +5,18 @@
 //! and marshals the returned states back out.
 
 use serde::Deserialize;
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
+use sidereon_core::astro::frames::orientation::TdbEarthOrientationProvider;
+use sidereon_core::astro::propagator::api::PropagationContext;
 use sidereon_core::astro::propagator::StatePropagator;
 use sidereon_core::astro::state::CartesianState;
 
 use crate::error::{engine_error, range_error, type_error};
 use crate::force_model_input::{
-    force_model_kind, integrator_kind, DragInput, ForceModelInput, IntegratorOptionsInput,
+    force_model_kind, force_model_requires_body_fixed_frame, integrator_kind, DragInput,
+    ForceModelInput, IntegratorOptionsInput,
 };
 
 /// Numerical propagation request:
@@ -74,16 +78,25 @@ pub fn propagate_state(request: JsValue) -> Result<Ephemeris, JsValue> {
         return Err(range_error("initialStepS must be positive"));
     }
 
+    let force_model = force_model_kind(req.force_model.as_ref(), req.mu_km3_s2)?;
     let propagator = StatePropagator {
         initial: CartesianState::new(req.epoch_s, position, velocity),
-        force_model: force_model_kind(req.force_model.as_ref(), req.mu_km3_s2)?,
+        force_model,
         integrator: integrator_kind(req.integrator.as_deref())?,
         options,
         drag: req.drag.as_ref().map(DragInput::to_core).transpose()?,
         space_weather: None,
     };
 
-    let states = propagator.ephemeris(&req.times_s).map_err(engine_error)?;
+    let states = if force_model_requires_body_fixed_frame(&force_model) {
+        let ctx = PropagationContext::new()
+            .with_body_fixed_frame_provider(Arc::new(TdbEarthOrientationProvider::new()));
+        propagator
+            .ephemeris_with_context(&req.times_s, &ctx)
+            .map_err(engine_error)?
+    } else {
+        propagator.ephemeris(&req.times_s).map_err(engine_error)?
+    };
 
     let mut positions = Vec::with_capacity(states.len() * 3);
     let mut velocities = Vec::with_capacity(states.len() * 3);

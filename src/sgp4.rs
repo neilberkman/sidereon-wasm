@@ -13,9 +13,9 @@ use sidereon::passes::{
     UtcInstant, VisibleSatellite as CoreVisibleSatellite,
 };
 use sidereon::sgp4::{
-    fit_tle as core_fit_tle, parse_tle_file_with_opsmode, FitConfig, FitEpoch, FitSample,
-    JulianDate as CoreJulianDate, Loss, OpsMode, Satellite, TleFit as CoreTleFit, TleMetadata,
-    XScale,
+    fit_tle as core_fit_tle, parse_tle_file_with_opsmode, DecayLatch as CoreDecayLatch,
+    DecayLatchedError, FitConfig, FitEpoch, FitSample, JulianDate as CoreJulianDate, Loss, OpsMode,
+    Satellite, TleFit as CoreTleFit, TleMetadata, XScale,
 };
 use sidereon::tle::{
     encode as encode_tle, parse as parse_tle, ChecksumWarning as CoreChecksumWarning, TleElements,
@@ -25,6 +25,22 @@ use sidereon_core::geometry::visible_at_elevation_mask;
 use crate::error::{engine_error, range_error, type_error};
 use crate::marshal::{instants, vec3_finite};
 use crate::omm::Omm;
+
+const UNIX_EPOCH_JD_WHOLE: i64 = 2_440_587;
+const UNIX_EPOCH_JD_FRACTION: f64 = 0.5;
+const MICROSECONDS_PER_DAY: i64 = 86_400_000_000;
+
+fn unix_us_to_julian_date(epoch_unix_us: i64) -> CoreJulianDate {
+    let days = epoch_unix_us.div_euclid(MICROSECONDS_PER_DAY);
+    let rem = epoch_unix_us.rem_euclid(MICROSECONDS_PER_DAY);
+    let mut whole = UNIX_EPOCH_JD_WHOLE + days;
+    let mut fraction = UNIX_EPOCH_JD_FRACTION + rem as f64 / MICROSECONDS_PER_DAY as f64;
+    if fraction >= 1.0 {
+        whole += 1;
+        fraction -= 1.0;
+    }
+    CoreJulianDate(whole as f64, fraction)
+}
 
 /// A geodetic ground station: WGS84 latitude/longitude in degrees, altitude in
 /// metres. Pass to [`Tle.lookAngles`] / [`Tle.findPasses`].
@@ -188,6 +204,45 @@ pub struct Tle {
     elements: TleElements,
     satellite: Satellite,
     checksum_warnings: Vec<CoreChecksumWarning>,
+}
+
+/// Stateful opt-in latch for SGP4 decay-like failures.
+///
+/// Pass one latch per satellite to [`Tle.propagateWithDecayLatch`]. The first
+/// decay-like SGP4 failure records the requested epoch in minutes since the TLE
+/// epoch; later requests at the same or a later epoch throw immediately through
+/// the core latch instead of returning a raw post-decay state.
+#[wasm_bindgen]
+pub struct DecayLatch {
+    inner: CoreDecayLatch,
+}
+
+impl Default for DecayLatch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[wasm_bindgen]
+impl DecayLatch {
+    /// Construct an empty decay latch.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> DecayLatch {
+        DecayLatch {
+            inner: CoreDecayLatch::new(),
+        }
+    }
+
+    /// First observed decay-like epoch, in minutes since the TLE epoch.
+    #[wasm_bindgen(getter, js_name = firstFailingEpochMinutes)]
+    pub fn first_failing_epoch_minutes(&self) -> Option<f64> {
+        self.inner.first_failing_epoch().map(|epoch| epoch.0)
+    }
+
+    /// Clear the recorded decay state.
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
 }
 
 impl Tle {
@@ -490,6 +545,35 @@ impl Tle {
         for p in &predictions {
             positions.extend_from_slice(&p.position);
             velocities.extend_from_slice(&p.velocity);
+        }
+        Ok(TlePropagation {
+            positions,
+            velocities,
+        })
+    }
+
+    /// Propagate over unix-microsecond epochs with an opt-in decay latch.
+    ///
+    /// The returned TEME arrays match [`propagate`] until the first decay-like
+    /// SGP4 failure. At that point the core latch records the failing epoch and
+    /// this method throws. Later calls using the same latch at that epoch or a
+    /// later one also throw, while raw [`propagate`] remains stateless.
+    #[wasm_bindgen(js_name = propagateWithDecayLatch)]
+    pub fn propagate_with_decay_latch(
+        &self,
+        epochs_unix_us: &[i64],
+        latch: &mut DecayLatch,
+    ) -> Result<TlePropagation, JsValue> {
+        let mut positions = Vec::with_capacity(epochs_unix_us.len() * 3);
+        let mut velocities = Vec::with_capacity(epochs_unix_us.len() * 3);
+        for &epoch_unix_us in epochs_unix_us {
+            let jd = unix_us_to_julian_date(epoch_unix_us);
+            let prediction = self
+                .satellite
+                .propagate_jd_with_decay_latch(jd, &mut latch.inner)
+                .map_err(|error: DecayLatchedError| engine_error(error))?;
+            positions.extend_from_slice(&prediction.position);
+            velocities.extend_from_slice(&prediction.velocity);
         }
         Ok(TlePropagation {
             positions,

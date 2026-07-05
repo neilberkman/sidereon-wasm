@@ -187,9 +187,8 @@ test("015 propagation: composite two-body/J2 with extras disabled matches legacy
 test("015 reliability: Baarda constants are pinned through the WASM API", () => {
   const result = wtestNoncentrality(0.001, 0.8);
 
-  assertRel(result.delta0, 4.132147965064809, 1e-14, "delta0");
-  assertRel(result.lambda0, 17.074646805189243, 1e-14, "lambda0");
-  assertBitsEqual(result.lambda0, result.delta0 * result.delta0, "lambda identity");
+  assertBitsEqual(result.delta0, 4.132147965064809, "delta0");
+  assertBitsEqual(result.lambda0, 17.074646805189243, "lambda0");
 });
 
 test("015 reliability: design redundancy sums and zero-redundancy rows stay null", () => {

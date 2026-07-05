@@ -6,10 +6,14 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+use sidereon_core::astro::frames::orientation::TdbEarthOrientationProvider;
 use sidereon_core::astro::math::least_squares::{SolveOptions, TrustRegionSolve};
 use sidereon_core::astro::propagator::IntegratorOptions;
 use sidereon_core::ephemeris::{
+    fit_all_sp3_ecef_precise_orbits as core_fit_all_sp3_ecef_precise_orbits,
     fit_precise_ephemeris_sample_orbit as core_fit_precise_ephemeris_sample_orbit,
+    fit_sp3_ecef_precise_orbit as core_fit_sp3_ecef_precise_orbit,
+    fit_sp3_ecef_precise_orbits as core_fit_sp3_ecef_precise_orbits,
     fit_sp3_precise_orbit as core_fit_sp3_precise_orbit, OrbitArcSpan, OrbitFitCovariance,
     OrbitFitOptions, OrbitFitReport, OrbitFitSolution, OrbitResidualLedger, OrbitResidualStats,
 };
@@ -34,6 +38,12 @@ fn parse_satellite(token: &str) -> Result<GnssSatelliteId, JsValue> {
     token
         .parse::<GnssSatelliteId>()
         .map_err(|e| type_error(&format!("invalid satellite token {token:?}: {e}")))
+}
+
+fn parse_satellites(value: JsValue) -> Result<Vec<GnssSatelliteId>, JsValue> {
+    let tokens: Vec<String> = serde_wasm_bindgen::from_value(value)
+        .map_err(|e| type_error(&format!("invalid satellites: {e}")))?;
+    tokens.iter().map(|token| parse_satellite(token)).collect()
 }
 
 #[derive(Deserialize, Default)]
@@ -292,6 +302,56 @@ pub fn fit_sp3_precise_orbit(
     let sat = parse_satellite(satellite)?;
     let options = orbit_options(options)?;
     let report = core_fit_sp3_precise_orbit(&sp3.inner, sat, &options).map_err(engine_error)?;
+    to_js(&OrbitFitReportJs::from(report))
+}
+
+/// Fit one satellite orbit from a parsed ECEF SP3 precise product.
+///
+/// `satellite` is an IGS token such as `"G01"`. SP3 position and optional
+/// velocity records are transformed from Earth-fixed coordinates through the
+/// core `TdbEarthOrientationProvider` before fitting.
+#[wasm_bindgen(js_name = fitSp3EcefPreciseOrbit)]
+pub fn fit_sp3_ecef_precise_orbit(
+    sp3: &Sp3,
+    satellite: &str,
+    options: JsValue,
+) -> Result<JsValue, JsValue> {
+    let sat = parse_satellite(satellite)?;
+    let options = orbit_options(options)?;
+    let provider = TdbEarthOrientationProvider::new();
+    let report = core_fit_sp3_ecef_precise_orbit(&sp3.inner, sat, &provider, &options)
+        .map_err(engine_error)?;
+    to_js(&OrbitFitReportJs::from(report))
+}
+
+/// Fit selected satellite orbits from a parsed ECEF SP3 precise product.
+///
+/// `satellites` is a string array of IGS tokens such as `["G01", "G02"]`.
+/// The Earth-fixed to inertial conversion is handled by the core provider.
+#[wasm_bindgen(js_name = fitSp3EcefPreciseOrbits)]
+pub fn fit_sp3_ecef_precise_orbits(
+    sp3: &Sp3,
+    satellites: JsValue,
+    options: JsValue,
+) -> Result<JsValue, JsValue> {
+    let sats = parse_satellites(satellites)?;
+    let options = orbit_options(options)?;
+    let provider = TdbEarthOrientationProvider::new();
+    let report = core_fit_sp3_ecef_precise_orbits(&sp3.inner, &sats, &provider, &options)
+        .map_err(engine_error)?;
+    to_js(&OrbitFitReportJs::from(report))
+}
+
+/// Fit every satellite declared in a parsed ECEF SP3 precise product.
+///
+/// The residual ledger is computed against the original Earth-fixed SP3
+/// observations by the core fit path.
+#[wasm_bindgen(js_name = fitAllSp3EcefPreciseOrbits)]
+pub fn fit_all_sp3_ecef_precise_orbits(sp3: &Sp3, options: JsValue) -> Result<JsValue, JsValue> {
+    let options = orbit_options(options)?;
+    let provider = TdbEarthOrientationProvider::new();
+    let report = core_fit_all_sp3_ecef_precise_orbits(&sp3.inner, &provider, &options)
+        .map_err(engine_error)?;
     to_js(&OrbitFitReportJs::from(report))
 }
 
