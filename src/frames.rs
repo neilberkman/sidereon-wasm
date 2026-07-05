@@ -62,6 +62,10 @@ pub enum TimeScale {
     Glonasst,
     /// QZSS system time (steered to GPST).
     Qzsst,
+    /// Geocentric Coordinate Time.
+    Tcg,
+    /// Barycentric Coordinate Time.
+    Tcb,
 }
 
 impl From<TimeScale> for CoreTimeScale {
@@ -76,6 +80,8 @@ impl From<TimeScale> for CoreTimeScale {
             TimeScale::Bdt => CoreTimeScale::Bdt,
             TimeScale::Glonasst => CoreTimeScale::Glonasst,
             TimeScale::Qzsst => CoreTimeScale::Qzsst,
+            TimeScale::Tcg => CoreTimeScale::Tcg,
+            TimeScale::Tcb => CoreTimeScale::Tcb,
         }
     }
 }
@@ -92,6 +98,8 @@ impl From<CoreTimeScale> for TimeScale {
             CoreTimeScale::Bdt => TimeScale::Bdt,
             CoreTimeScale::Glonasst => TimeScale::Glonasst,
             CoreTimeScale::Qzsst => TimeScale::Qzsst,
+            CoreTimeScale::Tcg => TimeScale::Tcg,
+            CoreTimeScale::Tcb => TimeScale::Tcb,
         }
     }
 }

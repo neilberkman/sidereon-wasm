@@ -205,8 +205,10 @@ impl RinexClock {
     /// always produces byte-identical text, and re-parsing the output reproduces
     /// the same time scale and per-satellite bias series.
     #[wasm_bindgen(js_name = toRinexString)]
-    pub fn to_rinex_string(&self) -> String {
-        self.inner.to_rinex_string()
+    pub fn to_rinex_string(&self) -> Result<String, JsValue> {
+        self.inner
+            .to_rinex_string()
+            .map_err(crate::error::engine_error)
     }
 }
 

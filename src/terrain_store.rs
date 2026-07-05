@@ -225,6 +225,11 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
             detail.version = Some(version);
             detail
         }
+        CoreTerrainStoreError::TileIdMismatch { path, .. } => {
+            let mut detail = TerrainStoreErrorDetail::new("TileIdMismatch", message.clone());
+            detail.path = Some(path.display().to_string());
+            detail
+        }
         CoreTerrainStoreError::UnsupportedDatum { tag } => {
             let mut detail = TerrainStoreErrorDetail::new("UnsupportedDatum", message.clone());
             detail.tag = Some(tag);
