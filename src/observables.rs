@@ -876,6 +876,21 @@ pub struct VelocitySolution {
     inner: CoreVelSolution,
 }
 
+impl VelocitySolution {
+    /// Wrap a core velocity solution for sibling binding modules.
+    pub(crate) fn from_inner(inner: CoreVelSolution) -> Self {
+        Self { inner }
+    }
+}
+
+fn mat4_flat(matrix: &[[f64; 4]; 4]) -> Vec<f64> {
+    let mut out = Vec::with_capacity(16);
+    for row in matrix {
+        out.extend_from_slice(row);
+    }
+    out
+}
+
 #[wasm_bindgen]
 impl VelocitySolution {
     /// Receiver ECEF velocity `[vx, vy, vz]`, metres per second.
@@ -894,6 +909,12 @@ impl VelocitySolution {
     #[wasm_bindgen(getter, js_name = clockDriftSS)]
     pub fn clock_drift_s_s(&self) -> f64 {
         self.inner.clock_drift_s_s
+    }
+
+    /// Unit-variance covariance of `[vx, vy, vz, clockDrift]`, flat row-major.
+    #[wasm_bindgen(getter, js_name = stateCovariance)]
+    pub fn state_covariance(&self) -> Vec<f64> {
+        mat4_flat(&self.inner.state_covariance)
     }
 
     /// Satellite tokens contributing rows, in residual order.
@@ -997,7 +1018,7 @@ pub fn solve_velocity(
     let options = velocity_options(options)?;
     let inner = velocity::solve(&sp3.inner, &observations, receiver, t_rx_j2000_s, options)
         .map_err(engine_error)?;
-    Ok(VelocitySolution { inner })
+    Ok(VelocitySolution::from_inner(inner))
 }
 
 /// Solve receiver ECEF velocity and clock drift from one epoch of observations
@@ -1023,7 +1044,7 @@ pub fn solve_velocity_broadcast(
         options,
     )
     .map_err(engine_error)?;
-    Ok(VelocitySolution { inner })
+    Ok(VelocitySolution::from_inner(inner))
 }
 
 // ---- observable prediction ---------------------------------------------------

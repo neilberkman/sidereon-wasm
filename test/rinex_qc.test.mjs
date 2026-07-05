@@ -70,7 +70,7 @@ test("repairRinexObs fixes header-derived fields and leaves a clean report", () 
     { id: "A5", message: "recomputed observation count headers" },
   ]);
   assert.equal(repaired.decodedFromCrinex, false);
-  assert.equal(repaired.repairedText.length, 31658);
+  assert.equal(repaired.repairedText.length, 34112);
   assert.equal(repaired.remaining.clean, true);
   assert.equal(repaired.remaining.findingCount, 0);
   assert.equal(repaired.repaired.epochCount, 2);

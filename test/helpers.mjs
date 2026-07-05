@@ -57,6 +57,73 @@ export function splitlines(text) {
 
 export const norm = (a) => Math.hypot(...a);
 
+export const C_M_S = 299792458.0;
+
+const OMEGA_E = 7.2921151467e-5;
+
+export const VELOCITY_OBS_BITS = [
+  ["G07", "0xC0768A0B93C45F82"],
+  ["G08", "0xC081BBF2879835FD"],
+  ["G10", "0xC081C9B51570E844"],
+  ["G16", "0xC045EB58A1B7B54E"],
+  ["G18", "0x407EC07DD774B2F8"],
+  ["G20", "0xC0689F0E9E24FBC3"],
+  ["G21", "0x4063A9470C18C1A7"],
+  ["G26", "0x4079EF7D9618F6B0"],
+  ["G27", "0xC0775231A845D789"],
+];
+
+export function geodeticToEcef(latDeg, lonDeg, hM) {
+  const a = 6378137.0;
+  const f = 1 / 298.257223563;
+  const e2 = f * (2 - f);
+  const lat = (latDeg * Math.PI) / 180;
+  const lon = (lonDeg * Math.PI) / 180;
+  const N = a / Math.sqrt(1 - e2 * Math.sin(lat) ** 2);
+  return [
+    (N + hM) * Math.cos(lat) * Math.cos(lon),
+    (N + hM) * Math.cos(lat) * Math.sin(lon),
+    (N * (1 - e2) + hM) * Math.sin(lat),
+  ];
+}
+
+export function synthSp3Pseudoranges(sp3, tRx, rx, rxClockS = 0, minElevationDeg = 10) {
+  const rxRadius = norm(rx);
+  const up = rx.map((c) => c / rxRadius);
+  const out = [];
+  for (const sat of sp3.satellites.filter((s) => s.startsWith("G"))) {
+    let dtFlight = 0.075;
+    let p;
+    let dtSat;
+    let range = 0;
+    for (let it = 0; it < 4; it++) {
+      const tTx = tRx - dtFlight;
+      const interp = sp3.interpolate(sat, Float64Array.of(tTx));
+      const raw = interp.positionM;
+      dtSat = interp.clockS[0];
+      if (!Number.isFinite(raw[0]) || !Number.isFinite(dtSat)) {
+        p = null;
+        break;
+      }
+      const theta = OMEGA_E * dtFlight;
+      p = [
+        raw[0] * Math.cos(theta) + raw[1] * Math.sin(theta),
+        -raw[0] * Math.sin(theta) + raw[1] * Math.cos(theta),
+        raw[2],
+      ];
+      range = norm([p[0] - rx[0], p[1] - rx[1], p[2] - rx[2]]);
+      dtFlight = range / C_M_S;
+    }
+    if (!p) continue;
+    const los = [p[0] - rx[0], p[1] - rx[1], p[2] - rx[2]];
+    const elDeg =
+      (Math.asin((los[0] * up[0] + los[1] * up[1] + los[2] * up[2]) / range) * 180) / Math.PI;
+    if (elDeg < minElevationDeg) continue;
+    out.push({ satelliteId: sat, pseudorangeM: range + C_M_S * (rxClockS - dtSat) });
+  }
+  return out;
+}
+
 // A BigInt64Array of unix-microsecond epochs from a list of JS numbers (each
 // well under 2^53, so the integer is exact before the BigInt cast).
 export const bigints = (nums) => BigInt64Array.from(nums.map((n) => BigInt(n)));

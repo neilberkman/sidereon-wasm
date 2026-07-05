@@ -2,6 +2,7 @@
 //! feed the SPP solver. Positions cross to JS as `Float64Array`, epochs as plain
 //! numbers (seconds since J2000 in the product's own time scale).
 
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::astro::time::{Instant, InstantRepr};
@@ -9,7 +10,10 @@ use sidereon_core::constants::{J2000_JD, SECONDS_PER_DAY};
 use sidereon_core::ephemeris::{
     align_clock_reference as core_align_clock_reference,
     clock_reference_offset as core_clock_reference_offset,
-    ClockReferenceOffset as CoreClockReferenceOffset, Sp3 as CoreSp3,
+    precise_interpolant_store_checksum64 as core_precise_interpolant_store_checksum64,
+    ClockReferenceOffset as CoreClockReferenceOffset,
+    MmapPreciseEphemerisInterpolant as CorePreciseInterpolantArtifact,
+    PreciseInterpolantStoreError as CorePreciseInterpolantStoreError, Sp3 as CoreSp3,
 };
 use sidereon_core::Error as CoreError;
 use sidereon_core::GnssSatelliteId;
@@ -29,6 +33,162 @@ fn instant_to_j2000_seconds(epoch: &Instant) -> f64 {
         InstantRepr::JulianDate(jd) => ((jd.jd_whole - J2000_JD) + jd.fraction) * SECONDS_PER_DAY,
         InstantRepr::Nanos(_) => f64::NAN,
     }
+}
+
+fn attach_detail<T: Serialize>(value: &JsValue, detail: &T) {
+    let detail_value =
+        serde_wasm_bindgen::to_value(detail).expect("serialize precise artifact error detail");
+    js_sys::Reflect::set(value, &JsValue::from_str("detail"), &detail_value)
+        .expect("attach precise artifact error detail");
+}
+
+fn typed_artifact_error<T: Serialize>(name: &'static str, message: String, detail: &T) -> JsValue {
+    let js_error = js_sys::Error::new(&message);
+    js_error.set_name(name);
+    let value: JsValue = js_error.into();
+    js_sys::Reflect::set(&value, &JsValue::from_str("kind"), &JsValue::from_str(name))
+        .expect("attach precise artifact error kind");
+    attach_detail(&value, detail);
+    value
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreciseInterpolantArtifactErrorDetail {
+    name: &'static str,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tag: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    satellite_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    found: Option<String>,
+}
+
+impl PreciseInterpolantArtifactErrorDetail {
+    fn new(name: &'static str, message: String) -> Self {
+        Self {
+            name,
+            message,
+            path: None,
+            reason: None,
+            version: None,
+            tag: None,
+            satellite_id: None,
+            expected: None,
+            found: None,
+        }
+    }
+}
+
+fn hex_u64(value: u64) -> String {
+    format!("{value:#x}")
+}
+
+fn precise_artifact_error_name(error: PreciseInterpolantArtifactError) -> &'static str {
+    match error {
+        PreciseInterpolantArtifactError::Io => "Io",
+        PreciseInterpolantArtifactError::Parse => "Parse",
+        PreciseInterpolantArtifactError::UnsupportedVersion => "UnsupportedVersion",
+        PreciseInterpolantArtifactError::UnsupportedTimeScale => "UnsupportedTimeScale",
+        PreciseInterpolantArtifactError::UnsupportedSatelliteSystem => "UnsupportedSatelliteSystem",
+        PreciseInterpolantArtifactError::DuplicateSatellite => "DuplicateSatellite",
+        PreciseInterpolantArtifactError::Checksum => "Checksum",
+        PreciseInterpolantArtifactError::SatelliteChecksum => "SatelliteChecksum",
+    }
+}
+
+fn precise_artifact_error(error: CorePreciseInterpolantStoreError) -> JsValue {
+    let kind = PreciseInterpolantArtifactError::from(&error);
+    let name = precise_artifact_error_name(kind);
+    let mut detail = PreciseInterpolantArtifactErrorDetail::new(name, error.to_string());
+    match &error {
+        CorePreciseInterpolantStoreError::Io { path, .. } => {
+            detail.path = Some(path.display().to_string());
+        }
+        CorePreciseInterpolantStoreError::Parse { reason } => {
+            detail.reason = Some(reason.clone());
+        }
+        CorePreciseInterpolantStoreError::UnsupportedVersion { version } => {
+            detail.version = Some(*version);
+        }
+        CorePreciseInterpolantStoreError::UnsupportedTimeScale { tag }
+        | CorePreciseInterpolantStoreError::UnsupportedSatelliteSystem { tag } => {
+            detail.tag = Some(*tag);
+        }
+        CorePreciseInterpolantStoreError::DuplicateSatellite { sat } => {
+            detail.satellite_id = Some(sat.to_string());
+        }
+        CorePreciseInterpolantStoreError::Checksum { expected, found } => {
+            detail.expected = Some(hex_u64(*expected));
+            detail.found = Some(hex_u64(*found));
+        }
+        CorePreciseInterpolantStoreError::SatelliteChecksum {
+            sat,
+            expected,
+            found,
+        } => {
+            detail.satellite_id = Some(sat.to_string());
+            detail.expected = Some(hex_u64(*expected));
+            detail.found = Some(hex_u64(*found));
+        }
+    }
+    typed_artifact_error(name, detail.message.clone(), &detail)
+}
+
+/// Error category for precise-interpolant artifact open or serialization.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreciseInterpolantArtifactError {
+    /// File I/O failed in the core artifact API.
+    Io,
+    /// Artifact bytes could not be parsed.
+    Parse,
+    /// The artifact version tag is unsupported.
+    UnsupportedVersion,
+    /// The artifact time-scale tag is unsupported.
+    UnsupportedTimeScale,
+    /// A satellite-system tag is unsupported.
+    UnsupportedSatelliteSystem,
+    /// A satellite appears more than once in the artifact index.
+    DuplicateSatellite,
+    /// The artifact file-level checksum did not match.
+    Checksum,
+    /// A satellite payload checksum did not match its index record.
+    SatelliteChecksum,
+}
+
+impl From<&CorePreciseInterpolantStoreError> for PreciseInterpolantArtifactError {
+    fn from(value: &CorePreciseInterpolantStoreError) -> Self {
+        match value {
+            CorePreciseInterpolantStoreError::Io { .. } => Self::Io,
+            CorePreciseInterpolantStoreError::Parse { .. } => Self::Parse,
+            CorePreciseInterpolantStoreError::UnsupportedVersion { .. } => Self::UnsupportedVersion,
+            CorePreciseInterpolantStoreError::UnsupportedTimeScale { .. } => {
+                Self::UnsupportedTimeScale
+            }
+            CorePreciseInterpolantStoreError::UnsupportedSatelliteSystem { .. } => {
+                Self::UnsupportedSatelliteSystem
+            }
+            CorePreciseInterpolantStoreError::DuplicateSatellite { .. } => Self::DuplicateSatellite,
+            CorePreciseInterpolantStoreError::Checksum { .. } => Self::Checksum,
+            CorePreciseInterpolantStoreError::SatelliteChecksum { .. } => Self::SatelliteChecksum,
+        }
+    }
+}
+
+/// Stable string label for a [`PreciseInterpolantArtifactError`] enum value.
+#[wasm_bindgen(js_name = preciseInterpolantArtifactErrorLabel)]
+pub fn precise_interpolant_artifact_error_label(error: PreciseInterpolantArtifactError) -> String {
+    precise_artifact_error_name(error).to_string()
 }
 
 /// A parsed SP3-c or SP3-d precise-ephemeris product.
@@ -139,6 +299,20 @@ impl Sp3 {
         spp::solve(&self.inner, request)
     }
 
+    /// Run SPP and attach a Doppler velocity/clock-drift solve when Doppler rows solve.
+    ///
+    /// `request` is the normal SPP request object. `dopplerObservations` is an
+    /// array of `{ satelliteId, dopplerHz, carrierHz, satClockDriftSS? }`. The
+    /// returned receiver solution carries `rxClockDriftSS` when velocity solved.
+    #[wasm_bindgen(js_name = solveSppWithDopplerVelocity)]
+    pub fn solve_spp_with_doppler_velocity(
+        &self,
+        request: JsValue,
+        doppler_observations: JsValue,
+    ) -> Result<crate::spp::SppDopplerSolution, JsValue> {
+        spp::solve_with_doppler_velocity(&self.inner, request, doppler_observations)
+    }
+
     /// Solve a batch of independent SPP epochs against this ephemeris in one call.
     ///
     /// `epochs` is an array of SPP request objects (the `SppRequest` shape) and
@@ -153,6 +327,20 @@ impl Sp3 {
         options: JsValue,
     ) -> Result<crate::spp::SppBatchSolution, JsValue> {
         spp::solve_batch(&self.inner, epochs, options)
+    }
+
+    /// Solve one static receiver position from multiple SPP-shaped epochs.
+    ///
+    /// `epochs` is an array of SPP request objects. `options` accepts
+    /// `{ initialPositionM?, withGeodetic?, robust? }` and returns shared
+    /// position, per-epoch clocks, covariance, residual, and influence surfaces.
+    #[wasm_bindgen(js_name = solveStatic)]
+    pub fn solve_static(
+        &self,
+        epochs: JsValue,
+        options: JsValue,
+    ) -> Result<crate::static_positioning::StaticSolution, JsValue> {
+        crate::static_positioning::solve_static_sp3(&self.inner, epochs, options)
     }
 
     /// Compute DGNSS pseudorange corrections from a surveyed base station.
@@ -246,6 +434,14 @@ impl Sp3 {
         self.inner.to_sp3_string()
     }
 
+    /// Build deterministic precise-interpolant artifact bytes from this SP3 product.
+    #[wasm_bindgen(js_name = preciseInterpolantArtifactBytes)]
+    pub fn precise_interpolant_artifact_bytes(&self) -> Result<Vec<u8>, JsValue> {
+        self.inner
+            .precise_interpolant_store_bytes()
+            .map_err(precise_artifact_error)
+    }
+
     /// Predict geometric ranges for many `(satellite, receiver, epoch)` requests
     /// against this ephemeris in one call. `requests` is an array of
     /// `{ sat, receiverEcefM, tRxJ2000S }`; returns an array of
@@ -257,6 +453,51 @@ impl Sp3 {
     pub fn predict_ranges(&self, requests: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
         crate::precise_samples::predict_ranges_over(&self.inner, requests, options)
     }
+
+    /// Evaluate emission-time state and media corrections for index-aligned satellites.
+    ///
+    /// `satellites` and `emissionEpochsJ2000S` share a row count. `receiverEcefM`
+    /// is `[x, y, z]` metres. Without an IONEX product this can still request
+    /// troposphere corrections by passing `{ troposphere: true }`.
+    #[wasm_bindgen(js_name = emissionMediaBatch)]
+    pub fn emission_media_batch(
+        &self,
+        satellites: Vec<String>,
+        emission_epochs_j2000_s: &[f64],
+        receiver_ecef_m: &[f64],
+        options: JsValue,
+    ) -> Result<crate::emission_media::EmissionMediaBatch, JsValue> {
+        crate::emission_media::emission_media_batch_sp3(
+            &self.inner,
+            satellites,
+            emission_epochs_j2000_s,
+            receiver_ecef_m,
+            options,
+        )
+    }
+
+    /// Evaluate emission-time state plus IONEX/troposphere media corrections.
+    ///
+    /// `options.ionosphere` defaults to `true` on this IONEX-bearing path.
+    /// `options.troposphere` defaults to `false`.
+    #[wasm_bindgen(js_name = emissionMediaBatchIonex)]
+    pub fn emission_media_batch_ionex(
+        &self,
+        ionex: &crate::ionex::Ionex,
+        satellites: Vec<String>,
+        emission_epochs_j2000_s: &[f64],
+        receiver_ecef_m: &[f64],
+        options: JsValue,
+    ) -> Result<crate::emission_media::EmissionMediaBatch, JsValue> {
+        crate::emission_media::emission_media_batch_sp3_ionex(
+            &self.inner,
+            ionex,
+            satellites,
+            emission_epochs_j2000_s,
+            receiver_ecef_m,
+            options,
+        )
+    }
 }
 
 /// Parse an SP3-c or SP3-d byte buffer (the full, already-decompressed file)
@@ -265,6 +506,80 @@ impl Sp3 {
 pub fn load_sp3(bytes: &[u8]) -> Result<Sp3, JsValue> {
     let inner = sidereon::load_sp3(bytes).map_err(engine_error)?;
     Ok(Sp3 { inner })
+}
+
+/// Compute the precise-interpolant artifact file-level checksum for byte content.
+#[wasm_bindgen(js_name = preciseInterpolantArtifactChecksum64)]
+pub fn precise_interpolant_artifact_checksum64(bytes: &[u8]) -> u64 {
+    core_precise_interpolant_store_checksum64(bytes)
+}
+
+/// Open precise-interpolant artifact bytes as an evaluable in-memory product.
+///
+/// The returned handle owns its byte buffer because JS byte slices cannot be
+/// borrowed across calls by this class boundary.
+#[wasm_bindgen(js_name = openPreciseInterpolantArtifact)]
+pub fn open_precise_interpolant_artifact(
+    bytes: &[u8],
+) -> Result<PreciseInterpolantArtifact, JsValue> {
+    let inner =
+        CorePreciseInterpolantArtifact::from_vec(bytes.to_vec()).map_err(precise_artifact_error)?;
+    Ok(PreciseInterpolantArtifact { inner })
+}
+
+/// Evaluable precise-interpolant artifact opened from canonical store bytes.
+#[wasm_bindgen]
+pub struct PreciseInterpolantArtifact {
+    inner: CorePreciseInterpolantArtifact<'static>,
+}
+
+#[wasm_bindgen]
+impl PreciseInterpolantArtifact {
+    /// Number of bytes retained by this artifact handle.
+    #[wasm_bindgen(getter, js_name = byteLength)]
+    pub fn byte_length(&self) -> usize {
+        self.inner.as_bytes().len()
+    }
+
+    /// File-level artifact checksum.
+    #[wasm_bindgen(getter)]
+    pub fn checksum64(&self) -> u64 {
+        self.inner.checksum64()
+    }
+
+    /// Artifact time scale label from the stored epoch axis.
+    #[wasm_bindgen(getter, js_name = timeScale)]
+    pub fn time_scale(&self) -> String {
+        format!("{:?}", self.inner.time_scale())
+    }
+
+    /// Satellite tokens present in the artifact, ascending.
+    #[wasm_bindgen(getter)]
+    pub fn satellites(&self) -> Vec<String> {
+        self.inner
+            .satellites()
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    /// Evaluate one satellite state at a J2000-second epoch.
+    pub fn evaluate(&self, satellite: &str, j2000_seconds: f64) -> Result<Sp3State, JsValue> {
+        let sat = parse_sat(satellite)?;
+        let state = self
+            .inner
+            .position_at_j2000_seconds(sat, j2000_seconds)
+            .map_err(engine_error)?;
+        Ok(Sp3State {
+            position: state.position.as_array().to_vec(),
+            clock_s: state.clock_s,
+            velocity: state.velocity.map(|v| v.as_array().to_vec()),
+            clock_event: state.flags.clock_event,
+            clock_predicted: state.flags.clock_predicted,
+            maneuver: state.flags.maneuver,
+            orbit_predicted: state.flags.orbit_predicted,
+        })
+    }
 }
 
 /// One epoch's common clock offset between two SP3 products.
