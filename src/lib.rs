@@ -33,6 +33,7 @@ mod dgnss;
 mod dop;
 mod doppler;
 mod elements;
+mod emission_media;
 mod equinoctial;
 mod error;
 mod error_metrics;
@@ -44,6 +45,7 @@ mod frame_catalog;
 mod frames;
 mod geodesic;
 mod geodetic_time_series;
+mod geofence;
 mod geoid;
 mod geometry_quality;
 mod gnss;
@@ -95,6 +97,7 @@ mod spk;
 mod spp;
 mod ssr;
 mod staleness;
+mod static_positioning;
 mod tca;
 mod tdm;
 mod terrain;
@@ -149,6 +152,7 @@ pub use dop::{
 };
 pub use doppler::{doppler_range_rate, doppler_shift_js, DopplerShift};
 pub use elements::{coe2rv, rv2coe};
+pub use emission_media::{emission_media_status_label, EmissionMediaBatch, EmissionMediaStatus};
 pub use equinoctial::{
     coe2eq, coe2mee, eq2coe, eq2rv, mee2coe, mee2rv, rv2eq, rv2mee, RetrogradeFactor,
 };
@@ -185,6 +189,12 @@ pub use frames::{
 };
 pub use geodesic::{geodesic_direct, geodesic_error_label, geodesic_inverse, GeodesicError};
 pub use geodetic_time_series::{detect_steps, fit_trajectory, network_field, velocity_midas};
+pub use geofence::{
+    geofence_containment_probability, geofence_contains, geofence_crossing_kind_label,
+    geofence_crossing_probability, geofence_error_label, geofence_from_vertices,
+    geofence_from_vertices_3d, geofence_probability_method_label, Geofence, GeofenceCrossingKind,
+    GeofenceError, GeofenceProbabilityMethod,
+};
 pub use geoid::{
     egm96_ellipsoidal_height_m, egm96_orthometric_height_m, egm96_undulation,
     egm96_undulations_deg, egm96_undulations_rad, ellipsoidal_height_m, geoid_undulation,
@@ -321,18 +331,25 @@ pub use source_localization::{
     chan_ho_initial_guess, locate_source, source_crlb, source_dop, source_solve_mode_tdoa,
     source_solve_mode_toa,
 };
-pub use sp3::{load_sp3, Sp3, Sp3ClockReferenceOffset, Sp3Interpolation, Sp3State};
+pub use sp3::{
+    load_sp3, open_precise_interpolant_artifact, precise_interpolant_artifact_checksum64,
+    precise_interpolant_artifact_error_label, PreciseInterpolantArtifact,
+    PreciseInterpolantArtifactError, Sp3, Sp3ClockReferenceOffset, Sp3Interpolation, Sp3State,
+};
 pub use sp3_merge::{merge_sp3, Sp3MergeFlag, Sp3MergeReport, Sp3MergeResult};
 pub use space_weather::{
     estimate_decay_with_space_weather, parse_space_weather, parse_space_weather_csv,
     parse_space_weather_txt, SpaceWeatherTable,
 };
 pub use spk::{Spk, SpkSegment, SpkState};
-pub use spp::{SppBatchSolution, SppSolution};
+pub use spp::{SppBatchSolution, SppDopplerSolution, SppSolution};
 pub use ssr::{decode_ssr, ssr_corrected_state, ssr_source_label, SsrCorrectionStore, SsrSource};
 pub use staleness::{
     select_ionex_js, select_ionex_over_range_js, select_sp3_js, select_sp3_over_range_js,
     solve_with_fallback_js, IonexSelection, SourcedSolution, Sp3Selection,
+};
+pub use static_positioning::{
+    solve_static, static_influence_status_label, StaticInfluenceStatus, StaticSolution,
 };
 pub use tca::{
     find_tca_candidates, find_tca_conjunctions, screen_tca_candidates, screen_tca_conjunctions,

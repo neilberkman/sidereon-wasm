@@ -9,8 +9,10 @@ use wasm_bindgen::prelude::*;
 
 use sidereon_core::ephemeris::Sp3 as CoreSp3;
 use sidereon_core::positioning::{
-    solve_spp_batch_serial, Corrections, EphemerisSource, KlobucharCoeffs, Observation,
-    ReceiverSolution, RobustConfig, SolveInputs, SolvePolicy, SurfaceMet, DEFAULT_HUBER_K,
+    solve_spp_batch_serial, solve_with_doppler_velocity as core_solve_with_doppler_velocity,
+    Corrections, DopplerObservation, EphemerisSource, KlobucharCoeffs, Observation,
+    ReceiverSolution, RobustConfig, SolveInputs, SolvePolicy,
+    SppDopplerSolution as CoreSppDopplerSolution, SurfaceMet, DEFAULT_HUBER_K,
     DEFAULT_ROBUST_MAX_OUTER, DEFAULT_ROBUST_OUTER_TOL_M, DEFAULT_ROBUST_SCALE_FLOOR_M,
 };
 use sidereon_core::quality::SolutionValidationOptions;
@@ -19,6 +21,8 @@ use sidereon_core::{GnssSatelliteId, GnssSystem};
 use crate::dop::Dop;
 use crate::error::{engine_error, range_error, type_error};
 use crate::geometry_quality::GeometryQuality;
+use crate::marshal::mat3_flat;
+use crate::observables::VelocitySolution;
 
 /// One constellation's time DOP: `{ system: "gps", tdop: 1.23 }`.
 #[derive(Serialize)]
@@ -37,6 +41,17 @@ fn system_label(system: GnssSystem) -> &'static str {
 struct ObservationInput {
     satellite_id: String,
     pseudorange_m: f64,
+}
+
+/// One Doppler observation: `{ satelliteId, dopplerHz, carrierHz, satClockDriftSS? }`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DopplerObservationInput {
+    satellite_id: String,
+    doppler_hz: f64,
+    carrier_hz: f64,
+    #[serde(default)]
+    sat_clock_drift_s_s: f64,
 }
 
 /// Boolean correction switches. Both default off.
@@ -292,6 +307,40 @@ pub fn solve(eph: &CoreSp3, request: JsValue) -> Result<SppSolution, JsValue> {
     Ok(SppSolution { inner: solution })
 }
 
+fn build_doppler_observations(value: JsValue) -> Result<Vec<DopplerObservation>, JsValue> {
+    let rows: Vec<DopplerObservationInput> = serde_wasm_bindgen::from_value(value)
+        .map_err(|e| type_error(&format!("invalid Doppler observations: {e}")))?;
+    rows.into_iter()
+        .map(|row| {
+            Ok(DopplerObservation {
+                satellite_id: GnssSatelliteId::from_str(&row.satellite_id).map_err(|_| {
+                    type_error(&format!("invalid satellite token: {}", row.satellite_id))
+                })?,
+                doppler_hz: row.doppler_hz,
+                carrier_hz: row.carrier_hz,
+                sat_clock_drift_s_s: row.sat_clock_drift_s_s,
+            })
+        })
+        .collect::<Result<Vec<_>, JsValue>>()
+}
+
+/// Marshal one SPP request and a Doppler row array into the core fused
+/// position/velocity entry point.
+pub fn solve_with_doppler_velocity(
+    eph: &CoreSp3,
+    request: JsValue,
+    doppler_observations: JsValue,
+) -> Result<SppDopplerSolution, JsValue> {
+    let req: SppRequest = serde_wasm_bindgen::from_value(request)
+        .map_err(|e| type_error(&format!("invalid SPP request: {e}")))?;
+    let (inputs, with_geodetic) = build_solve_inputs(&req)?;
+    let doppler_observations = build_doppler_observations(doppler_observations)?;
+    let inner =
+        core_solve_with_doppler_velocity(eph, &inputs, &doppler_observations, with_geodetic)
+            .map_err(engine_error)?;
+    Ok(SppDopplerSolution { inner })
+}
+
 /// Shared batch options applied to every epoch of a batch SPP solve. These are
 /// the `solve_spp_batch_serial` parameters that core shares across the batch (the
 /// `withGeodetic` flag and the `SolvePolicy`); the per-epoch entries carry only
@@ -409,6 +458,38 @@ impl SppBatchSolution {
     }
 }
 
+/// Position solution with an optional Doppler velocity solve.
+#[wasm_bindgen]
+pub struct SppDopplerSolution {
+    inner: CoreSppDopplerSolution,
+}
+
+#[wasm_bindgen]
+impl SppDopplerSolution {
+    /// Receiver position, clock, and covariance solution.
+    #[wasm_bindgen(getter)]
+    pub fn receiver(&self) -> SppSolution {
+        SppSolution {
+            inner: self.inner.receiver.clone(),
+        }
+    }
+
+    /// Doppler-derived receiver velocity and clock drift, if the velocity rows solved.
+    #[wasm_bindgen(getter)]
+    pub fn velocity(&self) -> Option<VelocitySolution> {
+        self.inner
+            .velocity
+            .clone()
+            .map(VelocitySolution::from_inner)
+    }
+
+    /// Velocity-solve failure text when Doppler rows were present but unusable.
+    #[wasm_bindgen(getter, js_name = velocityError)]
+    pub fn velocity_error(&self) -> Option<String> {
+        self.inner.velocity_error.map(|error| error.to_string())
+    }
+}
+
 /// The result of an SPP solve.
 #[wasm_bindgen]
 pub struct SppSolution {
@@ -457,6 +538,24 @@ impl SppSolution {
     #[wasm_bindgen(getter, js_name = rxClockS)]
     pub fn rx_clock_s(&self) -> f64 {
         self.inner.rx_clock_s
+    }
+
+    /// Receiver clock drift in seconds per second when a Doppler solve was fused.
+    #[wasm_bindgen(getter, js_name = rxClockDriftSS)]
+    pub fn rx_clock_drift_s_s(&self) -> Option<f64> {
+        self.inner.rx_clock_drift_s_s
+    }
+
+    /// ECEF position covariance, flat row-major 3-by-3 in square metres.
+    #[wasm_bindgen(getter, js_name = positionCovarianceEcefM2)]
+    pub fn position_covariance_ecef_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.position_covariance.ecef_m2)
+    }
+
+    /// ENU position covariance, flat row-major 3-by-3 in square metres.
+    #[wasm_bindgen(getter, js_name = positionCovarianceEnuM2)]
+    pub fn position_covariance_enu_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.position_covariance.enu_m2)
     }
 
     /// `[latRad, lonRad, heightM]` as a `Float64Array` if the solve was asked

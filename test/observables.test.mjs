@@ -397,10 +397,34 @@ test("velocity range-rate solve matches the rust oracle bits", () => {
     VELOCITY_OBS_BITS.map(([sat]) => sat),
   );
   assert.equal(solution.velocityMS.length, 3);
+  assert.equal(solution.stateCovariance.length, 16);
+  assert.ok(Array.from(solution.stateCovariance).every(Number.isFinite));
+  for (const idx of [0, 5, 10, 15]) assert.ok(solution.stateCovariance[idx] > 0);
   assert.equal(solution.residualsMS.length, observations.length);
   assert.deepEqual(
     aBits(solution.velocityMS),
     expectBits(["0x4028000000000000", "0xc01c000000000016", "0x4007ffffffffff00"]),
+  );
+  assert.deepEqual(
+    aBits(solution.stateCovariance),
+    expectBits([
+      "0x3ff0906b12ade753",
+      "0xbfd3507feaeb34da",
+      "0x3fe4b8aaad393152",
+      "0x3e2653d2334473f0",
+      "0xbfd3507feaeb34dc",
+      "0x3fe06337a5bee55f",
+      "0x3f9ceec75f8410a1",
+      "0xbdfba852d0276899",
+      "0x3fe4b8aaad39314d",
+      "0x3f9ceec75f8410c1",
+      "0x3ffc72af9d76e44d",
+      "0x3e30eae3e3aecb8c",
+      "0x3e2653d2334473f2",
+      "0xbdfba852d027689e",
+      "0x3e30eae3e3aecb8b",
+      "0x3c6ae29fdfe7f6ff",
+    ]),
   );
   assert.equal(f64Bits(solution.speedMS), 0x402c6ce322982a37n);
   assert.equal(f64Bits(solution.clockDriftSS), 0x3e112e0be826d2een);
@@ -441,6 +465,27 @@ test("velocity doppler solve matches the rust oracle bits", () => {
   assert.deepEqual(
     aBits(solution.velocityMS),
     expectBits(["0x402800000000000c", "0xc01c00000000000f", "0x4007ffffffffff60"]),
+  );
+  assert.deepEqual(
+    aBits(solution.stateCovariance),
+    expectBits([
+      "0x3ff0906b12ade753",
+      "0xbfd3507feaeb34da",
+      "0x3fe4b8aaad393152",
+      "0x3e2653d2334473f0",
+      "0xbfd3507feaeb34dc",
+      "0x3fe06337a5bee55f",
+      "0x3f9ceec75f8410a1",
+      "0xbdfba852d0276899",
+      "0x3fe4b8aaad39314d",
+      "0x3f9ceec75f8410c1",
+      "0x3ffc72af9d76e44d",
+      "0x3e30eae3e3aecb8c",
+      "0x3e2653d2334473f2",
+      "0xbdfba852d027689e",
+      "0x3e30eae3e3aecb8b",
+      "0x3c6ae29fdfe7f6ff",
+    ]),
   );
   assert.equal(f64Bits(solution.speedMS), 0x402c6ce322982a44n);
   assert.equal(f64Bits(solution.clockDriftSS), 0x3e112e0be826d4b8n);
