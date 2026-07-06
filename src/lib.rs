@@ -160,8 +160,10 @@ pub use equinoctial::{
     coe2eq, coe2mee, eq2coe, eq2rv, mee2coe, mee2rv, rv2eq, rv2mee, RetrogradeFactor,
 };
 pub use error_metrics::{
-    metrics_from_ecef_covariance_m2, metrics_from_enu_covariance_m2,
-    metrics_from_kinematic_solution, ErrorEllipse, PercentileRadius, PositionErrorMetrics,
+    error_ellipse_from_enu_m2, horizontal_radius_at, metrics_from_ecef_covariance_m2,
+    metrics_from_enu_covariance_m2, metrics_from_kinematic_solution,
+    metrics_from_position_covariance, spherical_radius_at, vertical_radius_at, ErrorEllipse,
+    PercentileRadius, PositionErrorMetrics,
 };
 pub use estimation::{
     alpha_beta_apply_measurement, alpha_beta_filter_step, alpha_beta_predict,
