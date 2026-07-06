@@ -9,13 +9,18 @@ use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::error_metrics::{
+    error_ellipse_from_enu_m2 as core_error_ellipse_from_enu_m2,
+    horizontal_radius_at as core_horizontal_radius_at,
     metrics_from_ecef_covariance_m2 as core_metrics_from_ecef_covariance_m2,
     metrics_from_enu_covariance_m2 as core_metrics_from_enu_covariance_m2,
     metrics_from_kinematic_solution as core_metrics_from_kinematic_solution,
+    metrics_from_position_covariance as core_metrics_from_position_covariance,
+    spherical_radius_at as core_spherical_radius_at, vertical_radius_at as core_vertical_radius_at,
     ErrorEllipse as CoreErrorEllipse, ErrorMetricsError, PercentileRadius as CorePercentileRadius,
     PositionErrorMetrics as CorePositionErrorMetrics,
 };
 use sidereon_core::frame::Wgs84Geodetic;
+use sidereon_core::geometry::PositionCovariance;
 use sidereon_core::precise_positioning::{KinematicEpochSolution, KinematicEpochStatus};
 
 use crate::error::{range_error, type_error};
@@ -75,6 +80,22 @@ impl KinematicSolutionInput {
             used_sats: self.used_sats.clone(),
             innovation_rms_m: self.innovation_rms_m.unwrap_or(0.0),
             status: KinematicEpochStatus::Updated,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PositionCovarianceInput {
+    ecef_m2: [[f64; 3]; 3],
+    enu_m2: [[f64; 3]; 3],
+}
+
+impl PositionCovarianceInput {
+    fn to_core(&self) -> PositionCovariance {
+        PositionCovariance {
+            ecef_m2: self.ecef_m2,
+            enu_m2: self.enu_m2,
         }
     }
 }
@@ -260,6 +281,22 @@ pub fn metrics_from_ecef_covariance_m2(
     })
 }
 
+/// Compute position-error metrics from a position covariance object.
+///
+/// The object must include `ecefM2` and `enuM2`, each a 3 by 3 covariance in
+/// square metres.
+#[wasm_bindgen(js_name = metricsFromPositionCovariance)]
+pub fn metrics_from_position_covariance(
+    covariance: JsValue,
+) -> Result<PositionErrorMetrics, JsValue> {
+    let covariance: PositionCovarianceInput = serde_wasm_bindgen::from_value(covariance)
+        .map_err(|e| type_error(&format!("invalid position covariance: {e}")))?;
+    Ok(PositionErrorMetrics {
+        inner: core_metrics_from_position_covariance(&covariance.to_core())
+            .map_err(metrics_error)?,
+    })
+}
+
 /// Compute position-error metrics from a kinematic solution object.
 ///
 /// The object must include `positionM` and `positionCovarianceM2`; optional
@@ -271,4 +308,46 @@ pub fn metrics_from_kinematic_solution(solution: JsValue) -> Result<PositionErro
     Ok(PositionErrorMetrics {
         inner: core_metrics_from_kinematic_solution(&solution.to_core()).map_err(metrics_error)?,
     })
+}
+
+/// Horizontal one-sigma ellipse from an ENU covariance in square metres.
+#[wasm_bindgen(js_name = errorEllipseFromEnuM2)]
+pub fn error_ellipse_from_enu_m2(covariance_enu_m2: JsValue) -> Result<ErrorEllipse, JsValue> {
+    let covariance: [[f64; 3]; 3] = serde_wasm_bindgen::from_value(covariance_enu_m2)
+        .map_err(|e| type_error(&format!("invalid ENU covariance: {e}")))?;
+    Ok(ErrorEllipse {
+        inner: core_error_ellipse_from_enu_m2(covariance).map_err(metrics_error)?,
+    })
+}
+
+/// Horizontal percentile circle radius from an ENU covariance.
+#[wasm_bindgen(js_name = horizontalRadiusAt)]
+pub fn horizontal_radius_at(
+    covariance_enu_m2: JsValue,
+    probability: f64,
+) -> Result<PercentileRadius, JsValue> {
+    let covariance: [[f64; 3]; 3] = serde_wasm_bindgen::from_value(covariance_enu_m2)
+        .map_err(|e| type_error(&format!("invalid ENU covariance: {e}")))?;
+    Ok(PercentileRadius {
+        inner: core_horizontal_radius_at(covariance, probability).map_err(metrics_error)?,
+    })
+}
+
+/// Three-dimensional percentile sphere radius from an ENU covariance.
+#[wasm_bindgen(js_name = sphericalRadiusAt)]
+pub fn spherical_radius_at(
+    covariance_enu_m2: JsValue,
+    probability: f64,
+) -> Result<PercentileRadius, JsValue> {
+    let covariance: [[f64; 3]; 3] = serde_wasm_bindgen::from_value(covariance_enu_m2)
+        .map_err(|e| type_error(&format!("invalid ENU covariance: {e}")))?;
+    Ok(PercentileRadius {
+        inner: core_spherical_radius_at(covariance, probability).map_err(metrics_error)?,
+    })
+}
+
+/// Vertical one-dimensional percentile radius from an up variance.
+#[wasm_bindgen(js_name = verticalRadiusAt)]
+pub fn vertical_radius_at(sigma_u_m2: f64, probability: f64) -> Result<f64, JsValue> {
+    core_vertical_radius_at(sigma_u_m2, probability).map_err(metrics_error)
 }
