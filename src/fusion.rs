@@ -213,6 +213,22 @@ fn parse_loose_config(
             config.lever_arm_body_m = vec3("loose.leverArmBodyM", &lever)?;
         }
         config.update_options = parse_update_options(input.update_options)?;
+        if let Some(reweighting) = input.measurement_reweighting {
+            let standard = core_fusion::IggIiiMeasurementReweighting::standard();
+            config.measurement_reweighting = Some(core_fusion::IggIiiMeasurementReweighting {
+                k0_sigma: reweighting.k0_sigma.unwrap_or(standard.k0_sigma),
+                k1_sigma: reweighting.k1_sigma.unwrap_or(standard.k1_sigma),
+            });
+        }
+        if let Some(adaptation) = input.prediction_adaptation {
+            let standard = core_fusion::YangPredictionAdaptiveFactor::standard();
+            config.prediction_adaptation = Some(core_fusion::YangPredictionAdaptiveFactor {
+                threshold: adaptation.threshold.unwrap_or(standard.threshold),
+                outlier_gate_probability: adaptation
+                    .outlier_gate_probability
+                    .unwrap_or(standard.outlier_gate_probability),
+            });
+        }
     }
     Ok(config)
 }
@@ -420,8 +436,10 @@ fn parse_tight_observation(
     Ok(observation)
 }
 
-fn filter_state_js(filter: &core_fusion::InertialFilter) -> Result<FilterStateJs, JsValue> {
-    let state = filter.state();
+fn filter_state_from_parts(
+    state: &core_fusion::InsFilterState,
+    last_body_rate_wrt_ecef_rps: [f64; 3],
+) -> Result<FilterStateJs, JsValue> {
     let nominal = &state.nominal;
     let quaternion = nominal
         .attitude_quaternion_body_to_ecef()
@@ -440,7 +458,28 @@ fn filter_state_js(filter: &core_fusion::InertialFilter) -> Result<FilterStateJs
         covariance: state.covariance.clone(),
         accel_scale_factor: state.accel_scale_factor,
         gyro_scale_factor: state.gyro_scale_factor,
-        last_body_rate_wrt_ecef_rps: filter.last_body_rate_wrt_ecef_rps(),
+        last_body_rate_wrt_ecef_rps,
+    })
+}
+
+fn filter_state_js(filter: &core_fusion::InertialFilter) -> Result<FilterStateJs, JsValue> {
+    filter_state_from_parts(filter.state(), filter.last_body_rate_wrt_ecef_rps())
+}
+
+fn tight_snapshot_js(snapshot: &core_fusion::TightFilterSnapshot) -> TightFilterSnapshotJs {
+    TightFilterSnapshotJs {
+        clock_bias_m: snapshot.clock_bias_m,
+        clock_drift_m_s: snapshot.clock_drift_m_s,
+        augmented_covariance: snapshot.augmented_covariance.clone(),
+    }
+}
+
+fn snapshot_js(
+    snapshot: &core_fusion::InertialFilterSnapshot,
+) -> Result<InertialFilterSnapshotJs, JsValue> {
+    Ok(InertialFilterSnapshotJs {
+        state: filter_state_from_parts(&snapshot.state, snapshot.last_body_rate_wrt_ecef_rps)?,
+        tight: tight_snapshot_js(&snapshot.tight),
     })
 }
 
@@ -513,6 +552,19 @@ impl GnssInsFilter {
         self.state()
     }
 
+    /// Propagate and record the transition for later fusion RTS smoothing.
+    #[wasm_bindgen(js_name = propagateRecorded)]
+    pub fn propagate_recorded(
+        &mut self,
+        sample: JsValue,
+        history: &mut FusionRtsHistoryBuilder,
+    ) -> Result<JsValue, JsValue> {
+        self.inner
+            .propagate_recorded(parse_imu_sample(sample)?, &mut history.inner)
+            .map_err(fusion_error)?;
+        self.state()
+    }
+
     /// Propagate the filter with a JS array of IMU samples.
     #[wasm_bindgen(js_name = propagateBatch)]
     pub fn propagate_batch(&mut self, samples: JsValue) -> Result<JsValue, JsValue> {
@@ -532,6 +584,20 @@ impl GnssInsFilter {
         let update = self
             .inner
             .update_loose(&parse_loose_measurement(measurement)?)
+            .map_err(fusion_error)?;
+        to_js(&update_js(update))
+    }
+
+    /// Apply a loose GNSS fix and record checkpoints for fusion RTS smoothing.
+    #[wasm_bindgen(js_name = updateLooseRecorded)]
+    pub fn update_loose_recorded(
+        &mut self,
+        measurement: JsValue,
+        history: &mut FusionRtsHistoryBuilder,
+    ) -> Result<JsValue, JsValue> {
+        let update = self
+            .inner
+            .update_loose_recorded(&parse_loose_measurement(measurement)?, &mut history.inner)
             .map_err(fusion_error)?;
         to_js(&update_js(update))
     }
@@ -556,6 +622,21 @@ impl GnssInsFilter {
         to_js(&update_js(update))
     }
 
+    /// Apply a tight SP3 update and record checkpoints for fusion RTS smoothing.
+    #[wasm_bindgen(js_name = updateTightSp3Recorded)]
+    pub fn update_tight_sp3_recorded(
+        &mut self,
+        sp3: &Sp3,
+        epoch: JsValue,
+        history: &mut FusionRtsHistoryBuilder,
+    ) -> Result<JsValue, JsValue> {
+        let update = self
+            .inner
+            .update_tight_recorded(&sp3.inner, &parse_tight_epoch(epoch)?, &mut history.inner)
+            .map_err(fusion_error)?;
+        to_js(&update_js(update))
+    }
+
     /// Apply a tight raw-observation epoch against a broadcast ephemeris source.
     #[wasm_bindgen(js_name = updateTightBroadcast)]
     pub fn update_tight_broadcast(
@@ -566,6 +647,25 @@ impl GnssInsFilter {
         let update = self
             .inner
             .update_tight(&broadcast.inner, &parse_tight_epoch(epoch)?)
+            .map_err(fusion_error)?;
+        to_js(&update_js(update))
+    }
+
+    /// Apply a tight broadcast update and record checkpoints for fusion RTS smoothing.
+    #[wasm_bindgen(js_name = updateTightBroadcastRecorded)]
+    pub fn update_tight_broadcast_recorded(
+        &mut self,
+        broadcast: &BroadcastEphemeris,
+        epoch: JsValue,
+        history: &mut FusionRtsHistoryBuilder,
+    ) -> Result<JsValue, JsValue> {
+        let update = self
+            .inner
+            .update_tight_recorded(
+                &broadcast.inner,
+                &parse_tight_epoch(epoch)?,
+                &mut history.inner,
+            )
             .map_err(fusion_error)?;
         to_js(&update_js(update))
     }
@@ -629,6 +729,107 @@ impl GnssInsFilter {
             .restore_encoded_state(bytes)
             .map_err(fusion_error)
     }
+}
+
+/// Builder for recording a fusion forward pass before RTS smoothing.
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct FusionRtsHistoryBuilder {
+    inner: core_fusion::FusionRtsHistoryBuilder,
+}
+
+#[wasm_bindgen]
+impl FusionRtsHistoryBuilder {
+    /// Start an empty history for manual recording.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> FusionRtsHistoryBuilder {
+        Self {
+            inner: core_fusion::FusionRtsHistoryBuilder::empty(),
+        }
+    }
+
+    /// Start a history from the filter's current checkpoint.
+    #[wasm_bindgen(js_name = fromFilter)]
+    pub fn from_filter(filter: &GnssInsFilter) -> Result<FusionRtsHistoryBuilder, JsValue> {
+        let inner = core_fusion::FusionRtsHistoryBuilder::from_filter(&filter.inner)
+            .map_err(fusion_error)?;
+        Ok(Self { inner })
+    }
+
+    /// Return a validated recorded history.
+    pub fn finish(&self) -> Result<FusionRtsHistory, JsValue> {
+        let inner = self.inner.clone().finish().map_err(fusion_error)?;
+        Ok(FusionRtsHistory { inner })
+    }
+}
+
+impl Default for FusionRtsHistoryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Recorded fusion forward-pass history accepted by `smoothFusionRts`.
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct FusionRtsHistory {
+    inner: core_fusion::FusionRtsHistory,
+}
+
+#[wasm_bindgen]
+impl FusionRtsHistory {
+    /// Recorded epochs in forward time order.
+    #[wasm_bindgen(getter)]
+    pub fn epochs(&self) -> Result<JsValue, JsValue> {
+        let epochs = self
+            .inner
+            .epochs
+            .iter()
+            .map(FusionRtsEpochJs::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
+        to_js(&epochs)
+    }
+
+    /// Number of recorded epochs.
+    #[wasm_bindgen(getter, js_name = epochCount)]
+    pub fn epoch_count(&self) -> usize {
+        self.inner.epochs.len()
+    }
+}
+
+/// Smoothed fusion trajectory returned by fixed-interval RTS smoothing.
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct SmoothedFusionTrajectory {
+    inner: core_fusion::SmoothedFusionTrajectory,
+}
+
+#[wasm_bindgen]
+impl SmoothedFusionTrajectory {
+    /// Smoothed epochs in the same order as the recorded history.
+    #[wasm_bindgen(getter)]
+    pub fn epochs(&self) -> Result<JsValue, JsValue> {
+        let epochs = self
+            .inner
+            .epochs
+            .iter()
+            .map(SmoothedFusionEpochJs::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
+        to_js(&epochs)
+    }
+
+    /// Number of smoothed epochs.
+    #[wasm_bindgen(getter, js_name = epochCount)]
+    pub fn epoch_count(&self) -> usize {
+        self.inner.epochs.len()
+    }
+}
+
+/// Apply fixed-interval RTS smoothing to recorded fusion history.
+#[wasm_bindgen(js_name = smoothFusionRts)]
+pub fn smooth_fusion_rts(history: &FusionRtsHistory) -> Result<SmoothedFusionTrajectory, JsValue> {
+    let inner = core_fusion::smooth_fusion_rts(&history.inner).map_err(fusion_error)?;
+    Ok(SmoothedFusionTrajectory { inner })
 }
 
 /// Decode and re-encode fusion-state bytes through the core codec.
@@ -720,6 +921,22 @@ struct MechanizationConfigInput {
 struct LooseConfigInput {
     lever_arm_body_m: Option<Vec<f64>>,
     update_options: Option<UpdateOptionsInput>,
+    measurement_reweighting: Option<IggIiiMeasurementReweightingInput>,
+    prediction_adaptation: Option<YangPredictionAdaptiveFactorInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IggIiiMeasurementReweightingInput {
+    k0_sigma: Option<f64>,
+    k1_sigma: Option<f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct YangPredictionAdaptiveFactorInput {
+    threshold: Option<f64>,
+    outlier_gate_probability: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -853,6 +1070,67 @@ struct TightClockStateJs {
     bias_m: f64,
     drift_m_s: f64,
     covariance: Vec<f64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TightFilterSnapshotJs {
+    clock_bias_m: f64,
+    clock_drift_m_s: f64,
+    augmented_covariance: Vec<Vec<f64>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InertialFilterSnapshotJs {
+    state: FilterStateJs,
+    tight: TightFilterSnapshotJs,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FusionRtsEpochJs {
+    t_j2000_s: f64,
+    predicted: InertialFilterSnapshotJs,
+    updated: InertialFilterSnapshotJs,
+    transition_from_previous: Option<Vec<Vec<f64>>>,
+}
+
+impl TryFrom<&core_fusion::FusionRtsEpoch> for FusionRtsEpochJs {
+    type Error = JsValue;
+
+    fn try_from(value: &core_fusion::FusionRtsEpoch) -> Result<Self, Self::Error> {
+        Ok(Self {
+            t_j2000_s: value.t_j2000_s,
+            predicted: snapshot_js(&value.predicted)?,
+            updated: snapshot_js(&value.updated)?,
+            transition_from_previous: value.transition_from_previous.clone(),
+        })
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SmoothedFusionEpochJs {
+    t_j2000_s: f64,
+    snapshot: InertialFilterSnapshotJs,
+    error_state_correction: Vec<f64>,
+    covariance: Vec<Vec<f64>>,
+    rts_gain_to_next: Option<Vec<Vec<f64>>>,
+}
+
+impl TryFrom<&core_fusion::SmoothedFusionEpoch> for SmoothedFusionEpochJs {
+    type Error = JsValue;
+
+    fn try_from(value: &core_fusion::SmoothedFusionEpoch) -> Result<Self, Self::Error> {
+        Ok(Self {
+            t_j2000_s: value.t_j2000_s,
+            snapshot: snapshot_js(&value.snapshot)?,
+            error_state_correction: value.error_state_correction.clone(),
+            covariance: value.covariance.clone(),
+            rts_gain_to_next: value.rts_gain_to_next.clone(),
+        })
+    }
 }
 
 #[derive(Serialize)]

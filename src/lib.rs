@@ -191,7 +191,10 @@ pub use frames::{
     timescale_offset_at_s_js, timescale_offset_s_js, ut1_coverage_info, CivilDateTime, FrameStates,
     GnssWeekTow, Instant, JulianDate, LeapSecondTable, TimeScale, Ut1Coverage,
 };
-pub use fusion::{fusion_state_bytes_round_trip, GnssInsFilter};
+pub use fusion::{
+    fusion_state_bytes_round_trip, smooth_fusion_rts, FusionRtsHistory, FusionRtsHistoryBuilder,
+    GnssInsFilter, SmoothedFusionTrajectory,
+};
 pub use geodesic::{geodesic_direct, geodesic_error_label, geodesic_inverse, GeodesicError};
 pub use geodetic_time_series::{detect_steps, fit_trajectory, network_field, velocity_midas};
 pub use geofence::{
