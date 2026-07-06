@@ -10,8 +10,8 @@ use wasm_bindgen::prelude::*;
 use sidereon_core::astro::constants::{J2_EARTH, MU_EARTH, RE_EARTH};
 use sidereon_core::astro::forces::{
     DragForce as CoreDragForce, DragParameters, SchwarzschildRelativity, SolarRadiationPressure,
-    SpaceWeather, SphericalHarmonicGravityConfig, ThirdBodyBodies, ThirdBodyGravity,
-    ZonalCoefficients, ZonalDegrees, ZonalGravity,
+    SolidEarthPoleTideGravity, SolidEarthTideGravity, SpaceWeather, SphericalHarmonicGravityConfig,
+    ThirdBodyBodies, ThirdBodyGravity, ZonalCoefficients, ZonalDegrees, ZonalGravity,
 };
 use sidereon_core::astro::propagator::{
     ForceModelComponents, ForceModelKind, IntegratorKind, IntegratorOptions,
@@ -45,6 +45,8 @@ pub(crate) struct ForceModelObject {
     spherical_harmonic: Option<ComponentInput<SphericalHarmonicInput>>,
     geopotential: Option<ComponentInput<SphericalHarmonicInput>>,
     third_body: Option<ComponentInput<ThirdBodyInput>>,
+    solid_earth_tide: Option<ComponentInput<TideInput>>,
+    solid_earth_pole_tide: Option<ComponentInput<TideInput>>,
     solar_radiation_pressure: Option<ComponentInput<SolarRadiationPressureInput>>,
     srp: Option<ComponentInput<SolarRadiationPressureInput>>,
     relativity: Option<ComponentInput<RelativityInput>>,
@@ -118,6 +120,10 @@ struct RelativityInput {
     mu_km3_s2: Option<f64>,
     c_km_s: Option<f64>,
 }
+
+#[derive(Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct TideInput {}
 
 #[derive(Clone, Copy, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -234,7 +240,11 @@ pub(crate) fn force_model_kind(
 
 pub(crate) fn force_model_requires_body_fixed_frame(kind: &ForceModelKind) -> bool {
     match kind {
-        ForceModelKind::Composite { components } => components.spherical_harmonic.is_some(),
+        ForceModelKind::Composite { components } => {
+            components.spherical_harmonic.is_some()
+                || components.solid_earth_tide.is_some()
+                || components.solid_earth_pole_tide.is_some()
+        }
         _ => false,
     }
 }
@@ -340,6 +350,18 @@ fn composite_object(object: &ForceModelObject, mu: f64) -> Result<ForceModelKind
         .map(component_third_body)
         .transpose()?
         .flatten();
+    let solid_earth_tide = object
+        .solid_earth_tide
+        .as_ref()
+        .map(component_solid_earth_tide)
+        .transpose()?
+        .flatten();
+    let solid_earth_pole_tide = object
+        .solid_earth_pole_tide
+        .as_ref()
+        .map(component_solid_earth_pole_tide)
+        .transpose()?
+        .flatten();
     let srp = object
         .solar_radiation_pressure
         .as_ref()
@@ -354,7 +376,12 @@ fn composite_object(object: &ForceModelObject, mu: f64) -> Result<ForceModelKind
         .transpose()?
         .flatten();
 
-    if third_body.is_none() && srp.is_none() && relativity.is_none() && spherical_harmonic.is_none()
+    if third_body.is_none()
+        && solid_earth_tide.is_none()
+        && solid_earth_pole_tide.is_none()
+        && srp.is_none()
+        && relativity.is_none()
+        && spherical_harmonic.is_none()
     {
         if include_two_body && zonal.is_none() {
             return Ok(ForceModelKind::TwoBody { mu_km3_s2: mu });
@@ -381,6 +408,12 @@ fn composite_object(object: &ForceModelObject, mu: f64) -> Result<ForceModelKind
     }
     if let Some(third_body) = third_body {
         components = components.with_third_body(third_body);
+    }
+    if let Some(tide) = solid_earth_tide {
+        components = components.with_solid_earth_tide(tide);
+    }
+    if let Some(tide) = solid_earth_pole_tide {
+        components = components.with_solid_earth_pole_tide(tide);
     }
     if let Some(srp) = srp {
         components = components.with_solar_radiation_pressure(srp);
@@ -575,6 +608,46 @@ fn component_srp(
             "invalid solarRadiationPressure selector {label:?}: expected \"none\" or an object"
         ))),
         ComponentInput::Object(input) => Ok(Some(srp_from_object(input)?)),
+    }
+}
+
+fn component_solid_earth_tide(
+    input: &ComponentInput<TideInput>,
+) -> Result<Option<SolidEarthTideGravity>, JsValue> {
+    match input {
+        ComponentInput::Enabled(false) => Ok(None),
+        ComponentInput::Enabled(true) | ComponentInput::Object(_) => {
+            Ok(Some(SolidEarthTideGravity::default()))
+        }
+        ComponentInput::Label(label) => match label.as_str() {
+            "none" => Ok(None),
+            "default" | "solidEarthTide" | "solid_earth_tide" => {
+                Ok(Some(SolidEarthTideGravity::default()))
+            }
+            other => Err(type_error(&format!(
+                "invalid solidEarthTide selector {other:?}: expected \"none\", \"default\", true, or an object"
+            ))),
+        },
+    }
+}
+
+fn component_solid_earth_pole_tide(
+    input: &ComponentInput<TideInput>,
+) -> Result<Option<SolidEarthPoleTideGravity>, JsValue> {
+    match input {
+        ComponentInput::Enabled(false) => Ok(None),
+        ComponentInput::Enabled(true) | ComponentInput::Object(_) => {
+            Ok(Some(SolidEarthPoleTideGravity::default()))
+        }
+        ComponentInput::Label(label) => match label.as_str() {
+            "none" => Ok(None),
+            "default" | "solidEarthPoleTide" | "solid_earth_pole_tide" => {
+                Ok(Some(SolidEarthPoleTideGravity::default()))
+            }
+            other => Err(type_error(&format!(
+                "invalid solidEarthPoleTide selector {other:?}: expected \"none\", \"default\", true, or an object"
+            ))),
+        },
     }
 }
 

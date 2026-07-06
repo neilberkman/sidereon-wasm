@@ -168,7 +168,8 @@ pub use estimation::{
     alpha_beta_steady_state_gains, cfar_ca_false_alarm_probability, cfar_ca_multiplier_from_pfa,
     cfar_ca_pfa_from_multiplier, cfar_ca_threshold, ewma_update, ewma_update_power_of_two,
     kalman_cv_steady_state_gains, mad_gaussian_consistency, mad_spread, nis, nis_expected_value,
-    nis_gate, nis_gate_threshold, normalized_innovation,
+    nis_gate, nis_gate_threshold, normalized_innovation, smooth_track_rts, SmoothedTrack,
+    TrackFilter, TrackFilterConfig, TrackRtsHistory, TrackRtsHistoryBuilder,
 };
 pub use events::{
     angular_separation, angular_separation_coords, beta_angle, beta_angle_from_state,

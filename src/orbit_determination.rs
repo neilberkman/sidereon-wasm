@@ -118,6 +118,7 @@ fn orbit_options(input: JsValue) -> Result<OrbitFitOptions, JsValue> {
             .unwrap_or(defaults.min_ledger_samples),
         drag: input.drag.as_ref().map(DragInput::to_core).transpose()?,
         space_weather: None,
+        propagation_context: defaults.propagation_context,
     })
 }
 
