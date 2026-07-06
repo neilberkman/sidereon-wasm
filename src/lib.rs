@@ -43,6 +43,7 @@ mod force_model_input;
 mod forces;
 mod frame_catalog;
 mod frames;
+mod fusion;
 mod geodesic;
 mod geodetic_time_series;
 mod geofence;
@@ -86,8 +87,10 @@ mod rtk;
 mod rtk_arc;
 mod sbas;
 mod sbas_pl;
+mod scenario;
 mod sgp4;
 mod sidereal;
+mod signal_analysis;
 mod sky;
 mod source_localization;
 mod sp3;
@@ -187,6 +190,7 @@ pub use frames::{
     timescale_offset_at_s_js, timescale_offset_s_js, ut1_coverage_info, CivilDateTime, FrameStates,
     GnssWeekTow, Instant, JulianDate, LeapSecondTable, TimeScale, Ut1Coverage,
 };
+pub use fusion::{fusion_state_bytes_round_trip, GnssInsFilter};
 pub use geodesic::{geodesic_direct, geodesic_error_label, geodesic_inverse, GeodesicError};
 pub use geodetic_time_series::{detect_steps, fit_trajectory, network_field, velocity_midas};
 pub use geofence::{
@@ -316,6 +320,10 @@ pub use sbas_pl::{
     sbas_pl_error_label, sbas_protection_levels, AirborneModel, DegradationParams, SbasErrorModel,
     SbasKMultipliers, SbasPlError, SbasProtection, SbasSisError,
 };
+pub use scenario::{
+    default_scenario_seed_hex, scenario_engine_version, scenario_schema_version, simulate_scenario,
+    simulate_scenario_bytes, simulate_scenario_json, simulate_scenario_json_bytes,
+};
 pub use sgp4::{
     fit_tle, parse_tle_file, propagate_batch, visible_from_satellites_js, ChecksumWarning,
     Constellation, DecayLatch, FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles,
@@ -323,6 +331,10 @@ pub use sgp4::{
     VisibleSatellite,
 };
 pub use sidereal::{orbit_repeat_lag, periodicity_strength, repeat_period, sidereal_filter};
+pub use signal_analysis::{
+    effective_cn0_degradation, spectral_separation_coefficient_db_hz,
+    spectral_separation_coefficient_hz, DllProcessing, SignalAnalysisModulation,
+};
 pub use sky::{
     find_moon_elevation_crossings, find_moon_transits, moon_az_el, moon_elevation_deg,
     moon_illumination, sun_az_el, MoonElevationCrossing, MoonTransit,
