@@ -36,6 +36,11 @@ flate2 = "1"
 # crate's. Pure-Rust, so it builds for wasm32.
 nalgebra = "0.33"
 
+[patch.crates-io]
+# Pre-release core API override for the RTK RINEX arc builders.
+# Remove this once the core crate release includes build/rtk-arc-api.
+sidereon-core = { git = "file:///Users/neil/xuku/sidereon", branch = "build/rtk-arc-api" }
+
 [profile.release]
 opt-level = "s"
 lto = true

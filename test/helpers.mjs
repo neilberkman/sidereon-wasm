@@ -2,6 +2,7 @@
 // WASM binding is checked against the same goldens the Rust core asserts on.
 
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const fixture = (rel) =>
@@ -10,6 +11,12 @@ export const fixture = (rel) =>
 export const fixtureText = (rel) => fixture(rel).toString("utf8");
 
 export const fixtureJson = (rel) => JSON.parse(fixtureText(rel));
+
+export const coreFixtureRoot =
+  process.env.SIDEREON_CORE_FIXTURES ??
+  "/Users/neil/xuku/sidereon/crates/sidereon-core/tests/fixtures";
+
+export const coreFixture = (...parts) => readFileSync(join(coreFixtureRoot, ...parts));
 
 // Decode a big-endian IEEE-754 hex bit pattern ("0x417b...") to a JS number.
 export function hexToF64(s) {

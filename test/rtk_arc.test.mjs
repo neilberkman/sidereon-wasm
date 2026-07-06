@@ -9,17 +9,28 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildDualFrequencyRinexRtkArc,
+  buildRinexRtkArc,
   fixWideLaneRtkArc,
+  loadSp3,
+  parseRinexObs,
   prepareIonosphereFreeRtkArc,
   solveRtkArc,
+  solveStaticRinexRtkBaseline,
   solveStaticRtkArc,
+  solveWideLaneFixedRinexRtkBaseline,
 } from "../pkg-node/sidereon.js";
-import { fixtureJson } from "./helpers.mjs";
+import { coreFixture, fixtureJson, norm } from "./helpers.mjs";
 
 // GPS L1 wavelength (metres) the fixture's ambiguities use.
 const L1_WAVELENGTH_M = 0.19029367279836487;
 const F_L1_HZ = 1575.42e6;
 const F_L2_HZ = 1227.6e6;
+const WTZR_MARKER_M = [4075580.3111, 931854.0543, 4801568.2808];
+const WTZZ_MARKER_M = [4075579.1913, 931853.3696, 4801569.1897];
+const WTZR_OBS = "WTZR00DEU_R_20201770000_01D_30S_MO_120epoch.rnx";
+const WTZZ_OBS = "WTZZ00DEU_R_20201770000_01D_30S_MO_120epoch.rnx";
+const WTZR_WTZZ_SP3 = "GBM0MGXRAP_20201770000_01D_05M_ORB_120epoch.sp3";
 
 const fx = fixtureJson("rtk_wtzr.json");
 
@@ -222,6 +233,47 @@ function withRoverLli(epochs, satelliteId, epochIndex) {
   }));
 }
 
+function arpPosition(markerM, obs) {
+  const [heightM, eastM, northM] = obs.header.antennaDeltaHenM;
+  assert.equal(eastM, 0.0);
+  assert.equal(northM, 0.0);
+  const radiusM = norm(markerM);
+  return markerM.map((component) => component + (component / radiusM) * heightM);
+}
+
+function vectorErrorM(actual, expected) {
+  return norm(actual.map((value, i) => value - expected[i]));
+}
+
+function squareCovarianceLength(flat, n) {
+  assert.equal(flat.length, n * n);
+  assert.ok(flat.every(Number.isFinite));
+}
+
+function wettzellRinexInputs() {
+  const sp3 = loadSp3(coreFixture("sp3", WTZR_WTZZ_SP3));
+  const baseObs = parseRinexObs(coreFixture("obs", WTZR_OBS));
+  const roverObs = parseRinexObs(coreFixture("obs", WTZZ_OBS));
+  const baseArpM = arpPosition(WTZR_MARKER_M, baseObs);
+  const roverArpM = arpPosition(WTZZ_MARKER_M, roverObs);
+  const truthBaselineM = roverArpM.map((component, i) => component - baseArpM[i]);
+  return { sp3, baseObs, roverObs, baseArpM, truthBaselineM };
+}
+
+const realArcModel = {
+  codeSigmaM: 2.0,
+  phaseSigmaM: 0.01,
+  sagnac: true,
+  stochastic: "simple",
+  elevationWeighting: true,
+};
+
+const realArcSolveOptions = {
+  positionTolM: 1.0e-4,
+  ambiguityTolM: 1.0e-4,
+  maxIterations: 10,
+};
+
 test("solveRtkArc reports one solution per epoch and carries the filter state", () => {
   const sol = solveRtkArc(arcEpochs, config);
 
@@ -352,6 +404,72 @@ test("solveStaticRtkArc returns one float and one fixed solution for the arc", (
   assert.deepEqual(sol.droppedSats, []);
   assert.deepEqual(sol.splitCycleSlipArcs, []);
   assert.deepEqual(sol.elevationMaskedSats, []);
+});
+
+test("buildRinexRtkArc and solveStaticRinexRtkBaseline solve the real WTZR/WTZZ arc", () => {
+  const { sp3, baseObs, roverObs, baseArpM, truthBaselineM } = wettzellRinexInputs();
+  const arcOptions = { maxEpochs: 120, includePredictionTime: false };
+
+  const arc = buildRinexRtkArc(sp3, baseObs, roverObs, arcOptions);
+  assert.equal(arc.epochs.length, 120);
+  assert.equal(arc.skippedEpochCount, 0);
+  assert.ok(Object.keys(arc.wavelengthsM).length > 0);
+  assert.ok(Object.values(arc.offsetsM).every((value) => value === 0.0));
+
+  const sol = solveStaticRinexRtkBaseline(sp3, baseObs, roverObs, {
+    baseM: baseArpM,
+    model: realArcModel,
+    arcOptions,
+    preprocessing: { cycleSlip: "splitArc" },
+    opts: {
+      float: realArcSolveOptions,
+      fixed: realArcSolveOptions,
+    },
+  });
+
+  assert.deepEqual(sol.references, { G: "G30" });
+  assert.equal(sol.splitCycleSlipArcs.length, 4);
+  assert.equal(sol.floatSolution.converged, true);
+  assert.ok(vectorErrorM(sol.floatSolution.baselineM, truthBaselineM) < 0.08);
+  squareCovarianceLength(
+    sol.floatSolution.ambiguityCovarianceM,
+    Object.keys(sol.floatSolution.ambiguitiesM).length,
+  );
+
+  const fixed = sol.fixedSolution.fixedSolution;
+  assert.equal(fixed.search.integerStatus, "NotFixed");
+  assert.ok(fixed.search.integerRatio < 3.0);
+  assert.ok(vectorErrorM(fixed.baselineM, truthBaselineM) < 0.01);
+});
+
+test("buildDualFrequencyRinexRtkArc and solveWideLaneFixedRinexRtkBaseline fix the real WTZR/WTZZ arc", () => {
+  const { sp3, baseObs, roverObs, baseArpM, truthBaselineM } = wettzellRinexInputs();
+  const arcOptions = { maxEpochs: 120, includePredictionTime: false };
+
+  const arc = buildDualFrequencyRinexRtkArc(sp3, baseObs, roverObs, arcOptions);
+  assert.equal(arc.epochs.length, 120);
+  assert.equal(arc.skippedEpochCount, 0);
+
+  const sol = solveWideLaneFixedRinexRtkBaseline(sp3, baseObs, roverObs, {
+    baseM: baseArpM,
+    model: realArcModel,
+    arcOptions,
+    opts: {
+      float: realArcSolveOptions,
+      fixed: realArcSolveOptions,
+    },
+  });
+
+  assert.equal(sol.wideLaneFixed, true);
+  assert.equal(sol.integerStatus, "Fixed");
+  assert.ok(sol.integerRatio > 3.0);
+  assert.ok(Object.keys(sol.wideLaneAmbiguitiesCycles).length > 0);
+  assert.ok(vectorErrorM(sol.fixedBaselineM, truthBaselineM) < 0.01);
+  assert.ok(vectorErrorM(sol.floatBaselineM, truthBaselineM) < 0.1);
+  squareCovarianceLength(
+    sol.solution.floatSolution.ambiguityCovarianceM,
+    Object.keys(sol.solution.floatSolution.ambiguitiesM).length,
+  );
 });
 
 test("fixWideLaneRtkArc fixes wide-lane ambiguities over a dual-frequency arc", () => {

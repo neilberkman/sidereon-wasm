@@ -19,23 +19,330 @@ use sidereon_core::rtk::{
     BaselineReferenceSelection, CycleSlipPolicy, CycleSlipReceiver, CycleSlipSplitArc,
 };
 use sidereon_core::rtk_filter::{
-    defaults, fix_wide_lane_rtk_arc, prepare_ionosphere_free_rtk_arc, solve_rtk_arc,
-    solve_static_rtk_arc, DynamicsModel, FilterState, FixedBaselineSolution, FloatBaselineSolution,
-    FloatResidual, FloatSolveStatus, InnovationScreen, InnovationScreenOpts, IntegerSearchMeta,
-    IntegerStatus, ResidualComponentKind, ResidualValidationMeta, ResidualValidationOutlier,
-    RtkArcConfig, RtkArcEpoch, RtkArcEpochSolution, RtkArcObservation, RtkArcPreprocessing,
-    RtkArcSolution, RtkDualCycleSlipConfig, RtkDualFrequencyArcEpoch, RtkDualFrequencyObservation,
-    RtkDualFrequencySatelliteObservation, RtkIonosphereFreeArcConfig, RtkIonosphereFreeArcSolution,
-    RtkStaticArcConfig, RtkStaticArcSolution, RtkWideLaneArcConfig, RtkWideLaneArcSolution,
-    SearchOpts, UpdateOpts, ValidatedFixedBaselineSolution, ValidatedFixedSolveOpts,
-    WideLaneOptions,
+    build_dual_frequency_rinex_rtk_arc, build_rinex_rtk_arc, defaults, fix_wide_lane_rtk_arc,
+    prepare_ionosphere_free_rtk_arc, solve_rtk_arc, solve_static_rtk_arc,
+    solve_wide_lane_fixed_rtk_arc, DynamicsModel, FilterState, FixedBaselineSolution,
+    FloatBaselineSolution, FloatResidual, FloatSolveStatus, InnovationScreen, InnovationScreenOpts,
+    IntegerSearchMeta, IntegerStatus, MeasModel, ResidualComponentKind, ResidualValidationMeta,
+    ResidualValidationOutlier, RtkArcConfig, RtkArcEpoch, RtkArcEpochSolution, RtkArcObservation,
+    RtkArcPreprocessing, RtkArcSolution, RtkDualCycleSlipConfig, RtkDualFrequencyArcEpoch,
+    RtkDualFrequencyObservation, RtkDualFrequencySatelliteObservation, RtkIonosphereFreeArcConfig,
+    RtkIonosphereFreeArcSolution, RtkRinexArc, RtkRinexArcOptions, RtkRinexDualArcOptions,
+    RtkRinexDualFrequencyArc, RtkRinexDualSignalPair, RtkRinexSignalPair, RtkStaticArcConfig,
+    RtkStaticArcSolution, RtkWideLaneArcConfig, RtkWideLaneArcSolution, RtkWideLaneFixedArcConfig,
+    RtkWideLaneFixedArcIntegerMethod, RtkWideLaneFixedArcMetadata, RtkWideLaneFixedArcSolution,
+    RtkWideLaneFixedStaticArcSolution, SearchOpts, StochasticModel, UpdateOpts,
+    ValidatedFixedBaselineSolution, ValidatedFixedSolveOpts, WideLaneOptions,
 };
+use sidereon_core::GnssSystem;
 
 use crate::error::{engine_error, type_error};
 use crate::geometry_quality::GeometryQualityJs;
+use crate::rinex_obs::RinexObs;
 use crate::rtk::{FixedOptionsInput, FloatOptionsInput, MeasModelInput, ResidualOptionsInput};
+use crate::sp3::Sp3;
 
 // --- input objects ----------------------------------------------------------
+
+fn default_measurement_model() -> MeasModel {
+    MeasModel {
+        code_sigma_m: defaults::CODE_SIGMA_M,
+        phase_sigma_m: defaults::PHASE_SIGMA_M,
+        sagnac: true,
+        stochastic: StochasticModel::Simple {
+            elevation_weighting: false,
+        },
+    }
+}
+
+fn parse_gnss_system(value: Option<&str>) -> Result<GnssSystem, JsValue> {
+    match value.unwrap_or("G") {
+        "G" | "GPS" | "gps" | "Gps" => Ok(GnssSystem::Gps),
+        "R" | "GLO" | "GLONASS" | "glonass" | "Glonass" => Ok(GnssSystem::Glonass),
+        "E" | "GAL" | "GALILEO" | "galileo" | "Galileo" => Ok(GnssSystem::Galileo),
+        "C" | "BDS" | "BEIDOU" | "beidou" | "BeiDou" => Ok(GnssSystem::BeiDou),
+        "J" | "QZSS" | "qzss" | "Qzss" => Ok(GnssSystem::Qzss),
+        "I" | "IRNSS" | "NAVIC" | "navic" | "NavIC" | "Navic" => Ok(GnssSystem::Navic),
+        "S" | "SBAS" | "sbas" | "Sbas" => Ok(GnssSystem::Sbas),
+        other => Err(type_error(&format!(
+            "invalid GNSS system {other:?}: expected a RINEX system letter or label"
+        ))),
+    }
+}
+
+/// One RINEX code/carrier pair used to build a single-frequency RTK arc.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RinexSignalPairInput {
+    #[serde(default)]
+    system: Option<String>,
+    code_observable: String,
+    phase_observable: String,
+}
+
+impl RinexSignalPairInput {
+    fn to_core(&self) -> Result<RtkRinexSignalPair, JsValue> {
+        Ok(RtkRinexSignalPair {
+            system: parse_gnss_system(self.system.as_deref())?,
+            code_observable: self.code_observable.clone(),
+            phase_observable: self.phase_observable.clone(),
+        })
+    }
+}
+
+/// Options for building single-frequency RTK arcs from paired RINEX OBS files.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct RinexArcOptionsInput {
+    signal_pairs: Option<Vec<RinexSignalPairInput>>,
+    max_epochs: Option<usize>,
+    min_common_satellites: Option<usize>,
+    include_prediction_time: Option<bool>,
+}
+
+impl RinexArcOptionsInput {
+    fn to_core(&self) -> Result<RtkRinexArcOptions, JsValue> {
+        let defaults = RtkRinexArcOptions::gps_l1_c();
+        let signal_pairs = match &self.signal_pairs {
+            Some(pairs) => pairs
+                .iter()
+                .map(RinexSignalPairInput::to_core)
+                .collect::<Result<Vec<_>, _>>()?,
+            None => defaults.signal_pairs,
+        };
+        Ok(RtkRinexArcOptions {
+            signal_pairs,
+            max_epochs: self.max_epochs,
+            min_common_satellites: self
+                .min_common_satellites
+                .unwrap_or(defaults.min_common_satellites),
+            include_prediction_time: self
+                .include_prediction_time
+                .unwrap_or(defaults.include_prediction_time),
+        })
+    }
+}
+
+fn rinex_arc_options_from_js(value: JsValue) -> Result<RtkRinexArcOptions, JsValue> {
+    if value.is_null() || value.is_undefined() {
+        return Ok(RtkRinexArcOptions::gps_l1_c());
+    }
+    let input: RinexArcOptionsInput = serde_wasm_bindgen::from_value(value)
+        .map_err(|e| type_error(&format!("invalid RINEX RTK arc options: {e}")))?;
+    input.to_core()
+}
+
+/// One RINEX code/carrier pair set used to build a dual-frequency RTK arc.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RinexDualSignalPairInput {
+    #[serde(default)]
+    system: Option<String>,
+    code1_observable: String,
+    phase1_observable: String,
+    code2_observable: String,
+    phase2_observable: String,
+}
+
+impl RinexDualSignalPairInput {
+    fn to_core(&self) -> Result<RtkRinexDualSignalPair, JsValue> {
+        Ok(RtkRinexDualSignalPair {
+            system: parse_gnss_system(self.system.as_deref())?,
+            code1_observable: self.code1_observable.clone(),
+            phase1_observable: self.phase1_observable.clone(),
+            code2_observable: self.code2_observable.clone(),
+            phase2_observable: self.phase2_observable.clone(),
+        })
+    }
+}
+
+/// Options for building dual-frequency RTK arcs from paired RINEX OBS files.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct RinexDualArcOptionsInput {
+    signal_pairs: Option<Vec<RinexDualSignalPairInput>>,
+    max_epochs: Option<usize>,
+    min_common_satellites: Option<usize>,
+    include_prediction_time: Option<bool>,
+}
+
+impl RinexDualArcOptionsInput {
+    fn to_core(&self) -> Result<RtkRinexDualArcOptions, JsValue> {
+        let defaults = RtkRinexDualArcOptions::gps_l1_l2_cw();
+        let signal_pairs = match &self.signal_pairs {
+            Some(pairs) => pairs
+                .iter()
+                .map(RinexDualSignalPairInput::to_core)
+                .collect::<Result<Vec<_>, _>>()?,
+            None => defaults.signal_pairs,
+        };
+        Ok(RtkRinexDualArcOptions {
+            signal_pairs,
+            max_epochs: self.max_epochs,
+            min_common_satellites: self
+                .min_common_satellites
+                .unwrap_or(defaults.min_common_satellites),
+            include_prediction_time: self
+                .include_prediction_time
+                .unwrap_or(defaults.include_prediction_time),
+        })
+    }
+}
+
+fn rinex_dual_arc_options_from_js(value: JsValue) -> Result<RtkRinexDualArcOptions, JsValue> {
+    if value.is_null() || value.is_undefined() {
+        return Ok(RtkRinexDualArcOptions::gps_l1_l2_cw());
+    }
+    let input: RinexDualArcOptionsInput = serde_wasm_bindgen::from_value(value).map_err(|e| {
+        type_error(&format!(
+            "invalid dual-frequency RINEX RTK arc options: {e}"
+        ))
+    })?;
+    input.to_core()
+}
+
+/// Config for solving a static RTK baseline directly from RINEX OBS.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RinexStaticBaselineConfigInput {
+    base_m: [f64; 3],
+    #[serde(default)]
+    arc_options: RinexArcOptionsInput,
+    #[serde(default)]
+    reference: ReferenceSelectionInput,
+    #[serde(default)]
+    model: Option<MeasModelInput>,
+    #[serde(default = "default_initial_baseline_m")]
+    initial_baseline_m: [f64; 3],
+    #[serde(default = "default_rinex_prior_sigma_m")]
+    baseline_prior_sigma_m: f64,
+    #[serde(default = "default_rinex_prior_sigma_m")]
+    ambiguity_prior_sigma_m: f64,
+    #[serde(default)]
+    update_opts: UpdateOptsInput,
+    #[serde(default)]
+    preprocessing: ArcPreprocessingInput,
+    #[serde(default)]
+    opts: ValidatedFixedOptionsInput,
+}
+
+impl RinexStaticBaselineConfigInput {
+    fn arc_options(&self) -> Result<RtkRinexArcOptions, JsValue> {
+        self.arc_options.to_core()
+    }
+
+    fn to_static_core(
+        &self,
+        wavelengths_m: BTreeMap<String, f64>,
+        offsets_m: BTreeMap<String, f64>,
+    ) -> Result<RtkStaticArcConfig, JsValue> {
+        Ok(RtkStaticArcConfig {
+            arc: RtkArcConfig {
+                base_m: self.base_m,
+                reference: self.reference.to_core()?,
+                model: match &self.model {
+                    Some(model) => model.to_core()?,
+                    None => default_measurement_model(),
+                },
+                baseline_prior_sigma_m: self.baseline_prior_sigma_m,
+                ambiguity_prior_sigma_m: self.ambiguity_prior_sigma_m,
+                initial_baseline_m: self.initial_baseline_m,
+                wavelengths_m,
+                offsets_m,
+                update_opts: self.update_opts.to_core()?,
+                preprocessing: self.preprocessing.to_core(),
+            },
+            opts: self.opts.to_core(),
+        })
+    }
+}
+
+/// Config for solving a dual-frequency wide-lane fixed baseline from RINEX OBS.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RinexWideLaneFixedBaselineConfigInput {
+    base_m: [f64; 3],
+    #[serde(default)]
+    arc_options: RinexDualArcOptionsInput,
+    #[serde(default)]
+    reference: ReferenceSelectionInput,
+    #[serde(default)]
+    model: Option<MeasModelInput>,
+    #[serde(default = "default_initial_baseline_m")]
+    initial_baseline_m: [f64; 3],
+    #[serde(default = "default_rinex_prior_sigma_m")]
+    baseline_prior_sigma_m: f64,
+    #[serde(default = "default_rinex_prior_sigma_m")]
+    ambiguity_prior_sigma_m: f64,
+    #[serde(default)]
+    apply_troposphere: Option<bool>,
+    #[serde(default)]
+    update_opts: UpdateOptsInput,
+    #[serde(default)]
+    opts: ValidatedFixedOptionsInput,
+}
+
+impl RinexWideLaneFixedBaselineConfigInput {
+    fn arc_options(&self) -> Result<RtkRinexDualArcOptions, JsValue> {
+        self.arc_options.to_core()
+    }
+
+    fn static_core(&self) -> Result<RtkStaticArcConfig, JsValue> {
+        Ok(RtkStaticArcConfig {
+            arc: RtkArcConfig {
+                base_m: self.base_m,
+                reference: BaselineReferenceSelection::Auto,
+                model: match &self.model {
+                    Some(model) => model.to_core()?,
+                    None => default_measurement_model(),
+                },
+                baseline_prior_sigma_m: self.baseline_prior_sigma_m,
+                ambiguity_prior_sigma_m: self.ambiguity_prior_sigma_m,
+                initial_baseline_m: self.initial_baseline_m,
+                wavelengths_m: BTreeMap::new(),
+                offsets_m: BTreeMap::new(),
+                update_opts: self.update_opts.to_core()?,
+                preprocessing: RtkArcPreprocessing::default(),
+            },
+            opts: self.opts.to_core(),
+        })
+    }
+
+    fn combined_core(&self) -> Result<RtkWideLaneFixedArcConfig, JsValue> {
+        Ok(RtkWideLaneFixedArcConfig {
+            wide_lane: RtkWideLaneArcConfig {
+                base_m: self.base_m,
+                reference: self.reference.to_core()?,
+                options: WideLaneOptions {
+                    min_epochs: 2,
+                    tolerance_cycles: 0.5,
+                    skip_short_fragments: false,
+                },
+                cycle_slip: Some(RtkDualCycleSlipConfig {
+                    policy: CycleSlipPolicy::DropSatellite,
+                    options: CycleSlipOptions::default(),
+                }),
+            },
+            ionosphere_free: RtkIonosphereFreeArcConfig {
+                base_m: self.base_m,
+                initial_baseline_m: self.initial_baseline_m,
+                reference: self.reference.to_core()?,
+                apply_troposphere: self.apply_troposphere.unwrap_or(true),
+            },
+            solve: sidereon_core::rtk_filter::RtkWideLaneFixedArcSolveConfig::Static(
+                self.static_core()?,
+            ),
+        })
+    }
+}
+
+fn default_initial_baseline_m() -> [f64; 3] {
+    [0.0; 3]
+}
+
+fn default_rinex_prior_sigma_m() -> f64 {
+    30.0
+}
 
 /// One raw single-frequency code/carrier observation at a receiver.
 #[derive(Deserialize)]
@@ -542,6 +849,15 @@ fn integer_status_label(status: IntegerStatus) -> &'static str {
     }
 }
 
+fn wide_lane_fixed_integer_method_label(method: RtkWideLaneFixedArcIntegerMethod) -> &'static str {
+    match method {
+        RtkWideLaneFixedArcIntegerMethod::WideLaneNarrowLaneLambda => "wideLaneNarrowLaneLambda",
+        RtkWideLaneFixedArcIntegerMethod::WideLaneNarrowLaneSequential => {
+            "wideLaneNarrowLaneSequential"
+        }
+    }
+}
+
 fn float_solve_status_label(status: FloatSolveStatus) -> &'static str {
     match status {
         FloatSolveStatus::StateTolerance => "StateTolerance",
@@ -1002,6 +1318,26 @@ impl From<&RtkArcEpoch> for ArcEpochObject {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct RinexArcObject {
+    epochs: Vec<ArcEpochObject>,
+    wavelengths_m: BTreeMap<String, f64>,
+    offsets_m: BTreeMap<String, f64>,
+    skipped_epoch_count: usize,
+}
+
+impl From<&RtkRinexArc> for RinexArcObject {
+    fn from(arc: &RtkRinexArc) -> Self {
+        Self {
+            epochs: arc.epochs.iter().map(ArcEpochObject::from).collect(),
+            wavelengths_m: arc.wavelengths_m.clone(),
+            offsets_m: arc.offsets_m.clone(),
+            skipped_epoch_count: arc.skipped_epoch_count,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DualFrequencyObservationObject {
     ambiguity_id: String,
     p1_m: f64,
@@ -1086,6 +1422,26 @@ impl From<&RtkDualFrequencyArcEpoch> for DualFrequencyArcEpochObject {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct RinexDualFrequencyArcObject {
+    epochs: Vec<DualFrequencyArcEpochObject>,
+    skipped_epoch_count: usize,
+}
+
+impl From<&RtkRinexDualFrequencyArc> for RinexDualFrequencyArcObject {
+    fn from(arc: &RtkRinexDualFrequencyArc) -> Self {
+        Self {
+            epochs: arc
+                .epochs
+                .iter()
+                .map(DualFrequencyArcEpochObject::from)
+                .collect(),
+            skipped_epoch_count: arc.skipped_epoch_count,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct WideLaneArcSolutionObject {
     geometry_quality: GeometryQualityJs,
     references: BTreeMap<String, String>,
@@ -1112,6 +1468,75 @@ impl From<&RtkWideLaneArcSolution> for WideLaneArcSolutionObject {
                 .iter()
                 .map(CycleSlipSplitArcObject::from)
                 .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WideLaneFixedArcMetadataObject {
+    integer_method: &'static str,
+    wide_lane_fixed: bool,
+    wide_lane_ambiguities_cycles: BTreeMap<String, i64>,
+    dropped_cycle_slip_sats: Vec<String>,
+    split_cycle_slip_arcs: Vec<CycleSlipSplitArcObject>,
+}
+
+impl From<&RtkWideLaneFixedArcMetadata> for WideLaneFixedArcMetadataObject {
+    fn from(m: &RtkWideLaneFixedArcMetadata) -> Self {
+        Self {
+            integer_method: wide_lane_fixed_integer_method_label(m.integer_method),
+            wide_lane_fixed: m.wide_lane_fixed,
+            wide_lane_ambiguities_cycles: m.wide_lane_ambiguities_cycles.clone(),
+            dropped_cycle_slip_sats: m.dropped_cycle_slip_sats.clone(),
+            split_cycle_slip_arcs: m
+                .split_cycle_slip_arcs
+                .iter()
+                .map(CycleSlipSplitArcObject::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WideLaneFixedStaticArcSolutionObject {
+    wide_lane: WideLaneArcSolutionObject,
+    ionosphere_free: IonosphereFreeArcSolutionObject,
+    solution: StaticArcSolutionObject,
+    metadata: WideLaneFixedArcMetadataObject,
+    float_baseline_m: [f64; 3],
+    fixed_baseline_m: [f64; 3],
+    integer_status: &'static str,
+    integer_ratio: Option<f64>,
+    wide_lane_fixed: bool,
+    wide_lane_ambiguities_cycles: BTreeMap<String, i64>,
+}
+
+impl From<&RtkWideLaneFixedStaticArcSolution> for WideLaneFixedStaticArcSolutionObject {
+    fn from(s: &RtkWideLaneFixedStaticArcSolution) -> Self {
+        Self {
+            wide_lane: WideLaneArcSolutionObject::from(&s.wide_lane),
+            ionosphere_free: IonosphereFreeArcSolutionObject::from(&s.ionosphere_free),
+            solution: StaticArcSolutionObject::from(&s.solution),
+            metadata: WideLaneFixedArcMetadataObject::from(&s.metadata),
+            float_baseline_m: s.solution.float_solution.baseline_m,
+            fixed_baseline_m: s.solution.fixed_solution.fixed_solution.baseline_m,
+            integer_status: integer_status_label(
+                s.solution
+                    .fixed_solution
+                    .fixed_solution
+                    .search
+                    .integer_status,
+            ),
+            integer_ratio: s
+                .solution
+                .fixed_solution
+                .fixed_solution
+                .search
+                .integer_ratio,
+            wide_lane_fixed: s.metadata.wide_lane_fixed,
+            wide_lane_ambiguities_cycles: s.metadata.wide_lane_ambiguities_cycles.clone(),
         }
     }
 }
@@ -1163,6 +1588,124 @@ impl From<&RtkArcSolution> for ArcSolutionObject {
             elevation_masked_sats: s.elevation_masked_sats.clone(),
             measurement_covariance: s.measurement_covariance.clone(),
         }
+    }
+}
+
+/// Build single-frequency RTK arc records from parsed RINEX OBS products.
+///
+/// `ephemeris` is an SP3 precise ephemeris handle, `baseObs` and `roverObs`
+/// are parsed RINEX observation files, and `options` may provide
+/// `{ signalPairs, maxEpochs, minCommonSatellites, includePredictionTime }`.
+/// Defaults build the GPS `C1C`/`L1C` arc used by the real WTZR/WTZZ fixtures.
+#[wasm_bindgen(js_name = buildRinexRtkArc)]
+pub fn build_rinex_rtk_arc_js(
+    ephemeris: &Sp3,
+    base_obs: &RinexObs,
+    rover_obs: &RinexObs,
+    options: Option<JsValue>,
+) -> Result<JsValue, JsValue> {
+    let options = match options {
+        Some(value) => rinex_arc_options_from_js(value)?,
+        None => RtkRinexArcOptions::gps_l1_c(),
+    };
+    let arc = build_rinex_rtk_arc(
+        &ephemeris.inner,
+        &base_obs.inner,
+        &rover_obs.inner,
+        &options,
+    )
+    .map_err(engine_error)?;
+
+    serialize_to_js(&RinexArcObject::from(&arc))
+}
+
+/// Build dual-frequency RTK arc records from parsed RINEX OBS products.
+///
+/// Defaults build the GPS `C1C`/`L1C` plus `C2W`/`L2W` arc used by the real
+/// WTZR/WTZZ fixtures.
+#[wasm_bindgen(js_name = buildDualFrequencyRinexRtkArc)]
+pub fn build_dual_frequency_rinex_rtk_arc_js(
+    ephemeris: &Sp3,
+    base_obs: &RinexObs,
+    rover_obs: &RinexObs,
+    options: Option<JsValue>,
+) -> Result<JsValue, JsValue> {
+    let options = match options {
+        Some(value) => rinex_dual_arc_options_from_js(value)?,
+        None => RtkRinexDualArcOptions::gps_l1_l2_cw(),
+    };
+    let arc = build_dual_frequency_rinex_rtk_arc(
+        &ephemeris.inner,
+        &base_obs.inner,
+        &rover_obs.inner,
+        &options,
+    )
+    .map_err(engine_error)?;
+
+    serialize_to_js(&RinexDualFrequencyArcObject::from(&arc))
+}
+
+/// Solve one static RTK baseline directly from paired RINEX OBS plus SP3.
+///
+/// `config.baseM` is the base antenna phase-center ECEF position in metres.
+/// Optional `config.arcOptions` controls RINEX signal extraction; other fields
+/// mirror `RtkStaticArcConfig` but the wavelength and offset maps are filled by
+/// the RINEX builder.
+#[wasm_bindgen(js_name = solveStaticRinexRtkBaseline)]
+pub fn solve_static_rinex_rtk_baseline_js(
+    ephemeris: &Sp3,
+    base_obs: &RinexObs,
+    rover_obs: &RinexObs,
+    config: JsValue,
+) -> Result<JsValue, JsValue> {
+    let cfg: RinexStaticBaselineConfigInput = serde_wasm_bindgen::from_value(config)
+        .map_err(|e| type_error(&format!("invalid static RINEX RTK config: {e}")))?;
+    let arc_options = cfg.arc_options()?;
+    let arc = build_rinex_rtk_arc(
+        &ephemeris.inner,
+        &base_obs.inner,
+        &rover_obs.inner,
+        &arc_options,
+    )
+    .map_err(engine_error)?;
+    let static_config = cfg.to_static_core(arc.wavelengths_m.clone(), arc.offsets_m.clone())?;
+    let solution = solve_static_rtk_arc(&arc.epochs, &static_config).map_err(engine_error)?;
+
+    serialize_to_js(&StaticArcSolutionObject::from(&solution))
+}
+
+/// Solve a static dual-frequency wide-lane fixed RTK baseline from RINEX OBS.
+///
+/// The function builds the dual-frequency RINEX arc, fixes wide-lane
+/// ambiguities, prepares ionosphere-free narrow-lane records, then runs the
+/// static fixed baseline solver.
+#[wasm_bindgen(js_name = solveWideLaneFixedRinexRtkBaseline)]
+pub fn solve_wide_lane_fixed_rinex_rtk_baseline_js(
+    ephemeris: &Sp3,
+    base_obs: &RinexObs,
+    rover_obs: &RinexObs,
+    config: JsValue,
+) -> Result<JsValue, JsValue> {
+    let cfg: RinexWideLaneFixedBaselineConfigInput = serde_wasm_bindgen::from_value(config)
+        .map_err(|e| type_error(&format!("invalid wide-lane fixed RINEX RTK config: {e}")))?;
+    let arc_options = cfg.arc_options()?;
+    let arc = build_dual_frequency_rinex_rtk_arc(
+        &ephemeris.inner,
+        &base_obs.inner,
+        &rover_obs.inner,
+        &arc_options,
+    )
+    .map_err(engine_error)?;
+    let solution =
+        solve_wide_lane_fixed_rtk_arc(&arc.epochs, &cfg.combined_core()?).map_err(engine_error)?;
+
+    match solution {
+        RtkWideLaneFixedArcSolution::Static(solution) => {
+            serialize_to_js(&WideLaneFixedStaticArcSolutionObject::from(&solution))
+        }
+        RtkWideLaneFixedArcSolution::Sequential(_) => Err(type_error(
+            "wide-lane RINEX convenience expected a static solution",
+        )),
     }
 }
 
