@@ -3,7 +3,6 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 
 import {
   simulateScenario,
@@ -13,7 +12,6 @@ import {
 import { f64Bits } from "./helpers.mjs";
 
 const eqBits = (value, hex) => assert.equal(f64Bits(value), BigInt(hex));
-const sha256 = (bytes) => createHash("sha256").update(Buffer.from(bytes)).digest("hex");
 
 const START = 820497600;
 const SATELLITES = [
