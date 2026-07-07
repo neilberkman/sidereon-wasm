@@ -15,6 +15,14 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::carrier_phase::CycleSlipOptions;
+use sidereon_core::frame::Wgs84Geodetic;
+use sidereon_core::positioning::{
+    solve_static_reference_station_rinex, RinexSppOptions, StaticReferenceCarrierRinexOptions,
+    StaticReferenceCarrierSolution, StaticReferenceCodeSolution, StaticReferenceEpochDiagnostic,
+    StaticReferenceFixStatus, StaticReferenceModeReport, StaticReferenceModeStatus,
+    StaticReferenceStationCovariance, StaticReferenceStationMode,
+    StaticReferenceStationRinexOptions, StaticReferenceStationSolution,
+};
 use sidereon_core::rtk::{
     BaselineReferenceSelection, CycleSlipPolicy, CycleSlipReceiver, CycleSlipSplitArc,
 };
@@ -253,6 +261,95 @@ impl RinexStaticBaselineConfigInput {
                 preprocessing: self.preprocessing.to_core(),
             },
             opts: self.opts.to_core(),
+        })
+    }
+}
+
+/// Config for solving a reference-station coordinate from paired RINEX OBS.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StaticReferenceStationConfigInput {
+    reference_position_m: [f64; 3],
+    #[serde(default)]
+    enable_code_dgnss: Option<bool>,
+    #[serde(default)]
+    enable_carrier_rtk: Option<bool>,
+    #[serde(default)]
+    with_geodetic: Option<bool>,
+    #[serde(default)]
+    carrier: StaticReferenceCarrierConfigInput,
+}
+
+impl StaticReferenceStationConfigInput {
+    fn code_enabled(&self) -> bool {
+        self.enable_code_dgnss.unwrap_or(true)
+    }
+
+    fn carrier_enabled(&self) -> bool {
+        self.enable_carrier_rtk.unwrap_or(true)
+    }
+
+    fn with_geodetic(&self) -> bool {
+        self.with_geodetic.unwrap_or(true)
+    }
+}
+
+/// Carrier-RTK portion of the static reference-station wrapper.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct StaticReferenceCarrierConfigInput {
+    arc_options: RinexArcOptionsInput,
+    reference: ReferenceSelectionInput,
+    model: Option<MeasModelInput>,
+    initial_baseline_m: [f64; 3],
+    baseline_prior_sigma_m: f64,
+    ambiguity_prior_sigma_m: f64,
+    update_opts: UpdateOptsInput,
+    preprocessing: ArcPreprocessingInput,
+    opts: ValidatedFixedOptionsInput,
+}
+
+impl Default for StaticReferenceCarrierConfigInput {
+    fn default() -> Self {
+        Self {
+            arc_options: RinexArcOptionsInput::default(),
+            reference: ReferenceSelectionInput::default(),
+            model: None,
+            initial_baseline_m: default_initial_baseline_m(),
+            baseline_prior_sigma_m: default_rinex_prior_sigma_m(),
+            ambiguity_prior_sigma_m: default_rinex_prior_sigma_m(),
+            update_opts: UpdateOptsInput::default(),
+            preprocessing: ArcPreprocessingInput::default(),
+            opts: ValidatedFixedOptionsInput::default(),
+        }
+    }
+}
+
+impl StaticReferenceCarrierConfigInput {
+    fn to_core(
+        &self,
+        reference_position_m: [f64; 3],
+    ) -> Result<StaticReferenceCarrierRinexOptions, JsValue> {
+        Ok(StaticReferenceCarrierRinexOptions {
+            arc_options: self.arc_options.to_core()?,
+            static_config: RtkStaticArcConfig {
+                arc: RtkArcConfig {
+                    base_m: reference_position_m,
+                    reference: self.reference.to_core()?,
+                    model: match &self.model {
+                        Some(model) => model.to_core()?,
+                        None => default_measurement_model(),
+                    },
+                    baseline_prior_sigma_m: self.baseline_prior_sigma_m,
+                    ambiguity_prior_sigma_m: self.ambiguity_prior_sigma_m,
+                    initial_baseline_m: self.initial_baseline_m,
+                    wavelengths_m: BTreeMap::new(),
+                    offsets_m: BTreeMap::new(),
+                    update_opts: self.update_opts.to_core()?,
+                    preprocessing: self.preprocessing.to_core(),
+                },
+                opts: self.opts.to_core(),
+            },
         })
     }
 }
@@ -872,10 +969,227 @@ fn residual_component_label(kind: ResidualComponentKind) -> &'static str {
     }
 }
 
+fn static_reference_mode_label(mode: StaticReferenceStationMode) -> &'static str {
+    match mode {
+        StaticReferenceStationMode::CodeDgnss => "codeDgnss",
+        StaticReferenceStationMode::CarrierFloat => "carrierFloat",
+        StaticReferenceStationMode::CarrierFixed => "carrierFixed",
+    }
+}
+
+fn static_reference_fix_status_label(status: StaticReferenceFixStatus) -> &'static str {
+    match status {
+        StaticReferenceFixStatus::CodeDgnss => "codeDgnss",
+        StaticReferenceFixStatus::CarrierFloat => "carrierFloat",
+        StaticReferenceFixStatus::CarrierFixed => "carrierFixed",
+    }
+}
+
+fn static_reference_mode_status_label(status: StaticReferenceModeStatus) -> &'static str {
+    match status {
+        StaticReferenceModeStatus::Solved => "solved",
+        StaticReferenceModeStatus::Failed => "failed",
+    }
+}
+
 fn serialize_to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     value
         .serialize(&serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true))
         .map_err(|e| type_error(&e.to_string()))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GeodeticObject {
+    lat_rad: f64,
+    lon_rad: f64,
+    height_m: f64,
+}
+
+impl From<Wgs84Geodetic> for GeodeticObject {
+    fn from(value: Wgs84Geodetic) -> Self {
+        Self {
+            lat_rad: value.lat_rad,
+            lon_rad: value.lon_rad,
+            height_m: value.height_m,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StaticReferenceCovarianceObject {
+    position_ecef_m2: [[f64; 3]; 3],
+    position_enu_m2: [[f64; 3]; 3],
+}
+
+impl From<StaticReferenceStationCovariance> for StaticReferenceCovarianceObject {
+    fn from(value: StaticReferenceStationCovariance) -> Self {
+        Self {
+            position_ecef_m2: value.position_ecef_m2,
+            position_enu_m2: value.position_enu_m2,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StaticReferenceEpochDiagnosticObject {
+    mode: &'static str,
+    epoch_index: usize,
+    used_satellites: Vec<String>,
+    rejected_satellite_count: usize,
+    code_residual_rms_m: Option<f64>,
+    phase_residual_rms_m: Option<f64>,
+    residual_rms_m: Option<f64>,
+}
+
+impl From<&StaticReferenceEpochDiagnostic> for StaticReferenceEpochDiagnosticObject {
+    fn from(value: &StaticReferenceEpochDiagnostic) -> Self {
+        Self {
+            mode: static_reference_mode_label(value.mode),
+            epoch_index: value.epoch_index,
+            used_satellites: value.used_satellites.clone(),
+            rejected_satellite_count: value.rejected_satellite_count,
+            code_residual_rms_m: value.code_residual_rms_m,
+            phase_residual_rms_m: value.phase_residual_rms_m,
+            residual_rms_m: value.residual_rms_m,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StaticReferenceModeReportObject {
+    mode: &'static str,
+    status: &'static str,
+    used_epochs: usize,
+    skipped_epochs: usize,
+    used_measurements: usize,
+    error: Option<String>,
+}
+
+impl From<&StaticReferenceModeReport> for StaticReferenceModeReportObject {
+    fn from(value: &StaticReferenceModeReport) -> Self {
+        Self {
+            mode: static_reference_mode_label(value.mode),
+            status: static_reference_mode_status_label(value.status),
+            used_epochs: value.used_epochs,
+            skipped_epochs: value.skipped_epochs,
+            used_measurements: value.used_measurements,
+            error: value.error.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StaticReferenceCodeSolutionObject {
+    position_m: [f64; 3],
+    geodetic: Option<GeodeticObject>,
+    covariance: StaticReferenceCovarianceObject,
+    baseline_vector_m: [f64; 3],
+    baseline_m: f64,
+    diagnostics: Vec<StaticReferenceEpochDiagnosticObject>,
+}
+
+impl From<&StaticReferenceCodeSolution> for StaticReferenceCodeSolutionObject {
+    fn from(value: &StaticReferenceCodeSolution) -> Self {
+        Self {
+            position_m: value.position.as_array(),
+            geodetic: value.geodetic.map(GeodeticObject::from),
+            covariance: value.covariance.into(),
+            baseline_vector_m: value.baseline_vector_m,
+            baseline_m: value.baseline_m,
+            diagnostics: value
+                .diagnostics
+                .iter()
+                .map(StaticReferenceEpochDiagnosticObject::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StaticReferenceCarrierSolutionObject {
+    position_m: [f64; 3],
+    geodetic: Option<GeodeticObject>,
+    covariance: StaticReferenceCovarianceObject,
+    baseline_vector_m: [f64; 3],
+    baseline_m: f64,
+    integer_status: &'static str,
+    integer_ratio: Option<f64>,
+    rtk_solution: StaticArcSolutionObject,
+    diagnostics: Vec<StaticReferenceEpochDiagnosticObject>,
+}
+
+impl From<&StaticReferenceCarrierSolution> for StaticReferenceCarrierSolutionObject {
+    fn from(value: &StaticReferenceCarrierSolution) -> Self {
+        Self {
+            position_m: value.position.as_array(),
+            geodetic: value.geodetic.map(GeodeticObject::from),
+            covariance: value.covariance.into(),
+            baseline_vector_m: value.baseline_vector_m,
+            baseline_m: value.baseline_m,
+            integer_status: integer_status_label(value.integer_status),
+            integer_ratio: value.integer_ratio,
+            rtk_solution: StaticArcSolutionObject::from(&value.rtk_solution),
+            diagnostics: value
+                .diagnostics
+                .iter()
+                .map(StaticReferenceEpochDiagnosticObject::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StaticReferenceStationSolutionObject {
+    mode: &'static str,
+    fix_status: &'static str,
+    position_m: [f64; 3],
+    geodetic: Option<GeodeticObject>,
+    covariance: StaticReferenceCovarianceObject,
+    baseline_vector_m: [f64; 3],
+    baseline_m: f64,
+    code_solution: Option<StaticReferenceCodeSolutionObject>,
+    carrier_solution: Option<StaticReferenceCarrierSolutionObject>,
+    mode_reports: Vec<StaticReferenceModeReportObject>,
+    diagnostics: Vec<StaticReferenceEpochDiagnosticObject>,
+}
+
+impl From<&StaticReferenceStationSolution> for StaticReferenceStationSolutionObject {
+    fn from(value: &StaticReferenceStationSolution) -> Self {
+        Self {
+            mode: static_reference_mode_label(value.mode),
+            fix_status: static_reference_fix_status_label(value.fix_status),
+            position_m: value.position.as_array(),
+            geodetic: value.geodetic.map(GeodeticObject::from),
+            covariance: value.covariance.into(),
+            baseline_vector_m: value.baseline_vector_m,
+            baseline_m: value.baseline_m,
+            code_solution: value
+                .code_solution
+                .as_ref()
+                .map(StaticReferenceCodeSolutionObject::from),
+            carrier_solution: value
+                .carrier_solution
+                .as_ref()
+                .map(StaticReferenceCarrierSolutionObject::from),
+            mode_reports: value
+                .mode_reports
+                .iter()
+                .map(StaticReferenceModeReportObject::from)
+                .collect(),
+            diagnostics: value
+                .diagnostics
+                .iter()
+                .map(StaticReferenceEpochDiagnosticObject::from)
+                .collect(),
+        }
+    }
 }
 
 /// Scalar summary of one epoch's integer search (the heavy LAMBDA covariance
@@ -1672,6 +1986,43 @@ pub fn solve_static_rinex_rtk_baseline_js(
     let solution = solve_static_rtk_arc(&arc.epochs, &static_config).map_err(engine_error)?;
 
     serialize_to_js(&StaticArcSolutionObject::from(&solution))
+}
+
+/// Solve one static reference-station coordinate from paired RINEX OBS plus SP3.
+#[wasm_bindgen(js_name = solveStaticReferenceStationRinex)]
+pub fn solve_static_reference_station_rinex_js(
+    ephemeris: &Sp3,
+    reference_obs: &RinexObs,
+    rover_obs: &RinexObs,
+    config: JsValue,
+) -> Result<JsValue, JsValue> {
+    let cfg: StaticReferenceStationConfigInput = serde_wasm_bindgen::from_value(config)
+        .map_err(|e| type_error(&format!("invalid static reference-station config: {e}")))?;
+    let code_options = if cfg.code_enabled() {
+        Some(RinexSppOptions::default_for(&rover_obs.inner).map_err(engine_error)?)
+    } else {
+        None
+    };
+    let carrier_options = if cfg.carrier_enabled() {
+        Some(cfg.carrier.to_core(cfg.reference_position_m)?)
+    } else {
+        None
+    };
+    let options = StaticReferenceStationRinexOptions {
+        code_options,
+        carrier_options,
+        with_geodetic: cfg.with_geodetic(),
+    };
+    let solution = solve_static_reference_station_rinex(
+        &ephemeris.inner,
+        &reference_obs.inner,
+        &rover_obs.inner,
+        cfg.reference_position_m,
+        &options,
+    )
+    .map_err(engine_error)?;
+
+    serialize_to_js(&StaticReferenceStationSolutionObject::from(&solution))
 }
 
 /// Solve a static dual-frequency wide-lane fixed RTK baseline from RINEX OBS.
