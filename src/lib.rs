@@ -315,8 +315,9 @@ pub use rtcm::{
 };
 pub use rtk::{solve_rtk_fixed, solve_rtk_float, RtkFixedSolution, RtkFloatSolution};
 pub use rtk_arc::{
-    fix_wide_lane_rtk_arc_js, prepare_ionosphere_free_rtk_arc_js, solve_rtk_arc_js,
-    solve_static_rtk_arc_js,
+    build_dual_frequency_rinex_rtk_arc_js, build_rinex_rtk_arc_js, fix_wide_lane_rtk_arc_js,
+    prepare_ionosphere_free_rtk_arc_js, solve_rtk_arc_js, solve_static_rinex_rtk_baseline_js,
+    solve_static_rtk_arc_js, solve_wide_lane_fixed_rinex_rtk_baseline_js,
 };
 pub use sbas::{
     decode_sbas_message, sat_to_sbas_prn, sbas_corrected_state, sbas_prn_to_sat, solve_spp_sbas,
