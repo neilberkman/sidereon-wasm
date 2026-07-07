@@ -11,7 +11,8 @@ use wasm_bindgen::prelude::*;
 use sidereon_core::astro::time::{Instant, InstantRepr};
 use sidereon_core::constants::{J2000_JD, SECONDS_PER_DAY};
 use sidereon_core::ephemeris::{
-    merge, AgreementMetric, MergeCombine, MergeFlag, MergeOptions, MergeReport,
+    merge, AgreementMetric, MergeCombine, MergeFlag, MergeOptions, MergeReport, Sp3FrameLabelSet,
+    Sp3FrameReconciliation,
 };
 use sidereon_core::GnssSystem;
 
@@ -30,6 +31,8 @@ struct MergeOptionsInput {
     combine: Option<String>,
     target_epoch_interval_s: Option<f64>,
     systems: Option<Vec<String>>,
+    asserted_frame_label_sets: Option<Vec<Vec<String>>>,
+    helmert: Option<bool>,
 }
 
 fn combine_kind(label: &str) -> Result<MergeCombine, JsValue> {
@@ -108,8 +111,43 @@ impl MergeOptionsInput {
                 .collect::<Result<BTreeSet<_>, JsValue>>()?;
             opts.systems = Some(set);
         }
+        if let Some(label_sets) = &self.asserted_frame_label_sets {
+            opts.frame_reconciliation.asserted_equivalent_label_sets =
+                parse_asserted_frame_label_sets(label_sets)?;
+        }
+        opts.frame_reconciliation.helmert = self.helmert.unwrap_or(false);
         Ok(opts)
     }
+}
+
+fn parse_asserted_frame_label_sets(
+    values: &[Vec<String>],
+) -> Result<Vec<Sp3FrameLabelSet>, JsValue> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(idx, labels)| {
+            if labels.len() < 2 {
+                return Err(type_error(&format!(
+                    "assertedFrameLabelSets[{idx}] must contain at least two labels"
+                )));
+            }
+            let trimmed = labels
+                .iter()
+                .map(|label| {
+                    let trimmed = label.trim().to_string();
+                    if trimmed.is_empty() {
+                        Err(type_error(&format!(
+                            "assertedFrameLabelSets[{idx}] contains an empty label"
+                        )))
+                    } else {
+                        Ok(trimmed)
+                    }
+                })
+                .collect::<Result<Vec<_>, JsValue>>()?;
+            Ok(Sp3FrameLabelSet::new(trimmed))
+        })
+        .collect()
 }
 
 fn instant_to_j2000_seconds(epoch: &Instant) -> f64 {
@@ -300,10 +338,217 @@ impl From<AgreementMetric> for Sp3AgreementMetric {
     }
 }
 
+/// One coordinate-label reconciliation applied before SP3 merge consensus.
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct Sp3FrameReconciliationReport {
+    source_index: usize,
+    source_label: String,
+    target_label: String,
+    method: String,
+    asserted_label_set: Vec<String>,
+    source_frame: Option<String>,
+    target_frame: Option<String>,
+    catalog_source_frame: Option<String>,
+    catalog_target_frame: Option<String>,
+    catalog_inverse: bool,
+    reference_epoch_year: Option<f64>,
+    translation_mm: Vec<f64>,
+    scale_ppb: Option<f64>,
+    rotation_mas: Vec<f64>,
+    translation_mm_per_year: Vec<f64>,
+    scale_ppb_per_year: Option<f64>,
+    rotation_mas_per_year: Vec<f64>,
+    provenance: Option<String>,
+    epoch_year_span: Vec<f64>,
+    records_affected: usize,
+    identity: bool,
+}
+
+#[wasm_bindgen]
+impl Sp3FrameReconciliationReport {
+    /// Source index in the mergeSp3 input array.
+    #[wasm_bindgen(getter, js_name = sourceIndex)]
+    pub fn source_index(&self) -> usize {
+        self.source_index
+    }
+
+    /// Original coordinate-system label on that source.
+    #[wasm_bindgen(getter, js_name = sourceLabel)]
+    pub fn source_label(&self) -> String {
+        self.source_label.clone()
+    }
+
+    /// Target coordinate-system label, taken from source 0.
+    #[wasm_bindgen(getter, js_name = targetLabel)]
+    pub fn target_label(&self) -> String {
+        self.target_label.clone()
+    }
+
+    /// Reconciliation mechanism: "asserted_equivalence" or "helmert".
+    #[wasm_bindgen(getter)]
+    pub fn method(&self) -> String {
+        self.method.clone()
+    }
+
+    /// Caller assertion set, empty unless assertion reconciliation was used.
+    #[wasm_bindgen(getter, js_name = assertedLabelSet)]
+    pub fn asserted_label_set(&self) -> Vec<String> {
+        self.asserted_label_set.clone()
+    }
+
+    /// Resolved source terrestrial frame for Helmert reconciliation.
+    #[wasm_bindgen(getter, js_name = sourceFrame)]
+    pub fn source_frame(&self) -> Option<String> {
+        self.source_frame.clone()
+    }
+
+    /// Resolved target terrestrial frame for Helmert reconciliation.
+    #[wasm_bindgen(getter, js_name = targetFrame)]
+    pub fn target_frame(&self) -> Option<String> {
+        self.target_frame.clone()
+    }
+
+    /// Source frame of the published catalog row used for Helmert reconciliation.
+    #[wasm_bindgen(getter, js_name = catalogSourceFrame)]
+    pub fn catalog_source_frame(&self) -> Option<String> {
+        self.catalog_source_frame.clone()
+    }
+
+    /// Target frame of the published catalog row used for Helmert reconciliation.
+    #[wasm_bindgen(getter, js_name = catalogTargetFrame)]
+    pub fn catalog_target_frame(&self) -> Option<String> {
+        self.catalog_target_frame.clone()
+    }
+
+    /// True when the published catalog row was applied in reverse.
+    #[wasm_bindgen(getter, js_name = catalogInverse)]
+    pub fn catalog_inverse(&self) -> bool {
+        self.catalog_inverse
+    }
+
+    /// Published transform reference epoch, if a catalog entry was used.
+    #[wasm_bindgen(getter, js_name = referenceEpochYear)]
+    pub fn reference_epoch_year(&self) -> Option<f64> {
+        self.reference_epoch_year
+    }
+
+    /// Translation parameters in millimetres, empty for non-catalog identity.
+    #[wasm_bindgen(getter, js_name = translationMm)]
+    pub fn translation_mm(&self) -> Vec<f64> {
+        self.translation_mm.clone()
+    }
+
+    /// Scale parameter in parts per billion, undefined for non-catalog identity.
+    #[wasm_bindgen(getter, js_name = scalePpb)]
+    pub fn scale_ppb(&self) -> Option<f64> {
+        self.scale_ppb
+    }
+
+    /// Rotation parameters in milliarcseconds, empty for non-catalog identity.
+    #[wasm_bindgen(getter, js_name = rotationMas)]
+    pub fn rotation_mas(&self) -> Vec<f64> {
+        self.rotation_mas.clone()
+    }
+
+    /// Translation rates in millimetres per year.
+    #[wasm_bindgen(getter, js_name = translationMmPerYear)]
+    pub fn translation_mm_per_year(&self) -> Vec<f64> {
+        self.translation_mm_per_year.clone()
+    }
+
+    /// Scale rate in parts per billion per year.
+    #[wasm_bindgen(getter, js_name = scalePpbPerYear)]
+    pub fn scale_ppb_per_year(&self) -> Option<f64> {
+        self.scale_ppb_per_year
+    }
+
+    /// Rotation rates in milliarcseconds per year.
+    #[wasm_bindgen(getter, js_name = rotationMasPerYear)]
+    pub fn rotation_mas_per_year(&self) -> Vec<f64> {
+        self.rotation_mas_per_year.clone()
+    }
+
+    /// Published-table provenance for the catalog entry.
+    #[wasm_bindgen(getter)]
+    pub fn provenance(&self) -> Option<String> {
+        self.provenance.clone()
+    }
+
+    /// Inclusive decimal-year span of affected records.
+    #[wasm_bindgen(getter, js_name = epochYearSpan)]
+    pub fn epoch_year_span(&self) -> Vec<f64> {
+        self.epoch_year_span.clone()
+    }
+
+    /// Number of satellite position records covered by the reconciliation.
+    #[wasm_bindgen(getter, js_name = recordsAffected)]
+    pub fn records_affected(&self) -> usize {
+        self.records_affected
+    }
+
+    /// True when both labels resolved to the same terrestrial realization.
+    #[wasm_bindgen(getter)]
+    pub fn identity(&self) -> bool {
+        self.identity
+    }
+}
+
+impl From<Sp3FrameReconciliation> for Sp3FrameReconciliationReport {
+    fn from(value: Sp3FrameReconciliation) -> Self {
+        Self {
+            source_index: value.source_index,
+            source_label: value.source_label,
+            target_label: value.target_label,
+            method: match value.method {
+                sidereon_core::ephemeris::Sp3FrameReconciliationMethod::AssertedEquivalence => {
+                    "asserted_equivalence".to_string()
+                }
+                sidereon_core::ephemeris::Sp3FrameReconciliationMethod::Helmert => {
+                    "helmert".to_string()
+                }
+            },
+            asserted_label_set: value.asserted_label_set.unwrap_or_default(),
+            source_frame: value.source_frame.map(|frame| frame.to_string()),
+            target_frame: value.target_frame.map(|frame| frame.to_string()),
+            catalog_source_frame: value.catalog_source_frame.map(|frame| frame.to_string()),
+            catalog_target_frame: value.catalog_target_frame.map(|frame| frame.to_string()),
+            catalog_inverse: value.catalog_inverse,
+            reference_epoch_year: value.reference_epoch_year,
+            translation_mm: value
+                .parameters
+                .map(|parameters| parameters.translation_mm.to_vec())
+                .unwrap_or_default(),
+            scale_ppb: value.parameters.map(|parameters| parameters.scale_ppb),
+            rotation_mas: value
+                .parameters
+                .map(|parameters| parameters.rotation_mas.to_vec())
+                .unwrap_or_default(),
+            translation_mm_per_year: value
+                .rates
+                .map(|rates| rates.translation_mm_per_year.to_vec())
+                .unwrap_or_default(),
+            scale_ppb_per_year: value.rates.map(|rates| rates.scale_ppb_per_year),
+            rotation_mas_per_year: value
+                .rates
+                .map(|rates| rates.rotation_mas_per_year.to_vec())
+                .unwrap_or_default(),
+            provenance: value.provenance,
+            epoch_year_span: value
+                .epoch_year_span
+                .map(|span| span.to_vec())
+                .unwrap_or_default(),
+            records_affected: value.records_affected,
+            identity: value.identity,
+        }
+    }
+}
+
 /// Audit report returned with a merged SP3 product.
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct Sp3MergeReport {
+    frame_reconciliations: Vec<Sp3FrameReconciliationReport>,
     quarantined: Vec<Sp3MergeFlag>,
     single_source: Vec<Sp3MergeFlag>,
     position_outliers: Vec<Sp3MergeFlag>,
@@ -312,6 +557,17 @@ pub struct Sp3MergeReport {
 
 #[wasm_bindgen]
 impl Sp3MergeReport {
+    /// Coordinate-label reconciliations applied before consensus.
+    #[wasm_bindgen(getter, js_name = frameReconciliations)]
+    pub fn frame_reconciliations(&self) -> Vec<Sp3FrameReconciliationReport> {
+        self.frame_reconciliations.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = frameReconciliationCount)]
+    pub fn frame_reconciliation_count(&self) -> usize {
+        self.frame_reconciliations.len()
+    }
+
     /// Cells omitted because sources disagreed beyond tolerance.
     #[wasm_bindgen(getter)]
     pub fn quarantined(&self) -> Vec<Sp3MergeFlag> {
@@ -362,6 +618,11 @@ impl Sp3MergeReport {
 impl From<MergeReport> for Sp3MergeReport {
     fn from(value: MergeReport) -> Self {
         Self {
+            frame_reconciliations: value
+                .frame_reconciliations
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             quarantined: value.quarantined.into_iter().map(Into::into).collect(),
             single_source: value.single_source.into_iter().map(Into::into).collect(),
             position_outliers: value
