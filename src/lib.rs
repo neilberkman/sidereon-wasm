@@ -194,8 +194,8 @@ pub use frames::{
     GnssWeekTow, Instant, JulianDate, LeapSecondTable, TimeScale, Ut1Coverage,
 };
 pub use fusion::{
-    fusion_state_bytes_round_trip, smooth_fusion_rts, FusionRtsHistory, FusionRtsHistoryBuilder,
-    GnssInsFilter, SmoothedFusionTrajectory,
+    fusion_state_bytes_round_trip, smooth_fusion_rts, velocity_match_outage, FusionRtsHistory,
+    FusionRtsHistoryBuilder, GnssInsFilter, SmoothedFusionTrajectory,
 };
 pub use geodesic::{geodesic_direct, geodesic_error_label, geodesic_inverse, GeodesicError};
 pub use geodetic_time_series::{detect_steps, fit_trajectory, network_field, velocity_midas};
@@ -316,8 +316,9 @@ pub use rtcm::{
 pub use rtk::{solve_rtk_fixed, solve_rtk_float, RtkFixedSolution, RtkFloatSolution};
 pub use rtk_arc::{
     build_dual_frequency_rinex_rtk_arc_js, build_rinex_rtk_arc_js, fix_wide_lane_rtk_arc_js,
-    prepare_ionosphere_free_rtk_arc_js, solve_rtk_arc_js, solve_static_rinex_rtk_baseline_js,
-    solve_static_rtk_arc_js, solve_wide_lane_fixed_rinex_rtk_baseline_js,
+    prepare_ionosphere_free_rtk_arc_js, solve_rtk_arc_js, solve_static_reference_station_rinex_js,
+    solve_static_rinex_rtk_baseline_js, solve_static_rtk_arc_js,
+    solve_wide_lane_fixed_rinex_rtk_baseline_js,
 };
 pub use sbas::{
     decode_sbas_message, sat_to_sbas_prn, sbas_corrected_state, sbas_prn_to_sat, solve_spp_sbas,

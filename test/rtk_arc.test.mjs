@@ -16,11 +16,12 @@ import {
   parseRinexObs,
   prepareIonosphereFreeRtkArc,
   solveRtkArc,
+  solveStaticReferenceStationRinex,
   solveStaticRinexRtkBaseline,
   solveStaticRtkArc,
   solveWideLaneFixedRinexRtkBaseline,
 } from "../pkg-node/sidereon.js";
-import { fixture, fixtureJson, norm } from "./helpers.mjs";
+import { f64Bits, fixture, fixtureJson, norm } from "./helpers.mjs";
 
 // GPS L1 wavelength (metres) the fixture's ambiguities use.
 const L1_WAVELENGTH_M = 0.19029367279836487;
@@ -440,6 +441,64 @@ test("buildRinexRtkArc and solveStaticRinexRtkBaseline solve the real WTZR/WTZZ 
   assert.equal(fixed.search.integerStatus, "NotFixed");
   assert.ok(fixed.search.integerRatio < 3.0);
   assert.ok(vectorErrorM(fixed.baselineM, truthBaselineM) < 0.01);
+});
+
+test("solveStaticReferenceStationRinex solves the real WTZR/WTZZ static coordinate", () => {
+  const { sp3, baseObs, roverObs, baseArpM, truthBaselineM } = wettzellRinexInputs();
+  const maxEpochs = 24;
+  const sol = solveStaticReferenceStationRinex(sp3, baseObs, roverObs, {
+    referencePositionM: baseArpM,
+    enableCodeDgnss: false,
+    enableCarrierRtk: true,
+    withGeodetic: true,
+    carrier: {
+      arcOptions: { maxEpochs, includePredictionTime: false },
+      model: realArcModel,
+      preprocessing: { cycleSlip: "splitArc" },
+      opts: {
+        float: realArcSolveOptions,
+        fixed: {
+          ...realArcSolveOptions,
+          ratioThreshold: 3.0,
+          partialAmbiguityResolution: true,
+          partialMinAmbiguities: 4,
+        },
+      },
+    },
+  });
+
+  assert.equal(sol.mode, "carrierFixed");
+  assert.equal(sol.fixStatus, "carrierFixed");
+  assert.equal(sol.carrierSolution.integerStatus, "Fixed");
+  assert.equal(sol.diagnostics.length, maxEpochs);
+  assert.equal(sol.carrierSolution.diagnostics.length, maxEpochs);
+  assert.equal(sol.modeReports.length, 1);
+  assert.equal(sol.modeReports[0].mode, "carrierFixed");
+  assert.equal(sol.modeReports[0].status, "solved");
+  assert.equal(sol.modeReports[0].usedEpochs, maxEpochs);
+  assert.equal(sol.modeReports[0].skippedEpochs, 0);
+  assert.equal(sol.modeReports[0].usedMeasurements, 432);
+  assert.ok(vectorErrorM(sol.baselineVectorM, truthBaselineM) < 0.005);
+  assert.ok(sol.carrierSolution.integerRatio > 3.0);
+  assert.deepEqual(sol.positionM.map(f64Bits), [
+    0x414f181daf5efc9bn,
+    0x412c701ad3584625n,
+    0x4152510859bc4563n,
+  ]);
+  assert.deepEqual(sol.baselineVectorM.map(f64Bits), [
+    0xbfef911d96f93d53n,
+    0xbfe4dc7081330552n,
+    0x3ff1159562cca4a5n,
+  ]);
+  assert.deepEqual(
+    sol.covariance.positionEcefM2.map((row) => row.map(f64Bits)),
+    [
+      [0x3f04acaf48e915f5n, 0x3edf5da71e914413n, 0x3ef32e401d0c7caen],
+      [0x3edf5da71e914413n, 0x3eec4a84fc5f2788n, 0x3ed882c671817361n],
+      [0x3ef32e401d0c7cadn, 0x3ed882c671817361n, 0x3f08fce97d368dedn],
+    ],
+  );
+  assert.deepEqual(sol.geodetic.heightM, 666.1751900247245);
 });
 
 test("buildDualFrequencyRinexRtkArc and solveWideLaneFixedRinexRtkBaseline fix the real WTZR/WTZZ arc", () => {

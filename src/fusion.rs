@@ -80,6 +80,15 @@ fn parse_filter_kind(value: Option<&str>) -> Result<core_fusion::FusionFilterKin
     }
 }
 
+fn parse_fix_status(value: Option<&str>) -> Result<core_fusion::GnssFixStatus, JsValue> {
+    match value.unwrap_or("single") {
+        "single" | "Single" => Ok(core_fusion::GnssFixStatus::Single),
+        "float" | "Float" => Ok(core_fusion::GnssFixStatus::Float),
+        "fixed" | "Fixed" => Ok(core_fusion::GnssFixStatus::Fixed),
+        other => Err(type_error(&format!("invalid GNSS fix status {other:?}"))),
+    }
+}
+
 fn parse_imu_grade(value: &str) -> Result<core_inertial::ImuGrade, JsValue> {
     match value {
         "mems" | "Mems" | "MEMS" => Ok(core_inertial::ImuGrade::Mems),
@@ -213,6 +222,19 @@ fn parse_loose_config(
             config.lever_arm_body_m = vec3("loose.leverArmBodyM", &lever)?;
         }
         config.update_options = parse_update_options(input.update_options)?;
+        if let Some(weighting) = input.fix_status_weighting {
+            config.fix_status_weighting = core_fusion::GnssFixStatusWeighting {
+                single_sigma_multiplier: weighting
+                    .single_sigma_multiplier
+                    .unwrap_or(config.fix_status_weighting.single_sigma_multiplier),
+                float_sigma_multiplier: weighting
+                    .float_sigma_multiplier
+                    .unwrap_or(config.fix_status_weighting.float_sigma_multiplier),
+                fixed_sigma_multiplier: weighting
+                    .fixed_sigma_multiplier
+                    .unwrap_or(config.fix_status_weighting.fixed_sigma_multiplier),
+            };
+        }
         if let Some(reweighting) = input.measurement_reweighting {
             let standard = core_fusion::IggIiiMeasurementReweighting::standard();
             config.measurement_reweighting = Some(core_fusion::IggIiiMeasurementReweighting {
@@ -229,7 +251,31 @@ fn parse_loose_config(
                     .unwrap_or(standard.outlier_gate_probability),
             });
         }
+        if let Some(stationary) = input.stationary_updates {
+            config.stationary_updates = Some(core_fusion::StationaryUpdateConfig {
+                detector: core_fusion::StationaryDetectorConfig {
+                    window_len: stationary.detector.window_len,
+                    max_specific_force_norm_error_mps2: stationary
+                        .detector
+                        .max_specific_force_norm_error_mps2,
+                    max_body_rate_wrt_ecef_norm_rps: stationary
+                        .detector
+                        .max_body_rate_wrt_ecef_norm_rps,
+                },
+                zero_velocity_sigma_mps: stationary.zero_velocity_sigma_mps,
+                zero_angular_rate_sigma_rps: stationary.zero_angular_rate_sigma_rps,
+            });
+        }
+        if let Some(nhc) = input.non_holonomic {
+            config.non_holonomic = Some(core_fusion::NonHolonomicConstraintConfig {
+                lateral_velocity_sigma_mps: nhc.lateral_velocity_sigma_mps,
+                vertical_velocity_sigma_mps: nhc.vertical_velocity_sigma_mps,
+                min_speed_mps: nhc.min_speed_mps,
+                max_body_rate_wrt_ecef_norm_rps: nhc.max_body_rate_wrt_ecef_norm_rps,
+            });
+        }
     }
+    config.validate().map_err(fusion_error)?;
     Ok(config)
 }
 
@@ -319,6 +365,9 @@ fn build_filter(config: JsValue) -> Result<core_fusion::InertialFilter, JsValue>
         .map_err(fusion_error)?;
     core_config.filter_kind = parse_filter_kind(input.filter_kind.as_deref())?;
     core_config.imu_model = parse_imu_error_model(input.imu_model)?;
+    if let Some(imu_to_body_dcm) = input.imu_to_body_dcm {
+        core_config.imu_to_body_dcm = mat3_flat("imuToBodyDcm", &imu_to_body_dcm)?;
+    }
     core_config.mechanization = parse_mechanization(input.mechanization)?;
     core_config.loose = parse_loose_config(input.loose)?;
     core_config.tight = parse_tight_config(input.tight)?;
@@ -392,6 +441,7 @@ fn parse_loose_measurement(value: JsValue) -> Result<core_fusion::GnssFixMeasure
         covariance: input.covariance,
         satellites_used: input.satellites_used,
         solution_valid: input.solution_valid.unwrap_or(true),
+        fix_status: parse_fix_status(input.fix_status.as_deref())?,
     };
     measurement.validate().map_err(fusion_error)?;
     Ok(measurement)
@@ -610,6 +660,46 @@ impl GnssInsFilter {
             .update_loose_time_sync(&parse_loose_measurement(measurement)?)
             .map_err(fusion_error)?;
         to_js(&TimeSyncUpdateJs::from(update))
+    }
+
+    /// Apply a gated zero-velocity and zero-angular-rate update.
+    #[wasm_bindgen(js_name = updateStationary)]
+    pub fn update_stationary(&mut self) -> Result<JsValue, JsValue> {
+        let update = self.inner.update_stationary().map_err(fusion_error)?;
+        to_js(&update.map(update_js))
+    }
+
+    /// Apply a stationary update and record checkpoints when an update applies.
+    #[wasm_bindgen(js_name = updateStationaryRecorded)]
+    pub fn update_stationary_recorded(
+        &mut self,
+        history: &mut FusionRtsHistoryBuilder,
+    ) -> Result<JsValue, JsValue> {
+        let update = self
+            .inner
+            .update_stationary_recorded(&mut history.inner)
+            .map_err(fusion_error)?;
+        to_js(&update.map(update_js))
+    }
+
+    /// Apply a gated wheeled-vehicle non-holonomic constraint update.
+    #[wasm_bindgen(js_name = updateNonHolonomic)]
+    pub fn update_non_holonomic(&mut self) -> Result<JsValue, JsValue> {
+        let update = self.inner.update_non_holonomic().map_err(fusion_error)?;
+        to_js(&update.map(update_js))
+    }
+
+    /// Apply a non-holonomic constraint and record checkpoints when an update applies.
+    #[wasm_bindgen(js_name = updateNonHolonomicRecorded)]
+    pub fn update_non_holonomic_recorded(
+        &mut self,
+        history: &mut FusionRtsHistoryBuilder,
+    ) -> Result<JsValue, JsValue> {
+        let update = self
+            .inner
+            .update_non_holonomic_recorded(&mut history.inner)
+            .map_err(fusion_error)?;
+        to_js(&update.map(update_js))
     }
 
     /// Apply a tight raw-observation epoch against an SP3 source.
@@ -832,6 +922,42 @@ pub fn smooth_fusion_rts(history: &FusionRtsHistory) -> Result<SmoothedFusionTra
     Ok(SmoothedFusionTrajectory { inner })
 }
 
+/// Blend a first good post-outage fix back over an outage span.
+#[wasm_bindgen(js_name = velocityMatchOutage)]
+pub fn velocity_match_outage(
+    states: JsValue,
+    first_good_fix: JsValue,
+    config: JsValue,
+) -> Result<JsValue, JsValue> {
+    let states: Vec<VelocityMatchStateInput> = serde_wasm_bindgen::from_value(states)
+        .map_err(|e| type_error(&format!("invalid velocity-match states: {e}")))?;
+    let states = states
+        .into_iter()
+        .map(|state| {
+            core_fusion::VelocityMatchState::new(
+                state.t_j2000_s,
+                vec3("velocityMatch.state.positionEcefM", &state.position_ecef_m)?,
+                vec3(
+                    "velocityMatch.state.velocityEcefMps",
+                    &state.velocity_ecef_mps,
+                )?,
+            )
+            .map_err(fusion_error)
+        })
+        .collect::<Result<Vec<_>, JsValue>>()?;
+    let config: VelocityMatchingInput = serde_wasm_bindgen::from_value(config)
+        .map_err(|e| type_error(&format!("invalid velocity-match config: {e}")))?;
+    let matched = core_fusion::velocity_match_outage(
+        &states,
+        &parse_loose_measurement(first_good_fix)?,
+        core_fusion::VelocityMatchingConfig {
+            max_outage_duration_s: config.max_outage_duration_s,
+        },
+    )
+    .map_err(fusion_error)?;
+    to_js(&VelocityMatchedTrajectoryJs::from(matched))
+}
+
 /// Decode and re-encode fusion-state bytes through the core codec.
 #[wasm_bindgen(js_name = fusionStateBytesRoundTrip)]
 pub fn fusion_state_bytes_round_trip(bytes: &[u8]) -> Result<Vec<u8>, JsValue> {
@@ -850,6 +976,7 @@ struct FusionConfigInput {
     imu_spec: Option<ImuSpecInput>,
     filter_kind: Option<String>,
     imu_model: Option<ImuErrorModelInput>,
+    imu_to_body_dcm: Option<Vec<f64>>,
     mechanization: Option<MechanizationConfigInput>,
     loose: Option<LooseConfigInput>,
     tight: Option<TightConfigInput>,
@@ -921,8 +1048,19 @@ struct MechanizationConfigInput {
 struct LooseConfigInput {
     lever_arm_body_m: Option<Vec<f64>>,
     update_options: Option<UpdateOptionsInput>,
+    fix_status_weighting: Option<FixStatusWeightingInput>,
     measurement_reweighting: Option<IggIiiMeasurementReweightingInput>,
     prediction_adaptation: Option<YangPredictionAdaptiveFactorInput>,
+    stationary_updates: Option<StationaryUpdateInput>,
+    non_holonomic: Option<NonHolonomicInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FixStatusWeightingInput {
+    single_sigma_multiplier: Option<f64>,
+    float_sigma_multiplier: Option<f64>,
+    fixed_sigma_multiplier: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -937,6 +1075,37 @@ struct IggIiiMeasurementReweightingInput {
 struct YangPredictionAdaptiveFactorInput {
     threshold: Option<f64>,
     outlier_gate_probability: Option<f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StationaryUpdateInput {
+    detector: StationaryDetectorInput,
+    zero_velocity_sigma_mps: f64,
+    zero_angular_rate_sigma_rps: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StationaryDetectorInput {
+    window_len: usize,
+    max_specific_force_norm_error_mps2: f64,
+    max_body_rate_wrt_ecef_norm_rps: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NonHolonomicInput {
+    lateral_velocity_sigma_mps: f64,
+    vertical_velocity_sigma_mps: f64,
+    min_speed_mps: f64,
+    max_body_rate_wrt_ecef_norm_rps: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VelocityMatchingInput {
+    max_outage_duration_s: f64,
 }
 
 #[derive(Deserialize)]
@@ -1001,6 +1170,14 @@ struct ImuSampleInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct VelocityMatchStateInput {
+    t_j2000_s: f64,
+    position_ecef_m: Vec<f64>,
+    velocity_ecef_mps: Vec<f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct LooseMeasurementInput {
     t_j2000_s: f64,
     position_ecef_m: Vec<f64>,
@@ -1008,6 +1185,7 @@ struct LooseMeasurementInput {
     covariance: Vec<Vec<f64>>,
     satellites_used: usize,
     solution_valid: Option<bool>,
+    fix_status: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1246,6 +1424,42 @@ impl From<core_fusion::TimeSyncHistoryStatus> for TimeSyncHistoryStatusJs {
             newest_imu_epoch_j2000_s: value.newest_imu_epoch_j2000_s,
             oldest_checkpoint_epoch_j2000_s: value.oldest_checkpoint_epoch_j2000_s,
             newest_checkpoint_epoch_j2000_s: value.newest_checkpoint_epoch_j2000_s,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VelocityMatchStateJs {
+    t_j2000_s: f64,
+    position_ecef_m: [f64; 3],
+    velocity_ecef_mps: [f64; 3],
+}
+
+impl From<core_fusion::VelocityMatchState> for VelocityMatchStateJs {
+    fn from(value: core_fusion::VelocityMatchState) -> Self {
+        Self {
+            t_j2000_s: value.t_j2000_s,
+            position_ecef_m: value.position_ecef_m,
+            velocity_ecef_mps: value.velocity_ecef_mps,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VelocityMatchedTrajectoryJs {
+    states: Vec<VelocityMatchStateJs>,
+    endpoint_position_correction_ecef_m: [f64; 3],
+    endpoint_velocity_correction_ecef_mps: [f64; 3],
+}
+
+impl From<core_fusion::VelocityMatchedTrajectory> for VelocityMatchedTrajectoryJs {
+    fn from(value: core_fusion::VelocityMatchedTrajectory) -> Self {
+        Self {
+            states: value.states.into_iter().map(Into::into).collect(),
+            endpoint_position_correction_ecef_m: value.endpoint_position_correction_ecef_m,
+            endpoint_velocity_correction_ecef_mps: value.endpoint_velocity_correction_ecef_mps,
         }
     }
 }
