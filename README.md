@@ -159,7 +159,11 @@ The wasm surface mirrors the full breadth of the engine:
   shift and range rate.
 - **GNSS/INS fusion:** strapdown mechanization with an error-state EKF (UKF
   option), loose and tight coupling, robust loose updates, an RTS smoother,
-  and a serializable filter state.
+  a serializable filter state, and field mode (zero-velocity and
+  zero-angular-rate updates, non-holonomic constraints, per-fix-status
+  weighting, IMU-to-body mounting matrix), all off by default.
+- **Reference-station static solve:** rover and reference observations in, one
+  station coordinate with covariance and typed per-mode errors out.
 - **Scenario simulation:** deterministic synthetic observables plus a
   ground-truth error ledger from a versioned scenario; identical bytes for the
   same scenario and seed.
