@@ -20,7 +20,7 @@ import {
   solveStaticRtkArc,
   solveWideLaneFixedRinexRtkBaseline,
 } from "../pkg-node/sidereon.js";
-import { coreFixture, fixtureJson, norm } from "./helpers.mjs";
+import { fixture, fixtureJson, norm } from "./helpers.mjs";
 
 // GPS L1 wavelength (metres) the fixture's ambiguities use.
 const L1_WAVELENGTH_M = 0.19029367279836487;
@@ -251,9 +251,9 @@ function squareCovarianceLength(flat, n) {
 }
 
 function wettzellRinexInputs() {
-  const sp3 = loadSp3(coreFixture("sp3", WTZR_WTZZ_SP3));
-  const baseObs = parseRinexObs(coreFixture("obs", WTZR_OBS));
-  const roverObs = parseRinexObs(coreFixture("obs", WTZZ_OBS));
+  const sp3 = loadSp3(fixture(`sp3/${WTZR_WTZZ_SP3}`));
+  const baseObs = parseRinexObs(fixture(`obs/${WTZR_OBS}`));
+  const roverObs = parseRinexObs(fixture(`obs/${WTZZ_OBS}`));
   const baseArpM = arpPosition(WTZR_MARKER_M, baseObs);
   const roverArpM = arpPosition(WTZZ_MARKER_M, roverObs);
   const truthBaselineM = roverArpM.map((component, i) => component - baseArpM[i]);
