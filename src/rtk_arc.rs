@@ -19,8 +19,8 @@ use sidereon_core::frame::Wgs84Geodetic;
 use sidereon_core::positioning::{
     solve_static_reference_station_rinex, RinexSppOptions, StaticReferenceCarrierRinexOptions,
     StaticReferenceCarrierSolution, StaticReferenceCodeSolution, StaticReferenceEpochDiagnostic,
-    StaticReferenceFixStatus, StaticReferenceModeReport, StaticReferenceModeStatus,
-    StaticReferenceStationCovariance, StaticReferenceStationMode,
+    StaticReferenceFixStatus, StaticReferenceModeError, StaticReferenceModeReport,
+    StaticReferenceModeStatus, StaticReferenceStationCovariance, StaticReferenceStationMode,
     StaticReferenceStationRinexOptions, StaticReferenceStationSolution,
 };
 use sidereon_core::rtk::{
@@ -992,6 +992,22 @@ fn static_reference_mode_status_label(status: StaticReferenceModeStatus) -> &'st
     }
 }
 
+fn static_reference_mode_error_kind(error: &StaticReferenceModeError) -> &'static str {
+    match error {
+        StaticReferenceModeError::RinexAssembly { .. } => "rinexAssembly",
+        StaticReferenceModeError::NoMatchedCodeEpochs => "noMatchedCodeEpochs",
+        StaticReferenceModeError::CodeDgnss { .. } => "codeDgnss",
+        StaticReferenceModeError::StaticSolve { .. } => "staticSolve",
+        StaticReferenceModeError::CarrierArc { .. } => "carrierArc",
+        StaticReferenceModeError::CarrierSolve { .. } => "carrierSolve",
+        StaticReferenceModeError::Frame { .. } => "frame",
+        StaticReferenceModeError::CorrectedObservation { .. } => "correctedObservation",
+        StaticReferenceModeError::InvalidCorrectedSatelliteId { .. } => {
+            "invalidCorrectedSatelliteId"
+        }
+    }
+}
+
 fn serialize_to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     value
         .serialize(&serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true))
@@ -1060,13 +1076,56 @@ impl From<&StaticReferenceEpochDiagnostic> for StaticReferenceEpochDiagnosticObj
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct StaticReferenceModeErrorObject {
+    kind: &'static str,
+    message: String,
+    side: Option<&'static str>,
+    field: Option<&'static str>,
+    reason: Option<String>,
+    satellite_id: Option<String>,
+}
+
+impl From<&StaticReferenceModeError> for StaticReferenceModeErrorObject {
+    fn from(value: &StaticReferenceModeError) -> Self {
+        let (side, field, reason, satellite_id) = match value {
+            StaticReferenceModeError::RinexAssembly { side, reason } => {
+                (Some(*side), None, Some(reason.clone()), None)
+            }
+            StaticReferenceModeError::NoMatchedCodeEpochs => (None, None, None, None),
+            StaticReferenceModeError::CodeDgnss { reason }
+            | StaticReferenceModeError::StaticSolve { reason }
+            | StaticReferenceModeError::CarrierArc { reason }
+            | StaticReferenceModeError::CarrierSolve { reason }
+            | StaticReferenceModeError::CorrectedObservation { reason } => {
+                (None, None, Some(reason.clone()), None)
+            }
+            StaticReferenceModeError::Frame { field, reason } => {
+                (None, Some(*field), Some(reason.clone()), None)
+            }
+            StaticReferenceModeError::InvalidCorrectedSatelliteId { satellite_id } => {
+                (None, None, None, Some(satellite_id.clone()))
+            }
+        };
+        Self {
+            kind: static_reference_mode_error_kind(value),
+            message: value.to_string(),
+            side,
+            field,
+            reason,
+            satellite_id,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StaticReferenceModeReportObject {
     mode: &'static str,
     status: &'static str,
     used_epochs: usize,
     skipped_epochs: usize,
     used_measurements: usize,
-    error: Option<String>,
+    error: Option<StaticReferenceModeErrorObject>,
 }
 
 impl From<&StaticReferenceModeReport> for StaticReferenceModeReportObject {
@@ -1077,7 +1136,10 @@ impl From<&StaticReferenceModeReport> for StaticReferenceModeReportObject {
             used_epochs: value.used_epochs,
             skipped_epochs: value.skipped_epochs,
             used_measurements: value.used_measurements,
-            error: value.error.clone(),
+            error: value
+                .error
+                .as_ref()
+                .map(StaticReferenceModeErrorObject::from),
         }
     }
 }
