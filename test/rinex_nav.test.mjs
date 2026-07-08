@@ -119,10 +119,10 @@ test("brdc header ionosphere and glonass records parse", () => {
 
 test("rinex v4 nav records parse", () => {
   const records = parseRinexNavRecords(fixture(KMS));
-  assert.equal(records.length, 174);
+  assert.equal(records.length, 175);
   assert.deepEqual(
     countBy(records, (r) => r.satellite[0]),
-    { G: 30, E: 108, C: 36 },
+    { G: 30, E: 108, C: 36, J: 1 },
   );
   assert.deepEqual(
     countBy(records, (r) => navMessageLabel(r.message)),
@@ -132,6 +132,7 @@ test("rinex v4 nav records parse", () => {
       galileo_fnav: 53,
       beidou_d1: 33,
       beidou_d2: 3,
+      qzss_lnav: 1,
     },
   );
 
@@ -142,12 +143,13 @@ test("rinex v4 nav records parse", () => {
 
 test("CNAV/RINEX-4 record evaluation exposes URA and ISC terms", () => {
   const records = parseRinexNavRecords(fixture(BRD4));
-  assert.equal(records.length, 6);
+  assert.equal(records.length, 7);
   assert.deepEqual(
     countBy(records, (r) => navMessageLabel(r.message)),
     {
       gps_lnav: 2,
       gps_cnav: 2,
+      qzss_lnav: 1,
       qzss_cnav: 1,
       qzss_cnav2: 1,
     },

@@ -15,11 +15,12 @@ use sidereon_core::rtcm::{
     decode_stream as core_decode_stream, derive_lli as core_derive_lli,
     message_number as core_message_number, minimum_lock_time_ms as core_minimum_lock_time_ms,
     msm_epoch_dt_ms as core_msm_epoch_dt_ms, msm_signal_rinex_code as core_msm_signal_rinex_code,
-    AntennaDescriptor, FrameScanner as CoreFrameScanner, GlonassEphemeris, GpsEphemeris,
-    LockTimeTracker as CoreLockTimeTracker, Message, MsmHeader, MsmKind, MsmMessage, MsmSatellite,
-    MsmSignal, PreviousLock, SsrClockRecord, SsrCodeBiasRecord, SsrHeader, SsrKind, SsrMessage,
-    SsrOrbitRecord, SsrPhaseBiasRecord, SsrPhaseBiasSignal, StationCoordinates, UnsupportedMessage,
-    LLI_HALF_CYCLE, LLI_LOSS_OF_LOCK,
+    AntennaDescriptor, BeidouEphemeris, FrameScanner as CoreFrameScanner, GalileoFnavEphemeris,
+    GalileoInavEphemeris, GlonassEphemeris, GpsEphemeris, LockTimeTracker as CoreLockTimeTracker,
+    Message, MsmHeader, MsmKind, MsmMessage, MsmSatellite, MsmSignal, PreviousLock, QzssEphemeris,
+    SsrClockRecord, SsrCodeBiasRecord, SsrHeader, SsrKind, SsrMessage, SsrOrbitRecord,
+    SsrPhaseBiasRecord, SsrPhaseBiasSignal, StationCoordinates, UnsupportedMessage, LLI_HALF_CYCLE,
+    LLI_LOSS_OF_LOCK,
 };
 use sidereon_core::GnssSystem;
 
@@ -382,6 +383,154 @@ impl From<&GpsEphemeris> for GpsEphemerisObject {
     }
 }
 
+macro_rules! rtcm_ephemeris_object {
+    ($object:ident, $core:ident, $message_number:literal, { $($field:ident : $ty:ty),+ $(,)? }) => {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct $object {
+            message_number: u16,
+            $($field: $ty),+
+        }
+
+        impl From<&$core> for $object {
+            fn from(e: &$core) -> Self {
+                Self {
+                    message_number: $message_number,
+                    $($field: e.$field),+
+                }
+            }
+        }
+    };
+}
+
+rtcm_ephemeris_object!(GalileoFnavEphemerisObject, GalileoFnavEphemeris, 1045, {
+    satellite_id: u8,
+    week_number: u16,
+    iod_nav: u16,
+    sisa: u8,
+    idot: i32,
+    t_oc: u16,
+    a_f2: i16,
+    a_f1: i32,
+    a_f0: i64,
+    c_rs: i32,
+    delta_n: i32,
+    m0: i64,
+    c_uc: i32,
+    eccentricity: u64,
+    c_us: i32,
+    sqrt_a: u64,
+    t_oe: u16,
+    c_ic: i32,
+    omega0: i64,
+    c_is: i32,
+    i0: i64,
+    c_rc: i32,
+    omega: i64,
+    omega_dot: i32,
+    bgd_e5a_e1: i16,
+    e5a_signal_health: u8,
+    e5a_data_validity: bool,
+    reserved: u8,
+});
+
+rtcm_ephemeris_object!(GalileoInavEphemerisObject, GalileoInavEphemeris, 1046, {
+    satellite_id: u8,
+    week_number: u16,
+    iod_nav: u16,
+    sisa_index: u8,
+    idot: i32,
+    t_oc: u16,
+    a_f2: i16,
+    a_f1: i32,
+    a_f0: i64,
+    c_rs: i32,
+    delta_n: i32,
+    m0: i64,
+    c_uc: i32,
+    eccentricity: u64,
+    c_us: i32,
+    sqrt_a: u64,
+    t_oe: u16,
+    c_ic: i32,
+    omega0: i64,
+    c_is: i32,
+    i0: i64,
+    c_rc: i32,
+    omega: i64,
+    omega_dot: i32,
+    bgd_e5a_e1: i16,
+    bgd_e5b_e1: i16,
+    e5b_signal_health: u8,
+    e5b_data_validity: bool,
+    e1b_signal_health: u8,
+    e1b_data_validity: bool,
+    reserved: u8,
+});
+
+rtcm_ephemeris_object!(BeidouEphemerisObject, BeidouEphemeris, 1042, {
+    satellite_id: u8,
+    week_number: u16,
+    sv_urai: u8,
+    idot: i32,
+    aode: u8,
+    t_oc: u32,
+    a_f2: i16,
+    a_f1: i32,
+    a_f0: i32,
+    aodc: u8,
+    c_rs: i32,
+    delta_n: i32,
+    m0: i64,
+    c_uc: i32,
+    eccentricity: u64,
+    c_us: i32,
+    sqrt_a: u64,
+    t_oe: u32,
+    c_ic: i32,
+    omega0: i64,
+    c_is: i32,
+    i0: i64,
+    c_rc: i32,
+    omega: i64,
+    omega_dot: i32,
+    t_gd1: i16,
+    t_gd2: i16,
+    sv_health: bool,
+});
+
+rtcm_ephemeris_object!(QzssEphemerisObject, QzssEphemeris, 1044, {
+    satellite_id: u8,
+    t_oc: u16,
+    a_f2: i16,
+    a_f1: i32,
+    a_f0: i32,
+    iode: u8,
+    c_rs: i32,
+    delta_n: i32,
+    m0: i64,
+    c_uc: i32,
+    eccentricity: u64,
+    c_us: i32,
+    sqrt_a: u64,
+    t_oe: u16,
+    c_ic: i32,
+    omega0: i64,
+    c_is: i32,
+    i0: i64,
+    c_rc: i32,
+    omega: i64,
+    omega_dot: i32,
+    idot: i32,
+    codes_on_l2: u8,
+    week_number: u16,
+    ura: u8,
+    sv_health: u8,
+    t_gd: i16,
+    iodc: u16,
+    fit_interval: bool,
+});
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GlonassEphemerisObject {
@@ -666,6 +815,10 @@ enum MessageObject {
     AntennaDescriptor(AntennaObject),
     GpsEphemeris(GpsEphemerisObject),
     GlonassEphemeris(GlonassEphemerisObject),
+    BeidouEphemeris(BeidouEphemerisObject),
+    QzssEphemeris(QzssEphemerisObject),
+    GalileoFnavEphemeris(GalileoFnavEphemerisObject),
+    GalileoInavEphemeris(GalileoInavEphemerisObject),
     Ssr(SsrObject),
     Unsupported(UnsupportedObject),
 }
@@ -683,6 +836,16 @@ impl From<&Message> for MessageObject {
             Message::GpsEphemeris(e) => MessageObject::GpsEphemeris(GpsEphemerisObject::from(e)),
             Message::GlonassEphemeris(e) => {
                 MessageObject::GlonassEphemeris(GlonassEphemerisObject::from(e))
+            }
+            Message::BeidouEphemeris(e) => {
+                MessageObject::BeidouEphemeris(BeidouEphemerisObject::from(e))
+            }
+            Message::QzssEphemeris(e) => MessageObject::QzssEphemeris(QzssEphemerisObject::from(e)),
+            Message::GalileoFnavEphemeris(e) => {
+                MessageObject::GalileoFnavEphemeris(GalileoFnavEphemerisObject::from(e))
+            }
+            Message::GalileoInavEphemeris(e) => {
+                MessageObject::GalileoInavEphemeris(GalileoInavEphemerisObject::from(e))
             }
             Message::Ssr(s) => MessageObject::Ssr(SsrObject::from(s)),
             Message::Unsupported(u) => MessageObject::Unsupported(UnsupportedObject::from(u)),
@@ -702,7 +865,9 @@ fn serializer() -> serde_wasm_bindgen::Serializer {
 /// scan resynchronizes on the next preamble. Returns an array of message objects,
 /// each tagged with a `type` discriminant (`"msm"`, `"stationCoordinates"`,
 /// `"antennaDescriptor"`, `"gpsEphemeris"`, `"glonassEphemeris"`,
-/// `"unsupported"`). Delegates to `sidereon_core::rtcm::decode_messages`.
+/// `"beidouEphemeris"`, `"qzssEphemeris"`, `"galileoFnavEphemeris"`,
+/// `"galileoInavEphemeris"`, `"unsupported"`). Delegates to
+/// `sidereon_core::rtcm::decode_messages`.
 #[wasm_bindgen(js_name = decodeRtcm)]
 pub fn decode_rtcm(bytes: &[u8]) -> Result<JsValue, JsValue> {
     let objects: Vec<MessageObject> = core_decode_messages(bytes)
@@ -1194,6 +1359,152 @@ impl GpsEphemerisInput {
     }
 }
 
+macro_rules! rtcm_ephemeris_input {
+    ($input:ident, $core:ident, { $($field:ident : $ty:ty),+ $(,)? }) => {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct $input {
+            $($field: $ty),+
+        }
+
+        impl $input {
+            fn to_core(&self) -> $core {
+                $core {
+                    $($field: self.$field),+
+                }
+            }
+        }
+    };
+}
+
+rtcm_ephemeris_input!(GalileoFnavEphemerisInput, GalileoFnavEphemeris, {
+    satellite_id: u8,
+    week_number: u16,
+    iod_nav: u16,
+    sisa: u8,
+    idot: i32,
+    t_oc: u16,
+    a_f2: i16,
+    a_f1: i32,
+    a_f0: i64,
+    c_rs: i32,
+    delta_n: i32,
+    m0: i64,
+    c_uc: i32,
+    eccentricity: u64,
+    c_us: i32,
+    sqrt_a: u64,
+    t_oe: u16,
+    c_ic: i32,
+    omega0: i64,
+    c_is: i32,
+    i0: i64,
+    c_rc: i32,
+    omega: i64,
+    omega_dot: i32,
+    bgd_e5a_e1: i16,
+    e5a_signal_health: u8,
+    e5a_data_validity: bool,
+    reserved: u8,
+});
+
+rtcm_ephemeris_input!(GalileoInavEphemerisInput, GalileoInavEphemeris, {
+    satellite_id: u8,
+    week_number: u16,
+    iod_nav: u16,
+    sisa_index: u8,
+    idot: i32,
+    t_oc: u16,
+    a_f2: i16,
+    a_f1: i32,
+    a_f0: i64,
+    c_rs: i32,
+    delta_n: i32,
+    m0: i64,
+    c_uc: i32,
+    eccentricity: u64,
+    c_us: i32,
+    sqrt_a: u64,
+    t_oe: u16,
+    c_ic: i32,
+    omega0: i64,
+    c_is: i32,
+    i0: i64,
+    c_rc: i32,
+    omega: i64,
+    omega_dot: i32,
+    bgd_e5a_e1: i16,
+    bgd_e5b_e1: i16,
+    e5b_signal_health: u8,
+    e5b_data_validity: bool,
+    e1b_signal_health: u8,
+    e1b_data_validity: bool,
+    reserved: u8,
+});
+
+rtcm_ephemeris_input!(BeidouEphemerisInput, BeidouEphemeris, {
+    satellite_id: u8,
+    week_number: u16,
+    sv_urai: u8,
+    idot: i32,
+    aode: u8,
+    t_oc: u32,
+    a_f2: i16,
+    a_f1: i32,
+    a_f0: i32,
+    aodc: u8,
+    c_rs: i32,
+    delta_n: i32,
+    m0: i64,
+    c_uc: i32,
+    eccentricity: u64,
+    c_us: i32,
+    sqrt_a: u64,
+    t_oe: u32,
+    c_ic: i32,
+    omega0: i64,
+    c_is: i32,
+    i0: i64,
+    c_rc: i32,
+    omega: i64,
+    omega_dot: i32,
+    t_gd1: i16,
+    t_gd2: i16,
+    sv_health: bool,
+});
+
+rtcm_ephemeris_input!(QzssEphemerisInput, QzssEphemeris, {
+    satellite_id: u8,
+    t_oc: u16,
+    a_f2: i16,
+    a_f1: i32,
+    a_f0: i32,
+    iode: u8,
+    c_rs: i32,
+    delta_n: i32,
+    m0: i64,
+    c_uc: i32,
+    eccentricity: u64,
+    c_us: i32,
+    sqrt_a: u64,
+    t_oe: u16,
+    c_ic: i32,
+    omega0: i64,
+    c_is: i32,
+    i0: i64,
+    c_rc: i32,
+    omega: i64,
+    omega_dot: i32,
+    idot: i32,
+    codes_on_l2: u8,
+    week_number: u16,
+    ura: u8,
+    sv_health: u8,
+    t_gd: i16,
+    iodc: u16,
+    fit_interval: bool,
+});
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GlonassEphemerisInput {
@@ -1423,6 +1734,16 @@ fn message_from_value(message: JsValue) -> Result<Message, JsValue> {
         "glonassEphemeris" => {
             Message::GlonassEphemeris(de::<GlonassEphemerisInput>(message)?.to_core())
         }
+        "beidouEphemeris" => {
+            Message::BeidouEphemeris(de::<BeidouEphemerisInput>(message)?.to_core())
+        }
+        "qzssEphemeris" => Message::QzssEphemeris(de::<QzssEphemerisInput>(message)?.to_core()),
+        "galileoFnavEphemeris" => {
+            Message::GalileoFnavEphemeris(de::<GalileoFnavEphemerisInput>(message)?.to_core())
+        }
+        "galileoInavEphemeris" => {
+            Message::GalileoInavEphemeris(de::<GalileoInavEphemerisInput>(message)?.to_core())
+        }
         "msm" => Message::Msm(de::<MsmInput>(message)?.to_core()?),
         "unsupported" => Message::Unsupported(de::<UnsupportedInput>(message)?.to_core()),
         other => return Err(type_error(&format!("unknown RTCM message type {other:?}"))),
@@ -1435,10 +1756,12 @@ fn message_from_value(message: JsValue) -> Result<Message, JsValue> {
 ///
 /// `message` is a `type`-tagged plain object of the same shape [`decodeRtcm`]
 /// returns (`"stationCoordinates"`, `"antennaDescriptor"`, `"gpsEphemeris"`,
-/// `"glonassEphemeris"`, `"msm"`, `"unsupported"`), carrying the raw transmitted
-/// field integers (large fields as `bigint`). Returns the encoded body as a
-/// `Uint8Array`. Delegates to `sidereon_core::rtcm::Message::encode`. Throws a
-/// `TypeError` for a malformed object or unknown type.
+/// `"glonassEphemeris"`, `"beidouEphemeris"`, `"qzssEphemeris"`,
+/// `"galileoFnavEphemeris"`, `"galileoInavEphemeris"`, `"msm"`,
+/// `"unsupported"`), carrying the raw transmitted field integers (large fields
+/// as `bigint`). Returns the encoded body as a `Uint8Array`. Delegates to
+/// `sidereon_core::rtcm::Message::encode`. Throws a `TypeError` for a malformed
+/// object or unknown type.
 #[wasm_bindgen(js_name = encodeRtcm)]
 pub fn encode_rtcm(message: JsValue) -> Result<Vec<u8>, JsValue> {
     Ok(message_from_value(message)?.encode())

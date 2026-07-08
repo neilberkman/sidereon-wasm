@@ -34,6 +34,8 @@ pub enum NavMessage {
     QzssCnav,
     /// QZSS CNAV-2.
     QzssCnav2,
+    /// QZSS LNAV.
+    QzssLnav,
     /// Galileo I/NAV.
     GalileoInav,
     /// Galileo F/NAV.
@@ -114,6 +116,7 @@ fn map_nav_message(message: sidereon_core::ephemeris::NavMessage) -> NavMessage 
         Core::GpsCnav2 => NavMessage::GpsCnav2,
         Core::QzssCnav => NavMessage::QzssCnav,
         Core::QzssCnav2 => NavMessage::QzssCnav2,
+        Core::QzssLnav => NavMessage::QzssLnav,
         Core::GalileoInav => NavMessage::GalileoInav,
         Core::GalileoFnav => NavMessage::GalileoFnav,
         Core::BeidouD1 => NavMessage::BeidouD1,
@@ -130,6 +133,7 @@ pub fn nav_message_label(message: NavMessage) -> String {
         NavMessage::GpsCnav2 => "gps_cnav2",
         NavMessage::QzssCnav => "qzss_cnav",
         NavMessage::QzssCnav2 => "qzss_cnav2",
+        NavMessage::QzssLnav => "qzss_lnav",
         NavMessage::GalileoInav => "galileo_inav",
         NavMessage::GalileoFnav => "galileo_fnav",
         NavMessage::BeidouD1 => "beidou_d1",
