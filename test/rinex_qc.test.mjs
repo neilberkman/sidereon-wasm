@@ -167,11 +167,11 @@ test("observationQc reports the core summary and selected signal statistics", ()
 test("lintRinexNav and repairRinexNav expose core NAV diagnostics", () => {
   const lint = lintRinexNav(fixture("nav/BRD400DLR_S_20261800000_01H_MN_trim.rnx"));
   assert.equal(lint.clean, false);
-  assert.equal(lint.findingCount, 7);
-  assert.deepEqual(lint.counts, { fatal: 0, error: 4, warning: 0, info: 3 });
+  assert.equal(lint.findingCount, 8);
+  assert.deepEqual(lint.counts, { fatal: 0, error: 4, warning: 0, info: 4 });
   assert.deepEqual(
     lint.findings.map((f) => f.code),
-    ["NAV-B01", "NAV-B01", "NAV-B01", "NAV-B01", "NAV-B06", "NAV-B06", "NAV-B06"],
+    ["NAV-B05", "NAV-B01", "NAV-B01", "NAV-B01", "NAV-B01", "NAV-B06", "NAV-B06", "NAV-B06"],
   );
 
   const repaired = repairRinexNav(fixture("nav/BRD400DLR_S_20261800000_01H_MN_trim.rnx"), {
@@ -182,10 +182,11 @@ test("lintRinexNav and repairRinexNav expose core NAV diagnostics", () => {
     repaired.actions.map((a) => a.id),
     ["A12", "NAV-B06", "NAV-B06", "NAV-B06"],
   );
-  assert.equal(repaired.records.length, 6);
+  assert.equal(repaired.records.length, 7);
   assert.equal(repaired.leapSeconds, 18);
-  assert.equal(repaired.repairedText.length, 4545);
+  assert.equal(repaired.repairedText.length, 5208);
   assert.equal(repaired.remaining.clean, true);
-  assert.equal(repaired.remaining.findingCount, 1);
+  assert.equal(repaired.remaining.findingCount, 2);
   assert.equal(repaired.remaining.findings[0].code, "NAV-B05");
+  assert.equal(repaired.remaining.findings[1].code, "NAV-B05");
 });

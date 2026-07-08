@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::atmosphere::troposphere::Met;
@@ -22,13 +22,14 @@ use sidereon_core::precise_positioning::{
     },
     solve_ppp_auto_init_fixed, solve_ppp_auto_init_float, FixedAmbiguityOptions, FixedSolution,
     FixedSolveConfig, FloatEpoch, FloatObservation, FloatSolution, FloatSolveConfig,
-    FloatSolveOptions, FloatState, IntegerStatus, MeasurementWeights, PppAutoInitOptions,
-    PppInitialGuess, RangeCorrections, TropoMapping, TroposphereOptions, VmfSiteSample,
-    VmfSiteSeries,
+    FloatSolveOptions, FloatState, FloatStatus, IntegerStatus, MeasurementWeights,
+    PppAutoInitOptions, PppInitialGuess, RangeCorrections, TropoMapping, TroposphereOptions,
+    VmfSiteSample, VmfSiteSeries,
 };
 use sidereon_core::GnssSatelliteId;
 
 use crate::error::{engine_error, type_error};
+use crate::marshal::mat3_flat;
 use crate::sp3::Sp3;
 
 // --- input objects ----------------------------------------------------------
@@ -131,6 +132,12 @@ struct StateInput {
     ambiguities_m: BTreeMap<String, f64>,
     #[serde(default)]
     ztd_m: f64,
+    #[serde(default)]
+    tropo_gradient_north_m: f64,
+    #[serde(default)]
+    tropo_gradient_east_m: f64,
+    #[serde(default)]
+    residual_ionosphere_m: BTreeMap<String, f64>,
 }
 
 impl StateInput {
@@ -140,6 +147,9 @@ impl StateInput {
             clocks_m: self.clocks_m.clone(),
             ambiguities_m: self.ambiguities_m.clone(),
             ztd_m: self.ztd_m,
+            tropo_gradient_north_m: self.tropo_gradient_north_m,
+            tropo_gradient_east_m: self.tropo_gradient_east_m,
+            residual_ionosphere_m: self.residual_ionosphere_m.clone(),
         }
     }
 }
@@ -205,6 +215,7 @@ impl VmfSampleInput {
 struct TroposphereInput {
     enabled: bool,
     estimate_ztd: bool,
+    estimate_tropo_gradients: bool,
     pressure_hpa: f64,
     temperature_k: f64,
     relative_humidity: f64,
@@ -217,6 +228,7 @@ impl Default for TroposphereInput {
         Self {
             enabled: false,
             estimate_ztd: false,
+            estimate_tropo_gradients: false,
             pressure_hpa: met.pressure_hpa,
             temperature_k: met.temperature_k,
             relative_humidity: met.relative_humidity,
@@ -244,6 +256,7 @@ impl TroposphereInput {
             Ok(TroposphereOptions {
                 enabled: true,
                 estimate_ztd: self.estimate_ztd,
+                estimate_tropo_gradients: self.estimate_tropo_gradients,
                 met,
                 mapping,
             })
@@ -295,7 +308,9 @@ struct FloatConfigInput {
     weights: WeightsInput,
     tropo: TroposphereInput,
     options: OptionsInput,
+    elevation_cutoff_deg: Option<f64>,
     residual_screen: bool,
+    estimate_residual_ionosphere: bool,
 }
 
 impl FloatConfigInput {
@@ -305,7 +320,9 @@ impl FloatConfigInput {
             tropo: self.tropo.to_core()?,
             corrections: RangeCorrections::disabled(),
             opts: self.options.to_core(),
+            elevation_cutoff_deg: self.elevation_cutoff_deg,
             residual_screen: self.residual_screen,
+            estimate_residual_ionosphere: self.estimate_residual_ionosphere,
         })
     }
 }
@@ -345,6 +362,10 @@ struct FixedConfigInput {
     tropo: TroposphereInput,
     #[serde(default)]
     options: OptionsInput,
+    #[serde(default)]
+    elevation_cutoff_deg: Option<f64>,
+    #[serde(default)]
+    estimate_residual_ionosphere: bool,
 }
 
 impl FixedConfigInput {
@@ -354,7 +375,9 @@ impl FixedConfigInput {
             tropo: self.tropo.to_core()?,
             corrections: RangeCorrections::disabled(),
             opts: self.options.to_core(),
+            elevation_cutoff_deg: self.elevation_cutoff_deg,
             ambiguity: self.ambiguity.to_core(),
+            estimate_residual_ionosphere: self.estimate_residual_ionosphere,
         })
     }
 }
@@ -580,6 +603,13 @@ fn integer_status_label(status: IntegerStatus) -> String {
     }
 }
 
+fn float_status_label(status: FloatStatus) -> String {
+    match status {
+        FloatStatus::StateTolerance => "StateTolerance".to_string(),
+        FloatStatus::MaxIterations => "MaxIterations".to_string(),
+    }
+}
+
 /// Serialize an id-keyed map to a plain JS object (not a JS `Map`).
 fn map_f64_object(map: &BTreeMap<String, f64>) -> JsValue {
     use serde::Serialize;
@@ -591,6 +621,68 @@ fn map_i64_object(map: &BTreeMap<String, i64>) -> JsValue {
     use serde::Serialize;
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
     map.serialize(&serializer).unwrap_or(JsValue::UNDEFINED)
+}
+
+fn mat2_flat(matrix: &[[f64; 2]; 2]) -> Vec<f64> {
+    vec![matrix[0][0], matrix[0][1], matrix[1][0], matrix[1][1]]
+}
+
+fn to_js<T: Serialize>(value: &T) -> JsValue {
+    value
+        .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .unwrap_or(JsValue::UNDEFINED)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PppResidualJs {
+    epoch_index: usize,
+    satellite_id: String,
+    code_m: f64,
+    phase_m: f64,
+    code_weight: f64,
+    phase_weight: f64,
+}
+
+impl From<&sidereon_core::precise_positioning::FloatResidual> for PppResidualJs {
+    fn from(value: &sidereon_core::precise_positioning::FloatResidual) -> Self {
+        Self {
+            epoch_index: value.epoch_index,
+            satellite_id: value.satellite_id.clone(),
+            code_m: value.code_m,
+            phase_m: value.phase_m,
+            code_weight: value.code_weight,
+            phase_weight: value.phase_weight,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TemporalCorrelationJs {
+    lag1_autocorrelation: f64,
+    decorrelation_time_epochs: f64,
+    decorrelation_time_s: Option<f64>,
+    nominal_sample_count: usize,
+    effective_sample_count: f64,
+    variance_inflation_factor: f64,
+    arcs_used: usize,
+}
+
+impl From<&sidereon_core::precise_positioning::TemporalCorrelationSummary>
+    for TemporalCorrelationJs
+{
+    fn from(value: &sidereon_core::precise_positioning::TemporalCorrelationSummary) -> Self {
+        Self {
+            lag1_autocorrelation: value.lag1_autocorrelation,
+            decorrelation_time_epochs: value.decorrelation_time_epochs,
+            decorrelation_time_s: value.decorrelation_time_s,
+            nominal_sample_count: value.nominal_sample_count,
+            effective_sample_count: value.effective_sample_count,
+            variance_inflation_factor: value.variance_inflation_factor,
+            arcs_used: value.arcs_used,
+        }
+    }
 }
 
 // --- result objects ---------------------------------------------------------
@@ -609,16 +701,130 @@ impl PppFloatSolution {
         self.inner.position_m.to_vec()
     }
 
+    /// Epoch receiver clock states, metres.
+    #[wasm_bindgen(getter, js_name = epochClocksM)]
+    pub fn epoch_clocks_m(&self) -> Vec<f64> {
+        self.inner.epoch_clocks_m.clone()
+    }
+
     /// Float ambiguities, metres, as an id-keyed object.
     #[wasm_bindgen(getter, js_name = ambiguitiesM)]
     pub fn ambiguities_m(&self) -> JsValue {
         map_f64_object(&self.inner.ambiguities_m)
     }
 
+    /// Residual ionosphere states, metres, as an id-keyed object.
+    #[wasm_bindgen(getter, js_name = residualIonosphereM)]
+    pub fn residual_ionosphere_m(&self) -> JsValue {
+        map_f64_object(&self.inner.residual_ionosphere_m)
+    }
+
     /// Estimated zenith tropospheric delay residual, metres, or `undefined`.
     #[wasm_bindgen(getter, js_name = ztdResidualM)]
     pub fn ztd_residual_m(&self) -> Option<f64> {
         self.inner.ztd_residual_m
+    }
+
+    /// Estimated north tropospheric gradient, metres, or `undefined`.
+    #[wasm_bindgen(getter, js_name = tropoGradientNorthM)]
+    pub fn tropo_gradient_north_m(&self) -> Option<f64> {
+        self.inner.tropo_gradient_north_m
+    }
+
+    /// Estimated east tropospheric gradient, metres, or `undefined`.
+    #[wasm_bindgen(getter, js_name = tropoGradientEastM)]
+    pub fn tropo_gradient_east_m(&self) -> Option<f64> {
+        self.inner.tropo_gradient_east_m
+    }
+
+    /// Posterior north/east tropospheric-gradient covariance, row-major 2-by-2.
+    #[wasm_bindgen(getter, js_name = tropoGradientCovarianceM2)]
+    pub fn tropo_gradient_covariance_m2(&self) -> Option<Vec<f64>> {
+        self.inner
+            .tropo_gradient_covariance_m2
+            .as_ref()
+            .map(mat2_flat)
+    }
+
+    /// Formal north/east tropospheric-gradient covariance, row-major 2-by-2.
+    #[wasm_bindgen(getter, js_name = formalTropoGradientCovarianceM2)]
+    pub fn formal_tropo_gradient_covariance_m2(&self) -> Option<Vec<f64>> {
+        self.inner
+            .formal_tropo_gradient_covariance_m2
+            .as_ref()
+            .map(mat2_flat)
+    }
+
+    /// Posterior ECEF position covariance, row-major 3-by-3.
+    #[wasm_bindgen(getter, js_name = positionCovarianceEcefM2)]
+    pub fn position_covariance_ecef_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.position_covariance.ecef_m2)
+    }
+
+    /// Posterior ENU position covariance, row-major 3-by-3.
+    #[wasm_bindgen(getter, js_name = positionCovarianceEnuM2)]
+    pub fn position_covariance_enu_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.position_covariance.enu_m2)
+    }
+
+    /// Formal ECEF position covariance, row-major 3-by-3.
+    #[wasm_bindgen(getter, js_name = formalPositionCovarianceEcefM2)]
+    pub fn formal_position_covariance_ecef_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.formal_position_covariance.ecef_m2)
+    }
+
+    /// Formal ENU position covariance, row-major 3-by-3.
+    #[wasm_bindgen(getter, js_name = formalPositionCovarianceEnuM2)]
+    pub fn formal_position_covariance_enu_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.formal_position_covariance.enu_m2)
+    }
+
+    /// Temporal-correlation-deflated ECEF covariance, row-major 3-by-3.
+    #[wasm_bindgen(getter, js_name = temporalPositionCovarianceEcefM2)]
+    pub fn temporal_position_covariance_ecef_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.temporal_position_covariance.ecef_m2)
+    }
+
+    /// Temporal-correlation-deflated ENU covariance, row-major 3-by-3.
+    #[wasm_bindgen(getter, js_name = temporalPositionCovarianceEnuM2)]
+    pub fn temporal_position_covariance_enu_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.temporal_position_covariance.enu_m2)
+    }
+
+    #[wasm_bindgen(getter, js_name = posteriorVarianceFactor)]
+    pub fn posterior_variance_factor(&self) -> f64 {
+        self.inner.posterior_variance_factor
+    }
+
+    #[wasm_bindgen(getter, js_name = positionCovarianceScaleFactor)]
+    pub fn position_covariance_scale_factor(&self) -> f64 {
+        self.inner.position_covariance_scale_factor
+    }
+
+    #[wasm_bindgen(getter, js_name = temporalPositionCovarianceScaleFactor)]
+    pub fn temporal_position_covariance_scale_factor(&self) -> f64 {
+        self.inner.temporal_position_covariance_scale_factor
+    }
+
+    /// Temporal-correlation summary used by the conservative covariance.
+    #[wasm_bindgen(getter, js_name = temporalCorrelation)]
+    pub fn temporal_correlation(&self) -> JsValue {
+        to_js(&TemporalCorrelationJs::from(
+            &self.inner.temporal_correlation,
+        ))
+    }
+
+    /// Post-fit PPP residual rows.
+    #[wasm_bindgen(getter)]
+    pub fn residuals(&self) -> JsValue {
+        to_js(
+            &self
+                .inner
+                .residuals_m
+                .iter()
+                .map(PppResidualJs::from)
+                .collect::<Vec<_>>(),
+        )
     }
 
     #[wasm_bindgen(getter, js_name = codeRmsM)]
@@ -646,6 +852,12 @@ impl PppFloatSolution {
         self.inner.iterations
     }
 
+    /// Static PPP termination status.
+    #[wasm_bindgen(getter)]
+    pub fn status(&self) -> String {
+        float_status_label(self.inner.status)
+    }
+
     /// Satellite tokens used in the accepted solution.
     #[wasm_bindgen(getter, js_name = usedSats)]
     pub fn used_sats(&self) -> Vec<String> {
@@ -667,6 +879,12 @@ impl PppFixedSolution {
         self.inner.position_m.to_vec()
     }
 
+    /// Epoch receiver clock states, metres.
+    #[wasm_bindgen(getter, js_name = epochClocksM)]
+    pub fn epoch_clocks_m(&self) -> Vec<f64> {
+        self.inner.epoch_clocks_m.clone()
+    }
+
     /// Fixed ambiguities, integer cycles, as an id-keyed object.
     #[wasm_bindgen(getter, js_name = fixedAmbiguitiesCycles)]
     pub fn fixed_ambiguities_cycles(&self) -> JsValue {
@@ -679,10 +897,118 @@ impl PppFixedSolution {
         map_f64_object(&self.inner.fixed_ambiguities_m)
     }
 
+    /// Residual ionosphere states, metres, as an id-keyed object.
+    #[wasm_bindgen(getter, js_name = residualIonosphereM)]
+    pub fn residual_ionosphere_m(&self) -> JsValue {
+        map_f64_object(&self.inner.residual_ionosphere_m)
+    }
+
     /// Estimated zenith tropospheric delay residual, metres, or `undefined`.
     #[wasm_bindgen(getter, js_name = ztdResidualM)]
     pub fn ztd_residual_m(&self) -> Option<f64> {
         self.inner.ztd_residual_m
+    }
+
+    /// Estimated north tropospheric gradient, metres, or `undefined`.
+    #[wasm_bindgen(getter, js_name = tropoGradientNorthM)]
+    pub fn tropo_gradient_north_m(&self) -> Option<f64> {
+        self.inner.tropo_gradient_north_m
+    }
+
+    /// Estimated east tropospheric gradient, metres, or `undefined`.
+    #[wasm_bindgen(getter, js_name = tropoGradientEastM)]
+    pub fn tropo_gradient_east_m(&self) -> Option<f64> {
+        self.inner.tropo_gradient_east_m
+    }
+
+    /// Posterior north/east tropospheric-gradient covariance, row-major 2-by-2.
+    #[wasm_bindgen(getter, js_name = tropoGradientCovarianceM2)]
+    pub fn tropo_gradient_covariance_m2(&self) -> Option<Vec<f64>> {
+        self.inner
+            .tropo_gradient_covariance_m2
+            .as_ref()
+            .map(mat2_flat)
+    }
+
+    /// Formal north/east tropospheric-gradient covariance, row-major 2-by-2.
+    #[wasm_bindgen(getter, js_name = formalTropoGradientCovarianceM2)]
+    pub fn formal_tropo_gradient_covariance_m2(&self) -> Option<Vec<f64>> {
+        self.inner
+            .formal_tropo_gradient_covariance_m2
+            .as_ref()
+            .map(mat2_flat)
+    }
+
+    /// Posterior ECEF position covariance, row-major 3-by-3.
+    #[wasm_bindgen(getter, js_name = positionCovarianceEcefM2)]
+    pub fn position_covariance_ecef_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.position_covariance.ecef_m2)
+    }
+
+    /// Posterior ENU position covariance, row-major 3-by-3.
+    #[wasm_bindgen(getter, js_name = positionCovarianceEnuM2)]
+    pub fn position_covariance_enu_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.position_covariance.enu_m2)
+    }
+
+    /// Formal ECEF position covariance, row-major 3-by-3.
+    #[wasm_bindgen(getter, js_name = formalPositionCovarianceEcefM2)]
+    pub fn formal_position_covariance_ecef_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.formal_position_covariance.ecef_m2)
+    }
+
+    /// Formal ENU position covariance, row-major 3-by-3.
+    #[wasm_bindgen(getter, js_name = formalPositionCovarianceEnuM2)]
+    pub fn formal_position_covariance_enu_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.formal_position_covariance.enu_m2)
+    }
+
+    /// Temporal-correlation-deflated ECEF covariance, row-major 3-by-3.
+    #[wasm_bindgen(getter, js_name = temporalPositionCovarianceEcefM2)]
+    pub fn temporal_position_covariance_ecef_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.temporal_position_covariance.ecef_m2)
+    }
+
+    /// Temporal-correlation-deflated ENU covariance, row-major 3-by-3.
+    #[wasm_bindgen(getter, js_name = temporalPositionCovarianceEnuM2)]
+    pub fn temporal_position_covariance_enu_m2(&self) -> Vec<f64> {
+        mat3_flat(&self.inner.temporal_position_covariance.enu_m2)
+    }
+
+    #[wasm_bindgen(getter, js_name = posteriorVarianceFactor)]
+    pub fn posterior_variance_factor(&self) -> f64 {
+        self.inner.posterior_variance_factor
+    }
+
+    #[wasm_bindgen(getter, js_name = positionCovarianceScaleFactor)]
+    pub fn position_covariance_scale_factor(&self) -> f64 {
+        self.inner.position_covariance_scale_factor
+    }
+
+    #[wasm_bindgen(getter, js_name = temporalPositionCovarianceScaleFactor)]
+    pub fn temporal_position_covariance_scale_factor(&self) -> f64 {
+        self.inner.temporal_position_covariance_scale_factor
+    }
+
+    /// Temporal-correlation summary used by the conservative covariance.
+    #[wasm_bindgen(getter, js_name = temporalCorrelation)]
+    pub fn temporal_correlation(&self) -> JsValue {
+        to_js(&TemporalCorrelationJs::from(
+            &self.inner.temporal_correlation,
+        ))
+    }
+
+    /// Post-fit PPP residual rows.
+    #[wasm_bindgen(getter)]
+    pub fn residuals(&self) -> JsValue {
+        to_js(
+            &self
+                .inner
+                .residuals_m
+                .iter()
+                .map(PppResidualJs::from)
+                .collect::<Vec<_>>(),
+        )
     }
 
     /// The float solution that seeded the integer search.
@@ -732,6 +1058,12 @@ impl PppFixedSolution {
     #[wasm_bindgen(getter)]
     pub fn iterations(&self) -> usize {
         self.inner.iterations
+    }
+
+    /// Static PPP termination status.
+    #[wasm_bindgen(getter)]
+    pub fn status(&self) -> String {
+        float_status_label(self.inner.status)
     }
 
     /// Satellite tokens used in the accepted solution.

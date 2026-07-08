@@ -133,6 +133,138 @@ test("a 1020 GLONASS ephemeris built from scratch round-trips", () => {
   assert.equal(back.tauC, 9999n);
 });
 
+test("1042/1044/1045/1046 broadcast ephemerides built from scratch round-trip", () => {
+  const beidou = {
+    type: "beidouEphemeris",
+    satelliteId: 19,
+    weekNumber: 902,
+    svUrai: 1,
+    idot: 1,
+    aode: 17,
+    tOc: 12000,
+    aF2: -3,
+    aF1: 12345,
+    aF0: -45678,
+    aodc: 12,
+    cRs: -1000,
+    deltaN: 100,
+    m0: 1000n,
+    cUc: -50,
+    eccentricity: 4459564n,
+    cUs: 51,
+    sqrtA: 2852448983n,
+    tOe: 12000,
+    cIc: -5,
+    omega0: 1000n,
+    cIs: 6,
+    i0: 1000n,
+    cRc: 100,
+    omega: 1000n,
+    omegaDot: -100,
+    tGd1: 5,
+    tGd2: 7,
+    svHealth: false,
+  };
+  const qzss = {
+    type: "qzssEphemeris",
+    satelliteId: 3,
+    tOc: 7200,
+    aF2: 1,
+    aF1: 1,
+    aF0: 23456,
+    iode: 11,
+    cRs: 1,
+    deltaN: 1,
+    m0: 1n,
+    cUc: 1,
+    eccentricity: 1n,
+    cUs: 1,
+    sqrtA: 2702336448n,
+    tOe: 3600,
+    cIc: 1,
+    omega0: 1n,
+    cIs: 1,
+    i0: 1n,
+    cRc: 1,
+    omega: 1n,
+    omegaDot: 1,
+    idot: 1,
+    codesOnL2: 1,
+    weekNumber: 123,
+    ura: 1,
+    svHealth: 1,
+    tGd: 1,
+    iodc: 1,
+    fitInterval: false,
+  };
+  const galileoFnav = {
+    type: "galileoFnavEphemeris",
+    satelliteId: 12,
+    weekNumber: 1402,
+    iodNav: 7,
+    sisa: 42,
+    idot: 434,
+    tOc: 5150,
+    aF2: 0,
+    aF1: -151,
+    aF0: -471483n,
+    cRs: -791,
+    deltaN: 9274,
+    m0: 1630831142n,
+    cUc: -707,
+    eccentricity: 4459564n,
+    cUs: 3342,
+    sqrtA: 2852448983n,
+    tOe: 5150,
+    cIc: -5,
+    omega0: 2118450828n,
+    cIs: -11,
+    i0: 662506241n,
+    cRc: 6692,
+    omega: 372867071n,
+    omegaDot: -15832,
+    bgdE5aE1: 5,
+    e5aSignalHealth: 0,
+    e5aDataValidity: false,
+    reserved: 0,
+  };
+  const galileoInav = {
+    ...galileoFnav,
+    type: "galileoInavEphemeris",
+    satelliteId: 3,
+    sisaIndex: 107,
+    bgdE5bE1: 7,
+    e5bSignalHealth: 0,
+    e5bDataValidity: false,
+    e1bSignalHealth: 0,
+    e1bDataValidity: false,
+  };
+  delete galileoInav.sisa;
+  delete galileoInav.e5aSignalHealth;
+  delete galileoInav.e5aDataValidity;
+
+  for (const message of [beidou, qzss, galileoFnav, galileoInav]) {
+    const back = decodeRtcmFrame(encodeRtcmFrame(message)).message;
+    assert.equal(back.type, message.type);
+    assert.equal(back.satelliteId, message.satelliteId);
+    assert.equal(back.sqrtA, message.sqrtA);
+  }
+});
+
+test("a real 1046 Galileo I/NAV frame decodes and re-encodes exactly", () => {
+  const frame = hexToBytes(
+    "d3003f4160d5e8076b06c941e03ffed3ffe33917f3a490e984d2089bf4f4011030b0343aa813ab5d41efffb7e44fe8cfff5277d0b011a2416397fffffc2280140700800a8e",
+  );
+  const message = decodeRtcmFrame(frame).message;
+  assert.equal(message.type, "galileoInavEphemeris");
+  assert.equal(message.messageNumber, 1046);
+  assert.equal(message.satelliteId, 3);
+  assert.equal(message.weekNumber, 1402);
+  assert.equal(message.iodNav, 7);
+  assert.equal(message.sqrtA, 2852448983n);
+  assert.deepEqual(encodeRtcmFrame(message), frame);
+});
+
 test("an MSM4 observation message built from scratch round-trips", () => {
   const msm = {
     type: "msm",

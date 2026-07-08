@@ -227,8 +227,5 @@ test("merge accepts string selectors and validates the system filter", () => {
   assert.throws(() => mergeSp3([bad], { systems: ["X"] }), TypeError);
 
   const badLabels = load("degenerate_coincident_5sat.sp3");
-  assert.throws(
-    () => mergeSp3([badLabels], { assertedFrameLabelSets: [["IGS14"]] }),
-    TypeError,
-  );
+  assert.throws(() => mergeSp3([badLabels], { assertedFrameLabelSets: [["IGS14"]] }), TypeError);
 });
