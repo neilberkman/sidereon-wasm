@@ -44,8 +44,12 @@ import {
   RaimWeights,
   caCode,
   caChip,
+  autocorrelation,
+  crossCorrelation,
+  correlationAt,
   replica,
   correlate,
+  correlateAgainst,
   acquire,
   coherentLoss,
   coherentLossDb,
@@ -597,6 +601,19 @@ test("signal ca code and replica match the rust oracle", () => {
   assert.throws(() => caCode(33n), RangeError);
 });
 
+test("signal code correlation helpers match circular core semantics", () => {
+  const codeA = Int8Array.from([1, -1, 1]);
+  const codeB = Int8Array.from([1, 1, -1]);
+
+  assert.ok(autocorrelation(codeA) instanceof Int32Array);
+  assert.deepEqual(Array.from(autocorrelation(codeA)), [3, -1, -1]);
+  assert.deepEqual(Array.from(crossCorrelation(codeA, codeB)), [-1, 3, -1]);
+  assert.equal(correlationAt(codeA, codeB, 1n), 3);
+
+  assert.throws(() => crossCorrelation(codeA, Int8Array.from([1, -1])), RangeError);
+  assert.throws(() => correlationAt(codeA, codeB, 9223372036854775807n), RangeError);
+});
+
 test("signal correlate and acquire match the rust oracle bits", () => {
   const prn = 5n;
   const fs = hf("0x1.f383000000000p+20");
@@ -627,6 +644,16 @@ test("signal correlate and acquire match the rust oracle bits", () => {
   assert.equal(f64Bits(correlation.q), f64Bits(hf("0x0.0p+0")));
   assert.equal(f64Bits(correlation.power), f64Bits(hf("0x1.0000000000000p+12")));
 
+  const explicit = correlateAgainst(
+    clean(64),
+    replica(prn, { sampleRateHz: fs, numSamples: 64, codePhaseChips: codePhase }),
+    fs,
+    doppler,
+  );
+  assert.equal(f64Bits(explicit.i), f64Bits(hf("0x1.0000000000000p+6")));
+  assert.equal(f64Bits(explicit.q), f64Bits(hf("0x0.0p+0")));
+  assert.equal(f64Bits(explicit.power), f64Bits(hf("0x1.0000000000000p+12")));
+
   const acquisition = acquire(clean(2046), prn, { sampleRateHz: fs });
   assert.equal(f64Bits(acquisition.codePhaseChips), f64Bits(codePhase));
   assert.equal(f64Bits(acquisition.dopplerHz), f64Bits(doppler));
@@ -644,6 +671,10 @@ test("signal correlate and acquire match the rust oracle bits", () => {
   assert.deepEqual(Array.from(acquisition.grid.dopplerHz), dopplerBins);
 
   assert.throws(() => correlate(Float64Array.from([1, 2, 3]), prn), TypeError);
+  assert.throws(
+    () => correlateAgainst(Float64Array.from([1, 2]), Int8Array.from([]), fs, 0),
+    RangeError,
+  );
 });
 
 test("signal loss helpers match the rust oracle bits", () => {

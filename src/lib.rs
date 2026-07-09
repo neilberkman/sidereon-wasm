@@ -232,7 +232,8 @@ pub use ntrip::{
     ntrip_request_bytes, parse_ntrip_sourcetable, NtripClientMachine, NtripState, NtripVersion,
 };
 pub use observables::{
-    acquire, ca_chip, ca_code, carrier_frequency_hz, coherent_loss, coherent_loss_db, correlate,
+    acquire, autocorrelation, ca_chip, ca_code, carrier_frequency_hz, coherent_loss,
+    coherent_loss_db, correlate, correlate_against, correlation_at, cross_correlation,
     default_pair, default_spp_frequency_hz_js, detect_cycle_slips, doppler_to_range_rate, gamma,
     geometry_free, glonass_g1_frequency_hz_js, ionosphere_free, ionosphere_free_phase_cycles,
     ionosphere_free_phase_m, ionosphere_free_pseudoranges, melbourne_wubbena, narrow_lane_code,

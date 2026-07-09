@@ -129,3 +129,69 @@ All required gates passed with exit code 0:
 - `npm run lint`
 - `cargo clippy --all-targets -- -D warnings`
 - `cargo fmt --check`
+
+## Run 2
+
+### #90 Fusion/inertial surface completion
+
+Partially closed, unchanged in this run. The existing wasm runtime already
+covers the committed GNSS/INS filter, time-sync replay, RTS smoother, state
+codec, loose/tight update, stationary update, and non-holonomic update subset
+from Run 1. No additional fusion runtime surface was committed in Run 2.
+
+Proof retained:
+- `fusion time-sync replay and state bytes match reference bits`
+- `fusion robust loose recorded RTS smoothing matches reference bits`
+- `fusion tight SP3 observation update matches reference bits`
+
+Remaining:
+- Python's broader constructor/class-model surface for inertial config and
+  state objects is still not mirrored as first-class wasm runtime classes.
+
+### #92 Signal analysis
+
+Partially closed. Added the missing GPS C/A correlation helper runtime exports
+that Python exposes over `sidereon_core::signal`: `autocorrelation`,
+`crossCorrelation`, `correlationAt`, and `correlateAgainst`. The new exports use
+typed array inputs/outputs in the generated declarations, so no postbuild
+overlay replacement was required.
+
+Proof:
+- `signal code correlation helpers match circular core semantics`
+- `signal correlate and acquire match the rust oracle bits`
+- Existing `signal analysis closed forms match reference bits`
+
+Remaining:
+- Python option helper classes remain represented in wasm as JS options objects
+  for the existing `replica`, `correlate`, and `acquire` calls.
+
+### #93 Terrain/geoid store
+
+Partially closed, unchanged in committed runtime surface. No new terrain export
+was committed in Run 2. The Python `DtedTile.from_path` surface is core-backed,
+but the wasm target cannot exercise that path because the core implementation
+uses `std::fs::read`, which returns "operation not supported" in this build, and
+core 0.24.0 does not expose a DTED tile byte parser. Adding it here would either
+be untestable or require reimplementing parser logic in the binding, so it was
+left out.
+
+Proof retained:
+- `DTED heightBatch matches scalar ORTHOMETRIC terrain lookups`
+- `mmap terrain store built from DTED fixtures matches DTED terrain`
+- `DTED terrain wrapper delegates lookup and validation to core`
+
+Remaining:
+- Single-tile DTED wrapper requires a core byte-constructor or another
+  testable core-backed path for wasm.
+- Python data-acquisition/network helpers remain intentionally out of scope.
+
+### Run 2 Gates
+
+All required gates passed with exit code 0:
+
+- `npm run build`
+- `npm test`
+- `npm run typecheck`
+- `npm run lint`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo fmt --check`
