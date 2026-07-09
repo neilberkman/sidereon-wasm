@@ -102,6 +102,42 @@ console.log(solution.rxClockS);  // receiver clock bias, seconds
 the same pattern: an options object in, a result object with `Float64Array`
 positions and scalar attributes out.
 
+## Example: post-solve integrity
+
+Use `raim` on per-satellite post-fit residuals after a solve. The direct result
+has `faultDetected`, `testStatistic`, `threshold`, `worstSat`,
+`reducedChiSquare`, `normalizedResiduals`, `rmsM`, and `dof`. RAIM residual
+tests must use per-satellite residual variances; unit weights on metre-scale
+residuals make `faultDetected` saturate near 100%. The JS API takes
+inverse-variance weights, so compute them from your variance model.
+
+```js
+import { RaimWeights, raim } from "@neilberkman/sidereon";
+
+const usedSats = ["G01", "G02", "G03", "G04", "G05", "G06"];
+const residualsM = [0.2, -0.1, 0.3, 0.2, 9.0, -0.2];
+const elevationDeg = [72, 42, 35, 64, 50, 28];
+const sigma0M = 0.8;
+const weights = Float64Array.from(
+  elevationDeg.map((el) => {
+    const sinEl = Math.max(Math.sin((el * Math.PI) / 180), 0.2);
+    const varianceM2 = (sigma0M / sinEl) ** 2;
+    return 1 / varianceM2;
+  }),
+);
+const integrity = raim(
+  { usedSats, residualsM },
+  { pFa: 1e-3, weights: RaimWeights.bySatellite(usedSats, weights) },
+);
+
+console.log(integrity.faultDetected, integrity.testStatistic, integrity.worstSat);
+```
+
+Use `araim(geometry, ism, allocation)` for protection levels from line-of-sight
+geometry and an integrity support message. `araimLpv200Allocation()` provides the
+default LPV-200 budget. The direct result has `hplM`, `vplM`, `sigmaAccHM`, and
+`sigmaAccVM`, plus the detailed monitor fields.
+
 ## Capabilities
 
 The wasm surface mirrors the full breadth of the engine:
@@ -122,7 +158,8 @@ The wasm surface mirrors the full breadth of the engine:
   elevation cutoff, optional tropospheric-gradient estimation, DGNSS,
   moving-baseline RTK, DOP, velocity, and a Huber-reweighted SPP driver that
   runs fault detection and exclusion (RAIM/FDE) with iterative reweighting.
-- **Integrity and error bounds:** multi-constellation ARAIM protection levels,
+- **Integrity and error bounds:** direct post-solve RAIM fault detection,
+  multi-constellation ARAIM protection levels,
   SBAS protection levels (DO-229), per-observation reliability (minimal
   detectable bias, internal/external), observability classification of every
   solution (rank, redundancy, conditioning), and covariance-derived error
