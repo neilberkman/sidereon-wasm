@@ -15,7 +15,7 @@ checked against IGS products.
 ## Install
 
 ```sh
-npm install @neilberkman/sidereon@0.23
+npm install @neilberkman/sidereon
 ```
 
 The package is dual ESM/CJS and ships prebuilt wasm with bundled TypeScript
@@ -153,11 +153,15 @@ The wasm surface mirrors the full breadth of the engine:
   per-satellite residual ledger.
 - **GNSS positioning:** SPP, public `solveStatic` multi-epoch static
   positioning with covariance, leave-one-out redundancy diagnostics, and
-  robust weighting, RTK (float/fixed), PPP (float/fixed), static PPP
-  temporal-correlation covariance with calibrated day-length bounds, optional
-  elevation cutoff, optional tropospheric-gradient estimation, DGNSS,
-  moving-baseline RTK, DOP, velocity, and a Huber-reweighted SPP driver that
-  runs fault detection and exclusion (RAIM/FDE) with iterative reweighting.
+  robust weighting, RINEX observation to SPP helpers
+  (`sppInputsFromRinexObs` and `solveSppFromRinexObs`), RTK (float/fixed,
+  sequential/static arcs, wide-lane fixed), PPP (float/fixed, including
+  SPP-seeded auto-init), static PPP temporal-correlation covariance with
+  calibrated day-length bounds, optional elevation cutoff, optional
+  tropospheric-gradient estimation, DGNSS, moving-baseline RTK, DOP, velocity,
+  RAIM over existing SPP solutions, broadcast-ephemeris FDE, and a
+  Huber-reweighted SPP driver that runs fault detection and exclusion
+  (RAIM/FDE) with iterative reweighting.
 - **Integrity and error bounds:** direct post-solve RAIM fault detection,
   multi-constellation ARAIM protection levels,
   SBAS protection levels (DO-229), per-observation reliability (minimal
@@ -197,7 +201,8 @@ The wasm surface mirrors the full breadth of the engine:
   conjunctions and oppositions, Sun/Moon/planet meridian transits.
 - **Atmosphere and Earth models:** Klobuchar and NeQuick-G ionosphere, IONEX
   slant delay, troposphere models, geoid undulation (EGM96), solid Earth and
-  pole tides, ocean tide loading, DTED terrain elevation lookup.
+  pole tides, ocean tide loading, DTED terrain elevation lookup with batch
+  queries, and memory-mappable terrain stores.
 - **RF link budget:** free-space path loss, EIRP, C/N0, antenna gain, Doppler
   shift and range rate.
 - **GNSS/INS fusion:** strapdown mechanization with an error-state EKF (UKF
@@ -212,7 +217,7 @@ The wasm surface mirrors the full breadth of the engine:
   same scenario and seed.
 - **Signal analysis:** closed-form BPSK/BOC spectra, spectral separation
   coefficients, DLL jitter, and multipath error envelopes against published
-  constants.
+  constants, plus GPS C/A correlation helpers.
 - **Format parsing and serialization:** TLE/OMM, CCSDS (OEM/OPM/CDM/TDM),
   RINEX observation/navigation/clock, CRINEX (Hatanaka), SP3, IONEX, ANTEX,
   Bias-SINEX, RTCM.
@@ -222,7 +227,8 @@ computes. Failures surface as the JS exception you would expect (`Error` for
 engine rejections such as parse failures, non-converging solves, and SGP4 error
 codes; `TypeError` for malformed input; `RangeError` for out-of-domain numbers).
 Full signatures live in the bundled TypeScript declarations (`sidereon.d.ts`),
-with the plain-object request types in `@neilberkman/sidereon/types`.
+with the plain-object request types in `@neilberkman/sidereon/types`, including
+typed ARAIM, RTK/PPP, fusion, signal-analysis, and terrain protocols.
 
 A few conventions to know: positions and state arrays cross as
 `Float64Array` (multi-epoch arrays are flat row-major, `3 * epochCount`); SGP4
