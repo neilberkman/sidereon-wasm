@@ -125,6 +125,7 @@ struct FaultModeJs {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AraimResultJs {
+    available: bool,
     hpl_m: f64,
     vpl_m: f64,
     sigma_acc_h_m: f64,
@@ -132,6 +133,7 @@ struct AraimResultJs {
     emt_m: f64,
     fault_modes: Vec<FaultModeJs>,
     p_unmonitored: f64,
+    /// Alias for `available`, kept for compatibility.
     availability: bool,
 }
 
@@ -352,6 +354,7 @@ fn fault_mode_from_core(value: sidereon_core::araim::FaultMode) -> FaultModeJs {
 
 fn result_from_core(value: sidereon_core::araim::AraimResult) -> AraimResultJs {
     AraimResultJs {
+        available: value.available,
         hpl_m: value.hpl_m,
         vpl_m: value.vpl_m,
         sigma_acc_h_m: value.sigma_acc_h_m,
@@ -363,7 +366,7 @@ fn result_from_core(value: sidereon_core::araim::AraimResult) -> AraimResultJs {
             .map(fault_mode_from_core)
             .collect(),
         p_unmonitored: value.p_unmonitored,
-        availability: value.availability,
+        availability: value.available,
     }
 }
 

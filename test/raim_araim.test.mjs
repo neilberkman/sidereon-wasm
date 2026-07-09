@@ -116,8 +116,55 @@ function wgCIsm() {
 test("direct araim returns protection levels from geometry", () => {
   const result = araim(wgCGeometry(), wgCIsm(), araimLpv200Allocation());
 
+  assert.equal(result.available, true);
+  assert.equal(result.availability, true);
   close(result.hplM, 14.5, 0.1, "HPL m");
   close(result.vplM, 19.2, 0.1, "VPL m");
   close(result.sigmaAccHM, 0.8695570268695054, 1e-12, "horizontal accuracy sigma m");
   close(result.sigmaAccVM, 1.47, 0.02, "vertical accuracy sigma m");
+});
+
+function sparseGpsGeometry() {
+  const s = 1 / Math.sqrt(3);
+  return {
+    receiver: { latRad: 0, lonRad: 0, heightM: 0 },
+    clockSystems: ["GPS"],
+    rows: [
+      { id: "G01", lineOfSight: [s, s, s], elevationRad: Math.PI / 2 },
+      { id: "G02", lineOfSight: [s, -s, -s], elevationRad: Math.PI / 2 },
+      { id: "G03", lineOfSight: [-s, s, -s], elevationRad: Math.PI / 2 },
+      { id: "G04", lineOfSight: [-s, -s, s], elevationRad: Math.PI / 2 },
+    ],
+  };
+}
+
+function sparseGpsIsm() {
+  return {
+    constellations: [
+      {
+        system: "GPS",
+        pConst: 0,
+        defaultSat: { sigmaUraM: 0.75, sigmaUreM: 0.5, bNomM: 0.75, pSat: 1e-5 },
+      },
+    ],
+  };
+}
+
+test("direct araim returns unavailable for sparse GPS geometry", () => {
+  const result = araim(sparseGpsGeometry(), sparseGpsIsm(), araimLpv200Allocation());
+
+  assert.equal(result.available, false);
+  assert.equal(result.availability, false);
+  assert.equal(result.hplM, Infinity);
+  assert.equal(result.vplM, Infinity);
+});
+
+test("direct araim reports a clear bad lineOfSight length", () => {
+  const geometry = sparseGpsGeometry();
+  geometry.rows[0] = { ...geometry.rows[0], lineOfSight: [1, 0] };
+
+  assert.throws(
+    () => araim(geometry, sparseGpsIsm(), araimLpv200Allocation()),
+    /lineOfSight|length 3|array of length 3/,
+  );
 });

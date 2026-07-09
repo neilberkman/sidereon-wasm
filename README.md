@@ -106,17 +106,28 @@ positions and scalar attributes out.
 
 Use `raim` on per-satellite post-fit residuals after a solve. The direct result
 has `faultDetected`, `testStatistic`, `threshold`, `worstSat`,
-`reducedChiSquare`, `normalizedResiduals`, `rmsM`, and `dof`.
+`reducedChiSquare`, `normalizedResiduals`, `rmsM`, and `dof`. RAIM residual
+tests must use per-satellite residual variances; unit weights on metre-scale
+residuals make `faultDetected` saturate near 100%. The JS API takes
+inverse-variance weights, so compute them from your variance model.
 
 ```js
-import { raim } from "@neilberkman/sidereon";
+import { RaimWeights, raim } from "@neilberkman/sidereon";
 
+const usedSats = ["G01", "G02", "G03", "G04", "G05", "G06"];
+const residualsM = [0.2, -0.1, 0.3, 0.2, 9.0, -0.2];
+const elevationDeg = [72, 42, 35, 64, 50, 28];
+const sigma0M = 0.8;
+const weights = Float64Array.from(
+  elevationDeg.map((el) => {
+    const sinEl = Math.max(Math.sin((el * Math.PI) / 180), 0.2);
+    const varianceM2 = (sigma0M / sinEl) ** 2;
+    return 1 / varianceM2;
+  }),
+);
 const integrity = raim(
-  {
-    usedSats: ["G01", "G02", "G03", "G04", "G05", "G06"],
-    residualsM: [0.2, -0.1, 0.3, 0.2, 9.0, -0.2],
-  },
-  { pFa: 1e-3 },
+  { usedSats, residualsM },
+  { pFa: 1e-3, weights: RaimWeights.bySatellite(usedSats, weights) },
 );
 
 console.log(integrity.faultDetected, integrity.testStatistic, integrity.worstSat);
