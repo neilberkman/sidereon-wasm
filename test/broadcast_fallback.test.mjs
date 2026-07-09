@@ -117,6 +117,26 @@ test("solveBroadcast solves a position from broadcast ephemeris alone", () => {
   );
 });
 
+test("BroadcastEphemeris.fde excludes a faulty broadcast SPP observation", () => {
+  const { request } = scenario();
+  const faulty = {
+    ...request,
+    observations: request.observations.map((observation, index) => ({
+      ...observation,
+      pseudorangeM: observation.pseudorangeM + (index === 0 ? 5000 : 0),
+    })),
+    pFa: 1e-3,
+    maxIterations: 4,
+  };
+
+  const clean = nav.solveBroadcast(request);
+  const fde = nav.fde(faulty);
+  assert.equal(fde.iterations, 4);
+  assert.equal(fde.excluded.length, 4);
+  assert.ok(fde.excluded.includes(request.observations[0].satelliteId));
+  assert.ok(norm3(sub3(Array.from(fde.positionM), Array.from(clean.positionM))) < 200);
+});
+
 test("fallback uses a precise product that covers the epoch, reporting an exact precise source", () => {
   const { request } = scenario();
 

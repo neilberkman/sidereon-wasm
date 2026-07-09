@@ -13,7 +13,6 @@ use std::str::FromStr;
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
-use sidereon_core::ephemeris::Sp3 as CoreSp3;
 use sidereon_core::positioning::{
     Corrections, EphemerisSource, KlobucharCoeffs, Observation, ReceiverSolution, RobustConfig,
     SolveInputs, SurfaceMet, DEFAULT_HUBER_K, DEFAULT_ROBUST_MAX_OUTER, DEFAULT_ROBUST_OUTER_TOL_M,
@@ -267,7 +266,7 @@ fn raim_options(req: &FdeRequest) -> Result<RaimOptions, JsValue> {
 }
 
 /// Run FDE against the given ephemeris under the core RAIM-gated exclusion loop.
-pub fn fde(eph: &CoreSp3, request: JsValue) -> Result<FdeSolution, JsValue> {
+pub fn fde(eph: &dyn EphemerisSource, request: JsValue) -> Result<FdeSolution, JsValue> {
     let req: FdeRequest = serde_wasm_bindgen::from_value(request)
         .map_err(|e| type_error(&format!("invalid FDE request: {e}")))?;
 
@@ -330,19 +329,14 @@ pub fn fde(eph: &CoreSp3, request: JsValue) -> Result<FdeSolution, JsValue> {
 
     let result = if let Some(robust) = &req.robust {
         quality::spp_robust_fde_driver(
-            eph as &dyn EphemerisSource,
+            eph,
             &inputs,
             req.with_geodetic,
             robust.to_config()?,
             &options,
         )
     } else {
-        quality::fde_spp(
-            eph as &dyn EphemerisSource,
-            &inputs,
-            req.with_geodetic,
-            &options,
-        )
+        quality::fde_spp(eph, &inputs, req.with_geodetic, &options)
     }
     .map_err(fde_error_to_js)?;
 

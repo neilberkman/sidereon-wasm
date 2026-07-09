@@ -1,7 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { araim, araimLpv200Allocation, RaimWeights, raim } from "../pkg-node/sidereon.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+import {
+  araim,
+  araimLpv200Allocation,
+  loadSp3,
+  RaimWeights,
+  raim,
+  raimForSolution,
+} from "../pkg-node/sidereon.js";
+
+const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 
 const close = (actual, expected, tol, label) =>
   assert.ok(Math.abs(actual - expected) <= tol, `${label}: ${actual} vs ${expected}`);
@@ -50,6 +62,37 @@ test("direct raim builds weights from elevation and cn0 entries", () => {
   });
   close(weighted.testStatistic, 16.22, 1e-12, "class weight statistic");
   assert.equal(weighted.normalizedResiduals.G05, 4.0);
+});
+
+test("raimForSolution runs over a real SPP solution", () => {
+  const sp3 = loadSp3(
+    readFileSync(here("./fixtures/sp3/GBM0MGXRAP_20201770000_01D_05M_ORB_120epoch.sp3")),
+  );
+  const tRx = sp3.epochsJ2000Seconds()[12];
+  const rx = [3582105.291, 532589.7313, 5232754.8054];
+  const observations = ["G05", "G07", "G08", "G10", "G13", "G15"].map((satelliteId) => {
+    const state = sp3.interpolate(satelliteId, Float64Array.of(tRx));
+    const range = Math.hypot(
+      state.positionM[0] - rx[0],
+      state.positionM[1] - rx[1],
+      state.positionM[2] - rx[2],
+    );
+    return { satelliteId, pseudorangeM: range - 299792458.0 * state.clockS[0] };
+  });
+  const solution = sp3.solveSpp({
+    observations,
+    tRxJ2000S: tRx,
+    tRxSecondOfDayS: 3600,
+    dayOfYear: 177,
+    initialGuess: [rx[0], rx[1], rx[2], 0],
+    corrections: { ionosphere: false, troposphere: false },
+  });
+
+  const result = raimForSolution(solution, { pFa: 1e-3 });
+  assert.equal(result.faultDetected, true);
+  assert.equal(result.dof, solution.usedSats.length - 4);
+  assert.equal(result.worstSat, "G08");
+  close(result.testStatistic, 19.00967387255123, 1e-9, "solution RAIM statistic");
 });
 
 const WG_C_ROWS = [

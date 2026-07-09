@@ -10,14 +10,15 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::quality::{
-    self, raim as core_raim, raim_fde_design, PseudorangeVarianceModel, PseudorangeVarianceOptions,
-    QualityError, RaimInput as CoreRaimInput, RaimOptions as CoreRaimOptions,
-    RaimResult as CoreRaimResult, RaimWeights as CoreRaimWeights, RangeChiSquareTest,
-    RangeFdeOptions, RangeFdeResult, RangeFdeRow, RangeMeasurementDiagnostic,
+    self, raim as core_raim, raim_fde_design, raim_for_solution as core_raim_for_solution,
+    PseudorangeVarianceModel, PseudorangeVarianceOptions, QualityError, RaimInput as CoreRaimInput,
+    RaimOptions as CoreRaimOptions, RaimResult as CoreRaimResult, RaimWeights as CoreRaimWeights,
+    RangeChiSquareTest, RangeFdeOptions, RangeFdeResult, RangeFdeRow, RangeMeasurementDiagnostic,
     WeightEntry as CoreWeightEntry,
 };
 
 use crate::error::{engine_error, range_error, type_error};
+use crate::spp::SppSolution;
 
 fn serializer() -> serde_wasm_bindgen::Serializer {
     serde_wasm_bindgen::Serializer::new()
@@ -335,6 +336,33 @@ pub fn raim(input: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
     let core_options = options_input.to_core(explicit_weights)?;
     let result = core_raim(&core_input, &core_options).map_err(quality_error)?;
     to_js(&result_from_core(result, &core_input))
+}
+
+/// Run residual chi-square RAIM directly over an existing SPP solution.
+///
+/// `solution` is a `SppSolution` from `solveSpp`, `solveBroadcast`, fallback,
+/// or a RINEX OBS convenience result. `options` is the same `RaimOptions` object
+/// accepted by `raim`; omit it for the core defaults.
+#[wasm_bindgen(js_name = raimForSolution)]
+pub fn raim_for_solution(solution: &SppSolution, options: JsValue) -> Result<JsValue, JsValue> {
+    let options: RaimOptionsInput = if options.is_undefined() || options.is_null() {
+        RaimOptionsInput::default()
+    } else {
+        serde_wasm_bindgen::from_value(options)
+            .map_err(|e| type_error(&format!("invalid RAIM options: {e}")))?
+    };
+    let options = options.to_core(None)?;
+    let result = core_raim_for_solution(&solution.inner, &options).map_err(quality_error)?;
+    let input = CoreRaimInput {
+        used_sats: solution
+            .inner
+            .used_sats
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        residuals_m: solution.inner.residuals_m.clone(),
+    };
+    to_js(&result_from_core(result, &input))
 }
 
 /// One linearized range measurement: `{ id, residualM, designRow, weight }`.

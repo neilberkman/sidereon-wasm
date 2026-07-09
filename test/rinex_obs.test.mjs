@@ -13,6 +13,8 @@ import {
   SignalPolicy,
   ObservationFilter,
   parseRinexNav,
+  sppInputsFromRinexObs,
+  solveSppFromRinexObs,
 } from "../pkg-node/sidereon.js";
 
 import { fixture, fixtureText } from "./helpers.mjs";
@@ -145,4 +147,29 @@ test("toRinexString re-parses to the same header and epochs", () => {
   assert.equal(reparsed.header.markerName, obs.header.markerName);
   // Deterministic: re-encoding the re-parsed product is byte-identical.
   assert.equal(reparsed.toRinexString(), text);
+});
+
+test("RINEX OBS convenience assembles and solves SPP through broadcast NAV", () => {
+  const obs = parseRinexObs(fixture(ESBC));
+  const nav = parseRinexNav(fixture("nav/ESBC00DNK_R_20201770000_01D_MN.rnx"));
+  const rinexOptions = {
+    corrections: { ionosphere: false, troposphere: false },
+    signalPolicy: { G: ["C1C"], E: ["C1C"], C: ["C2I"], R: ["C1C"] },
+  };
+
+  const inputs = sppInputsFromRinexObs(nav, obs, rinexOptions);
+  assert.equal(inputs.length, 2);
+  assert.equal(inputs[0].epochIndex, 0);
+  assert.equal(inputs[0].epoch.second, 0);
+  assert.ok(inputs[0].observations.length >= 20);
+  assert.ok(inputs[0].observations.some((row) => row.satelliteId === "G05"));
+
+  const batch = solveSppFromRinexObs(nav, obs, rinexOptions, { withGeodetic: true });
+  assert.equal(batch.count, 2);
+  assert.equal(batch.epochIndex(0), 0);
+  assert.equal(batch.isOk(0), true);
+  const solution = batch.solution(0);
+  assert.ok(solution.usedSats.length >= 4);
+  assert.ok(Math.hypot(...solution.positionM) > 6.0e6);
+  assert.equal(batch.error(0), undefined);
 });
