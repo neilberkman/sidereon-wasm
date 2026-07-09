@@ -594,6 +594,16 @@ impl BroadcastEphemeris {
             core_solve_broadcast(&self.inner, &inputs, with_geodetic).map_err(engine_error)?;
         Ok(SppSolution::from_inner(solution))
     }
+
+    /// Run fault detection and exclusion against this broadcast ephemeris.
+    ///
+    /// `request` is the SPP solve request plus the RAIM/exclusion options, the
+    /// same object accepted by `Sp3.fde`. Delegates to
+    /// `sidereon_core::quality::fde_spp` over the broadcast store.
+    #[wasm_bindgen(js_name = fde)]
+    pub fn fde(&self, request: JsValue) -> Result<crate::qc::FdeSolution, JsValue> {
+        crate::qc::fde(&self.inner, request)
+    }
 }
 
 /// Solve a receiver position, preferring precise SP3 products and falling back to

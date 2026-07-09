@@ -1375,6 +1375,24 @@ pub fn ca_chip(prn: i64, index: i64) -> Result<i8, JsValue> {
     signal::ca_chip(prn, index).map_err(domain_error)
 }
 
+/// Circular autocorrelation over all lags for a bipolar code vector.
+#[wasm_bindgen]
+pub fn autocorrelation(code: &[i8]) -> Vec<i32> {
+    signal::autocorrelation(code)
+}
+
+/// Circular cross-correlation over all lags for two equal-length bipolar codes.
+#[wasm_bindgen(js_name = crossCorrelation)]
+pub fn cross_correlation(code_a: &[i8], code_b: &[i8]) -> Result<Vec<i32>, JsValue> {
+    signal::cross_correlation(code_a, code_b).map_err(domain_error)
+}
+
+/// Single-lag circular correlation for two equal-length bipolar codes.
+#[wasm_bindgen(js_name = correlationAt)]
+pub fn correlation_at(code_a: &[i8], code_b: &[i8], lag: i64) -> Result<i32, JsValue> {
+    signal::correlation_at(code_a, code_b, lag).map_err(domain_error)
+}
+
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct ReplicaOptionsInput {
@@ -1593,6 +1611,29 @@ pub fn correlate(iq: &[f64], prn: i64, options: JsValue) -> Result<CorrelationRe
     signal::correlate(&iq, prn, options)
         .map(|inner| CorrelationResult { inner })
         .map_err(domain_error)
+}
+
+/// Coherently correlate interleaved IQ samples against an explicit bipolar code.
+///
+/// `iq` is `[i0, q0, i1, q1, ...]`. The coherent sum follows the core
+/// `zip(iq, code)` semantics and therefore uses the shorter non-empty input.
+#[wasm_bindgen(js_name = correlateAgainst)]
+pub fn correlate_against(
+    iq: &[f64],
+    code: &[i8],
+    sample_rate_hz: f64,
+    doppler_hz: f64,
+) -> Result<CorrelationResult, JsValue> {
+    let iq = iq_samples("iq", iq)?;
+    let (i, q) =
+        signal::correlate_against(&iq, code, sample_rate_hz, doppler_hz).map_err(domain_error)?;
+    Ok(CorrelationResult {
+        inner: CoreCorrelationResult {
+            i,
+            q,
+            power: i * i + q * q,
+        },
+    })
 }
 
 /// Acquire a GPS C/A PRN by direct code-phase and Doppler search. `samples` is

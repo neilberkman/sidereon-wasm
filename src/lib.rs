@@ -232,7 +232,8 @@ pub use ntrip::{
     ntrip_request_bytes, parse_ntrip_sourcetable, NtripClientMachine, NtripState, NtripVersion,
 };
 pub use observables::{
-    acquire, ca_chip, ca_code, carrier_frequency_hz, coherent_loss, coherent_loss_db, correlate,
+    acquire, autocorrelation, ca_chip, ca_code, carrier_frequency_hz, coherent_loss,
+    coherent_loss_db, correlate, correlate_against, correlation_at, cross_correlation,
     default_pair, default_spp_frequency_hz_js, detect_cycle_slips, doppler_to_range_rate, gamma,
     geometry_free, glonass_g1_frequency_hz_js, ionosphere_free, ionosphere_free_phase_cycles,
     ionosphere_free_phase_m, ionosphere_free_pseudoranges, melbourne_wubbena, narrow_lane_code,
@@ -274,7 +275,7 @@ pub use precise_samples::{
 };
 pub use propagation::{propagate_state, Ephemeris};
 pub use qc::FdeSolution;
-pub use raim::{raim, raim_fde_design_js};
+pub use raim::{raim, raim_fde_design_js, raim_for_solution};
 pub use reduced_orbit::{
     fit_piecewise_reduced_orbit, fit_piecewise_reduced_orbit_sp3, fit_piecewise_reduced_orbit_tle,
     fit_reduced_orbit, fit_reduced_orbit_sp3, fit_reduced_orbit_tle, PiecewiseOrbit,
@@ -364,7 +365,10 @@ pub use space_weather::{
     parse_space_weather_txt, SpaceWeatherTable,
 };
 pub use spk::{Spk, SpkSegment, SpkState};
-pub use spp::{SppBatchSolution, SppDopplerSolution, SppSolution};
+pub use spp::{
+    solve_spp_from_rinex_obs_js, spp_inputs_from_rinex_obs_js, RinexSppSolutionBatch,
+    SppBatchSolution, SppDopplerSolution, SppSolution,
+};
 pub use ssr::{decode_ssr, ssr_corrected_state, ssr_source_label, SsrCorrectionStore, SsrSource};
 pub use staleness::{
     select_ionex_js, select_ionex_over_range_js, select_sp3_js, select_sp3_over_range_js,
