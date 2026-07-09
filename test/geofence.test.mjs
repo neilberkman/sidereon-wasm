@@ -48,9 +48,24 @@ test("geofence containment probability and crossing parity", () => {
 
   assert.equal(fence.contains(...center), true);
   assert.equal(fence.contains(...outsideNorth), false);
-  assertCloseRel(fence.distanceToBoundary(...center), f64FromBits(0x409146f89a157d9an), 1e-9, "distance center");
-  assertCloseRel(fence.distanceToBoundary(...nearNorthEdge), f64FromBits(0x40361d684277dc4bn), 1e-9, "distance near edge");
-  assertCloseRel(fence.distanceToBoundary(...outsideNorth), f64FromBits(0xc06ba4c0cbfd9d52n), 1e-9, "distance outside");
+  assertCloseRel(
+    fence.distanceToBoundary(...center),
+    f64FromBits(0x409146f89a157d9an),
+    1e-9,
+    "distance center",
+  );
+  assertCloseRel(
+    fence.distanceToBoundary(...nearNorthEdge),
+    f64FromBits(0x40361d684277dc4bn),
+    1e-9,
+    "distance near edge",
+  );
+  assertCloseRel(
+    fence.distanceToBoundary(...outsideNorth),
+    f64FromBits(0xc06ba4c0cbfd9d52n),
+    1e-9,
+    "distance outside",
+  );
   assertCloseAbs(
     fence.containmentProbability(...nearNorthEdge, uncertainty, undefined),
     f64FromBits(0x3febb2d770633baan),

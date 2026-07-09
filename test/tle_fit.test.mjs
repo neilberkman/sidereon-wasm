@@ -68,15 +68,35 @@ test("fitTle recovers a core-pinned TLE and OMM from propagated samples", () => 
   assert.equal(fit.omm.objectId, "1998-067A");
   assert.equal(fit.omm.epoch.iso8601, "2018-07-03T19:25:57.304112613201141");
 
-  assertCloseRel(fit.stats.rms_position_km, f64FromBits(0x3f16b6c5b2fdd699n), 1e-3, "stats.rms_position_km");
-  assertCloseRel(fit.stats.max_position_km, f64FromBits(0x3f21f40358bd1e50n), 1e-3, "stats.max_position_km");
+  assertCloseRel(
+    fit.stats.rms_position_km,
+    f64FromBits(0x3f16b6c5b2fdd699n),
+    1e-3,
+    "stats.rms_position_km",
+  );
+  assertCloseRel(
+    fit.stats.max_position_km,
+    f64FromBits(0x3f21f40358bd1e50n),
+    1e-3,
+    "stats.max_position_km",
+  );
   assert.deepEqual(bits(fit.stats.rms_position_axes_km), [
     "0x3f0ab48fe4491db2",
     "0x3ef562b5e3f709df",
     "0x3f119467e55ede03",
   ]);
-  assertCloseRel(fit.stats.rms_velocity_km_s, f64FromBits(0x3e9c2faecae62509n), 1e-3, "stats.rms_velocity_km_s");
-  assertCloseRel(fit.stats.tle_rms_position_km, f64FromBits(0x3f7ec36ba1b07a29n), 1e-3, "stats.tle_rms_position_km");
+  assertCloseRel(
+    fit.stats.rms_velocity_km_s,
+    f64FromBits(0x3e9c2faecae62509n),
+    1e-3,
+    "stats.rms_velocity_km_s",
+  );
+  assertCloseRel(
+    fit.stats.tle_rms_position_km,
+    f64FromBits(0x3f7ec36ba1b07a29n),
+    1e-3,
+    "stats.tle_rms_position_km",
+  );
   assert.equal(fit.stats.status, 3);
   assert.ok(fit.stats.nfev > 0 && fit.stats.nfev < 200);
   assert.ok(fit.stats.njev > 0 && fit.stats.njev < 100);
@@ -89,11 +109,36 @@ test("fitTle recovers a core-pinned TLE and OMM from propagated samples", () => 
   assert.equal(f64Bits(fit.elements.epoch[1]), 0x3fd3d1fa48800000n);
   assert.ok(Number.isFinite(fit.elements.bstar)); // unobservable; value is platform-fragile
   assertCloseRel(fit.elements.eccentricity, f64FromBits(0x3f39ec4ed0714d2an), 1e-6, "eccentricity");
-  assertCloseRel(fit.elements.argument_of_perigee_deg, f64FromBits(0x406ceed54ef04e01n), 1e-6, "argument_of_perigee_deg");
-  assertCloseRel(fit.elements.inclination_deg, f64FromBits(0x4049d2268084f515n), 1e-9, "inclination_deg");
-  assertCloseRel(fit.elements.mean_anomaly_deg, f64FromBits(0x40606f302ff8e5d7n), 1e-6, "mean_anomaly_deg");
-  assertCloseRel(fit.elements.mean_motion_rev_per_day, f64FromBits(0x402f15872a417487n), 1e-9, "mean_motion_rev_per_day");
-  assertCloseRel(fit.elements.right_ascension_deg, f64FromBits(0x407151f5ba40ee40n), 1e-9, "right_ascension_deg");
+  assertCloseRel(
+    fit.elements.argument_of_perigee_deg,
+    f64FromBits(0x406ceed54ef04e01n),
+    1e-6,
+    "argument_of_perigee_deg",
+  );
+  assertCloseRel(
+    fit.elements.inclination_deg,
+    f64FromBits(0x4049d2268084f515n),
+    1e-9,
+    "inclination_deg",
+  );
+  assertCloseRel(
+    fit.elements.mean_anomaly_deg,
+    f64FromBits(0x40606f302ff8e5d7n),
+    1e-6,
+    "mean_anomaly_deg",
+  );
+  assertCloseRel(
+    fit.elements.mean_motion_rev_per_day,
+    f64FromBits(0x402f15872a417487n),
+    1e-9,
+    "mean_motion_rev_per_day",
+  );
+  assertCloseRel(
+    fit.elements.right_ascension_deg,
+    f64FromBits(0x407151f5ba40ee40n),
+    1e-9,
+    "right_ascension_deg",
+  );
   assert.equal(fit.elements.catalog_number, 25544);
 
   const fitted = new Tle(fit.line1, fit.line2);
