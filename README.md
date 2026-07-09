@@ -15,7 +15,7 @@ checked against IGS products.
 ## Install
 
 ```sh
-npm install @neilberkman/sidereon
+npm install @neilberkman/sidereon@0.23
 ```
 
 The package is dual ESM/CJS and ships prebuilt wasm with bundled TypeScript
@@ -99,7 +99,7 @@ console.log(solution.rxClockS);  // receiver clock bias, seconds
 ```
 
 `solveRtkFloat` / `solveRtkFixed` and `solvePppFloat` / `solvePppFixed` follow
-the same shape: an options object in, a result object with `Float64Array`
+the same pattern: an options object in, a result object with `Float64Array`
 positions and scalar attributes out.
 
 ## Capabilities
@@ -115,9 +115,13 @@ The wasm surface mirrors the full breadth of the engine:
   batch least-squares orbit fitting against precise ephemerides (including
   terrestrial-frame SP3 through the Earth-orientation chain) with a
   per-satellite residual ledger.
-- **GNSS positioning:** SPP, RTK (float/fixed), PPP (float/fixed), DGNSS,
-  moving-baseline RTK, DOP, velocity, and a robust SPP driver that runs fault
-  detection and exclusion (RAIM/FDE) with iterative reweighting.
+- **GNSS positioning:** SPP, public `solveStatic` multi-epoch static
+  positioning with covariance, leave-one-out redundancy diagnostics, and
+  robust weighting, RTK (float/fixed), PPP (float/fixed), static PPP
+  temporal-correlation covariance with calibrated day-length bounds, optional
+  elevation cutoff, optional tropospheric-gradient estimation, DGNSS,
+  moving-baseline RTK, DOP, velocity, and a Huber-reweighted SPP driver that
+  runs fault detection and exclusion (RAIM/FDE) with iterative reweighting.
 - **Integrity and error bounds:** multi-constellation ARAIM protection levels,
   SBAS protection levels (DO-229), per-observation reliability (minimal
   detectable bias, internal/external), observability classification of every
@@ -125,11 +129,13 @@ The wasm surface mirrors the full breadth of the engine:
   metrics (CEP, R95, SEP, error ellipse) that report wide or flagged bounds
   for weak geometry rather than fabricated confidence.
 - **GNSS corrections and biases:** SBAS message decoding with SBAS-corrected
-  solves, RTCM SSR orbit and clock correction streams, Bias-SINEX code and
-  phase biases (DCB/OSB).
+  solves, RTCM SSR orbit and clock correction streams, RTCM 3 broadcast
+  ephemeris decode for GPS (1019), GLONASS (1020), Galileo (1045/1046),
+  BeiDou (1042), and QZSS (1044), each real-data validated, Bias-SINEX code
+  and phase biases (DCB/OSB).
 - **Timing, estimation, and geodesy:** Allan-family clock stability with
   power-law noise identification (IEEE 1139), scalar Kalman and alpha-beta
-  trackers, CFAR detection thresholds, source localization (ToA/TDOA), robust
+  trackers, CFAR detection thresholds, source localization (ToA/TDOA),
   station velocity (MIDAS) with trajectory fitting and step detection,
   repeating-geometry (sidereal) filtering, geodesic direct and inverse
   problems (Karney), an epoch-aware terrestrial frame catalog (ITRF/ETRF
@@ -158,7 +164,7 @@ The wasm surface mirrors the full breadth of the engine:
 - **RF link budget:** free-space path loss, EIRP, C/N0, antenna gain, Doppler
   shift and range rate.
 - **GNSS/INS fusion:** strapdown mechanization with an error-state EKF (UKF
-  option), loose and tight coupling, robust loose updates, an RTS smoother,
+  option), loose and tight coupling, IGG-III loose updates, an RTS smoother,
   a serializable filter state, and field mode (zero-velocity and
   zero-angular-rate updates, non-holonomic constraints, per-fix-status
   weighting, IMU-to-body mounting matrix), all off by default.
@@ -179,9 +185,9 @@ computes. Failures surface as the JS exception you would expect (`Error` for
 engine rejections such as parse failures, non-converging solves, and SGP4 error
 codes; `TypeError` for malformed input; `RangeError` for out-of-domain numbers).
 Full signatures live in the bundled TypeScript declarations (`sidereon.d.ts`),
-with the plain-object request shapes in `@neilberkman/sidereon/types`.
+with the plain-object request types in `@neilberkman/sidereon/types`.
 
-A few conventions worth knowing: positions and state arrays cross as
+A few conventions to know: positions and state arrays cross as
 `Float64Array` (multi-epoch arrays are flat row-major, `3 * epochCount`); SGP4
 epoch grids are `BigInt64Array` of unix microseconds; SP3 query epochs are plain
 numbers in seconds since J2000.
