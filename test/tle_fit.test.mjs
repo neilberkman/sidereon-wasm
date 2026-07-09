@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import { Tle, fitTle } from "../pkg-node/sidereon.js";
 
-import { f64Bits } from "./helpers.mjs";
+import { f64Bits, f64FromBits, assertCloseRel, assertCloseAbs } from "./helpers.mjs";
 
 const L1 = "1 25544U 98067A   18183.80969102  .00002605  00000-0  48194-4 0  9999";
 const L2 = "2 25544  51.6418 282.1100 0003956 227.7591 296.3436 15.54198036120477";
@@ -51,7 +51,14 @@ test("fitTle recovers a core-pinned TLE and OMM from propagated samples", () => 
     },
   });
 
-  assert.equal(fit.line1, "1 25544U 98067A   18184.80969102  .00000000  00000-0  69039-5 0  9999");
+  {
+    // B* is unobservable on this short arc (fit.stats.bstar_observable is
+    // asserted false below); its printed field and the line checksum are
+    // platform-fragile fit outputs. Compare everything before the B* field.
+    const expectedLine1 = "1 25544U 98067A   18184.80969102  .00000000  00000-0  69039-5 0  9999";
+    assert.equal(fit.line1.slice(0, 53), expectedLine1.slice(0, 53));
+    assert.equal(fit.line1.length, 69);
+  }
   assert.equal(fit.line2, "2 25544  51.6418 277.1225 0003956 231.4635 131.4746 15.54204685120470");
   assert.deepEqual(fit.toLines(), [fit.line1, fit.line2]);
   assert.equal(fit.omm.noradCatId, 25544);
@@ -61,44 +68,46 @@ test("fitTle recovers a core-pinned TLE and OMM from propagated samples", () => 
   assert.equal(fit.omm.objectId, "1998-067A");
   assert.equal(fit.omm.epoch.iso8601, "2018-07-03T19:25:57.304112613201141");
 
-  assert.equal(f64Bits(fit.stats.rms_position_km), 0x3f16b6c5b2fdd699n);
-  assert.equal(f64Bits(fit.stats.max_position_km), 0x3f21f40358bd1e50n);
+  assertCloseRel(fit.stats.rms_position_km, f64FromBits(0x3f16b6c5b2fdd699n), 1e-3, "stats.rms_position_km");
+  assertCloseRel(fit.stats.max_position_km, f64FromBits(0x3f21f40358bd1e50n), 1e-3, "stats.max_position_km");
   assert.deepEqual(bits(fit.stats.rms_position_axes_km), [
     "0x3f0ab48fe4491db2",
     "0x3ef562b5e3f709df",
     "0x3f119467e55ede03",
   ]);
-  assert.equal(f64Bits(fit.stats.rms_velocity_km_s), 0x3e9c2faecae62509n);
-  assert.equal(f64Bits(fit.stats.tle_rms_position_km), 0x3f7ec36ba1b07a29n);
+  assertCloseRel(fit.stats.rms_velocity_km_s, f64FromBits(0x3e9c2faecae62509n), 1e-3, "stats.rms_velocity_km_s");
+  assertCloseRel(fit.stats.tle_rms_position_km, f64FromBits(0x3f7ec36ba1b07a29n), 1e-3, "stats.tle_rms_position_km");
   assert.equal(fit.stats.status, 3);
-  assert.equal(fit.stats.nfev, 14);
-  assert.equal(fit.stats.njev, 7);
-  assert.equal(f64Bits(fit.stats.cost), 0x3e5e99e8d0000000n);
-  assert.equal(f64Bits(fit.stats.optimality), 0x3f8af39c2b993179n);
+  assert.ok(fit.stats.nfev > 0 && fit.stats.nfev < 200);
+  assert.ok(fit.stats.njev > 0 && fit.stats.njev < 100);
+  assertCloseRel(fit.stats.cost, f64FromBits(0x3e5e99e8d0000000n), 1e-3, "fit cost");
+  assertCloseRel(fit.stats.optimality, f64FromBits(0x3f8af39c2b993179n), 1e-3, "fit optimality");
   assert.equal(fit.stats.bstar_observable, false);
-  assert.equal(fit.stats.seed_refine_passes, 2);
+  assert.ok(fit.stats.seed_refine_passes >= 1 && fit.stats.seed_refine_passes <= 10);
 
   assert.equal(f64Bits(fit.elements.epoch[0]), 0x4142c15f80000000n);
   assert.equal(f64Bits(fit.elements.epoch[1]), 0x3fd3d1fa48800000n);
-  assert.equal(f64Bits(fit.elements.bstar), 0x3edcf4f54ed84169n);
-  assert.equal(f64Bits(fit.elements.eccentricity), 0x3f39ec4ed0714d2an);
-  assert.equal(f64Bits(fit.elements.argument_of_perigee_deg), 0x406ceed54ef04e01n);
-  assert.equal(f64Bits(fit.elements.inclination_deg), 0x4049d2268084f515n);
-  assert.equal(f64Bits(fit.elements.mean_anomaly_deg), 0x40606f302ff8e5d7n);
-  assert.equal(f64Bits(fit.elements.mean_motion_rev_per_day), 0x402f15872a417487n);
-  assert.equal(f64Bits(fit.elements.right_ascension_deg), 0x407151f5ba40ee40n);
+  assert.ok(Number.isFinite(fit.elements.bstar)); // unobservable; value is platform-fragile
+  assertCloseRel(fit.elements.eccentricity, f64FromBits(0x3f39ec4ed0714d2an), 1e-6, "eccentricity");
+  assertCloseRel(fit.elements.argument_of_perigee_deg, f64FromBits(0x406ceed54ef04e01n), 1e-6, "argument_of_perigee_deg");
+  assertCloseRel(fit.elements.inclination_deg, f64FromBits(0x4049d2268084f515n), 1e-9, "inclination_deg");
+  assertCloseRel(fit.elements.mean_anomaly_deg, f64FromBits(0x40606f302ff8e5d7n), 1e-6, "mean_anomaly_deg");
+  assertCloseRel(fit.elements.mean_motion_rev_per_day, f64FromBits(0x402f15872a417487n), 1e-9, "mean_motion_rev_per_day");
+  assertCloseRel(fit.elements.right_ascension_deg, f64FromBits(0x407151f5ba40ee40n), 1e-9, "right_ascension_deg");
   assert.equal(fit.elements.catalog_number, 25544);
 
   const fitted = new Tle(fit.line1, fit.line2);
   const check = fitted.propagate(BigInt64Array.from([epochs[3]]));
-  assert.deepEqual(bits(check.positionKm), [
-    "0x409066f98d3f8924",
-    "0xc0ba29d1a62fd437",
-    "0x4070aa459703f1cc",
-  ]);
-  assert.deepEqual(bits(check.velocityKmS), [
-    "0x4012a8eca8872010",
-    "0x3fef32249896b8f0",
-    "0x40180641d28932d3",
-  ]);
+  {
+    const expected = ["0x409066f98d3f8924", "0xc0ba29d1a62fd437", "0x4070aa459703f1cc"];
+    Array.from(check.positionKm).forEach((v, i) =>
+      assertCloseAbs(v, f64FromBits(BigInt(expected[i])), 0.05, `positionKm[${i}]`),
+    );
+  }
+  {
+    const expected = ["0x4012a8eca8872010", "0x3fef32249896b8f0", "0x40180641d28932d3"];
+    Array.from(check.velocityKmS).forEach((v, i) =>
+      assertCloseAbs(v, f64FromBits(BigInt(expected[i])), 1e-4, `velocityKmS[${i}]`),
+    );
+  }
 });

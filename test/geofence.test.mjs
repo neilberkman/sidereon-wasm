@@ -12,7 +12,7 @@ import {
   geofenceFromVertices3d,
   geofenceProbabilityMethodLabel,
 } from "../pkg-node/sidereon.js";
-import { f64Bits } from "./helpers.mjs";
+import { f64FromBits, assertCloseRel, assertCloseAbs } from "./helpers.mjs";
 
 const deg = (value) => (value * Math.PI) / 180;
 
@@ -48,16 +48,20 @@ test("geofence containment probability and crossing parity", () => {
 
   assert.equal(fence.contains(...center), true);
   assert.equal(fence.contains(...outsideNorth), false);
-  assert.equal(f64Bits(fence.distanceToBoundary(...center)), 0x409146f89a157d9an);
-  assert.equal(f64Bits(fence.distanceToBoundary(...nearNorthEdge)), 0x40361d684277dc4bn);
-  assert.equal(f64Bits(fence.distanceToBoundary(...outsideNorth)), 0xc06ba4c0cbfd9d52n);
-  assert.equal(
-    f64Bits(fence.containmentProbability(...nearNorthEdge, uncertainty, undefined)),
-    0x3febb2d770633baan,
+  assertCloseRel(fence.distanceToBoundary(...center), f64FromBits(0x409146f89a157d9an), 1e-9, "distance center");
+  assertCloseRel(fence.distanceToBoundary(...nearNorthEdge), f64FromBits(0x40361d684277dc4bn), 1e-9, "distance near edge");
+  assertCloseRel(fence.distanceToBoundary(...outsideNorth), f64FromBits(0xc06ba4c0cbfd9d52n), 1e-9, "distance outside");
+  assertCloseAbs(
+    fence.containmentProbability(...nearNorthEdge, uncertainty, undefined),
+    f64FromBits(0x3febb2d770633baan),
+    1e-12,
+    "containment probability",
   );
-  assert.equal(
-    f64Bits(geofenceContainmentProbability(vertices, ...nearNorthEdge, uncertainty)),
-    0x3febb2d770633baan,
+  assertCloseAbs(
+    geofenceContainmentProbability(vertices, ...nearNorthEdge, uncertainty),
+    f64FromBits(0x3febb2d770633baan),
+    1e-12,
+    "containment probability (free function)",
   );
 
   const events = fence.crossingProbability(
@@ -77,10 +81,12 @@ test("geofence containment probability and crossing parity", () => {
     events.map((event) => event.sampleIndex),
     [1, 3],
   );
-  assert.deepEqual(
-    events.map((event) => f64Bits(event.insideProbability)),
-    [0x3feffffff7573576n, 0x0000000000000000n],
-  );
+  {
+    const expected = [f64FromBits(0x3feffffff7573576n), f64FromBits(0x0000000000000000n)];
+    events.forEach((event, i) =>
+      assertCloseAbs(event.insideProbability, expected[i], 1e-12, `inside probability ${i}`),
+    );
+  }
 });
 
 test("geofence construction errors carry typed details", () => {

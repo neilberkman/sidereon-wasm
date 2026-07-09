@@ -134,3 +134,28 @@ export function synthSp3Pseudoranges(sp3, tRx, rx, rxClockS = 0, minElevationDeg
 // A BigInt64Array of unix-microsecond epochs from a list of JS numbers (each
 // well under 2^53, so the integer is exact before the BigInt cast).
 export const bigints = (nums) => BigInt64Array.from(nums.map((n) => BigInt(n)));
+
+// Cross-platform comparison for iterative/libm-derived values: wasm compute is
+// deterministic, but JS-side Math.* reference values and iterative fit
+// trajectories differ at ULP scale between platforms. Bands per the
+// banded-pin rule; exact bits remain for closed-form outputs only.
+export function assertCloseRel(actual, expected, relTol, label) {
+  const a = Number(actual);
+  const e = Number(expected);
+  const tol = Math.abs(e) * relTol + Number.EPSILON;
+  if (!(Math.abs(a - e) <= tol)) {
+    throw new Error(`${label ?? "value"}: ${a} not within rel ${relTol} of ${e}`);
+  }
+}
+export function assertCloseAbs(actual, expected, absTol, label) {
+  const a = Number(actual);
+  const e = Number(expected);
+  if (!(Math.abs(a - e) <= absTol)) {
+    throw new Error(`${label ?? "value"}: ${a} not within abs ${absTol} of ${e}`);
+  }
+}
+export function f64FromBits(bits) {
+  const buf = new DataView(new ArrayBuffer(8));
+  buf.setBigUint64(0, BigInt(bits));
+  return buf.getFloat64(0);
+}
