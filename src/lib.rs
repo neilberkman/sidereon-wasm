@@ -274,7 +274,7 @@ pub use precise_samples::{
 };
 pub use propagation::{propagate_state, Ephemeris};
 pub use qc::FdeSolution;
-pub use raim::raim_fde_design_js;
+pub use raim::{raim, raim_fde_design_js};
 pub use reduced_orbit::{
     fit_piecewise_reduced_orbit, fit_piecewise_reduced_orbit_sp3, fit_piecewise_reduced_orbit_tle,
     fit_reduced_orbit, fit_reduced_orbit_sp3, fit_reduced_orbit_tle, PiecewiseOrbit,

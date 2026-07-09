@@ -98,9 +98,34 @@ console.log(solution.positionM); // ECEF m ~ [4484128, 550582, 4487561]
 console.log(solution.rxClockS);  // receiver clock bias, seconds
 ```
 
-`solveRtkFloat` / `solveRtkFixed` and `solvePppFloat` / `solvePppFixed` follow
-the same shape: an options object in, a result object with `Float64Array`
+`solveRtkFloat` / `solveRtkFixed` and `solvePppFloat` / `solvePppFixed` use
+the same pattern: an options object in, a result object with `Float64Array`
 positions and scalar attributes out.
+
+## Example: post-solve integrity
+
+Use `raim` on per-satellite post-fit residuals after a solve. The direct result
+has `faultDetected`, `testStatistic`, `threshold`, `worstSat`,
+`reducedChiSquare`, `normalizedResiduals`, `rmsM`, and `dof`.
+
+```js
+import { raim } from "@neilberkman/sidereon";
+
+const integrity = raim(
+  {
+    usedSats: ["G01", "G02", "G03", "G04", "G05", "G06"],
+    residualsM: [0.2, -0.1, 0.3, 0.2, 9.0, -0.2],
+  },
+  { pFa: 1e-3 },
+);
+
+console.log(integrity.faultDetected, integrity.testStatistic, integrity.worstSat);
+```
+
+Use `araim(geometry, ism, allocation)` for protection levels from line-of-sight
+geometry and an integrity support message. `araimLpv200Allocation()` provides the
+default LPV-200 budget. The direct result has `hplM`, `vplM`, `sigmaAccHM`, and
+`sigmaAccVM`, plus the detailed monitor fields.
 
 ## Capabilities
 
@@ -118,12 +143,13 @@ The wasm surface mirrors the full breadth of the engine:
 - **GNSS positioning:** SPP, RTK (float/fixed), PPP (float/fixed), DGNSS,
   moving-baseline RTK, DOP, velocity, and a robust SPP driver that runs fault
   detection and exclusion (RAIM/FDE) with iterative reweighting.
-- **Integrity and error bounds:** multi-constellation ARAIM protection levels,
-  SBAS protection levels (DO-229), per-observation reliability (minimal
-  detectable bias, internal/external), observability classification of every
-  solution (rank, redundancy, conditioning), and covariance-derived error
-  metrics (CEP, R95, SEP, error ellipse) that report wide or flagged bounds
-  for weak geometry rather than fabricated confidence.
+- **Integrity and error bounds:** direct post-solve RAIM fault detection,
+  multi-constellation ARAIM protection levels, SBAS protection levels (DO-229),
+  per-observation reliability (minimal detectable bias, internal/external),
+  observability classification of every solution (rank, redundancy,
+  conditioning), and covariance-derived error metrics (CEP, R95, SEP, error
+  ellipse) that report wide or flagged bounds for weak geometry rather than
+  fabricated confidence.
 - **GNSS corrections and biases:** SBAS message decoding with SBAS-corrected
   solves, RTCM SSR orbit and clock correction streams, Bias-SINEX code and
   phase biases (DCB/OSB).
@@ -179,7 +205,7 @@ computes. Failures surface as the JS exception you would expect (`Error` for
 engine rejections such as parse failures, non-converging solves, and SGP4 error
 codes; `TypeError` for malformed input; `RangeError` for out-of-domain numbers).
 Full signatures live in the bundled TypeScript declarations (`sidereon.d.ts`),
-with the plain-object request shapes in `@neilberkman/sidereon/types`.
+with the plain-object request types in `@neilberkman/sidereon/types`.
 
 A few conventions worth knowing: positions and state arrays cross as
 `Float64Array` (multi-epoch arrays are flat row-major, `3 * epochCount`); SGP4
