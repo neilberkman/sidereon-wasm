@@ -364,31 +364,6 @@ test("solveRtkArc fixes integer ambiguities on the static arc", () => {
   assert.ok(last.search.integerRatio > 3.0);
 });
 
-test("solveRtkArc surfaces the per-epoch innovation screen when enabled", () => {
-  // The screen is off by default, so the per-epoch result carries no screen.
-  const plain = solveRtkArc(arcEpochs, config);
-  for (const epoch of plain.epochs) {
-    assert.equal(epoch.innovationScreen, undefined);
-  }
-
-  // Enabling it via updateOpts surfaces the core InnovationScreen on every epoch.
-  const screened = solveRtkArc(arcEpochs, {
-    ...config,
-    updateOpts: { innovationScreen: { thresholdSigma: 5.0, minRows: 1 } },
-  });
-  assert.equal(screened.epochs.length, arcEpochs.length);
-  for (const epoch of screened.epochs) {
-    const s = epoch.innovationScreen;
-    assert.ok(s, "innovation screen present");
-    assert.equal(s.thresholdSigma, 5.0);
-    assert.equal(s.minRows, 1);
-    assert.ok(Number.isInteger(s.inputRows) && s.inputRows > 0, "input rows counted");
-    assert.equal(s.inputRows, s.acceptedRows + s.rejectedRows, "accepted + rejected = input");
-    assert.equal(s.rejectedRows, s.rejectedCodeRows + s.rejectedPhaseRows, "code + phase rejected");
-    assert.equal(typeof s.coasted, "boolean");
-  }
-});
-
 test("solveStaticRtkArc returns one float and one fixed solution for the arc", () => {
   const sol = solveStaticRtkArc(arcEpochs, { arc: config });
 

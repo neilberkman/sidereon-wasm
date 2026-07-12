@@ -30,14 +30,14 @@ use sidereon_core::rtk_filter::{
     build_dual_frequency_rinex_rtk_arc, build_rinex_rtk_arc, defaults, fix_wide_lane_rtk_arc,
     prepare_ionosphere_free_rtk_arc, solve_rtk_arc, solve_static_rtk_arc,
     solve_wide_lane_fixed_rtk_arc, DynamicsModel, FilterState, FixedBaselineSolution,
-    FloatBaselineSolution, FloatResidual, FloatSolveStatus, InnovationScreen, InnovationScreenOpts,
-    IntegerSearchMeta, IntegerStatus, MeasModel, ResidualComponentKind, ResidualValidationMeta,
-    ResidualValidationOutlier, RtkArcConfig, RtkArcEpoch, RtkArcEpochSolution, RtkArcObservation,
-    RtkArcPreprocessing, RtkArcSolution, RtkDualCycleSlipConfig, RtkDualFrequencyArcEpoch,
-    RtkDualFrequencyObservation, RtkDualFrequencySatelliteObservation, RtkIonosphereFreeArcConfig,
-    RtkIonosphereFreeArcSolution, RtkRinexArc, RtkRinexArcOptions, RtkRinexDualArcOptions,
-    RtkRinexDualFrequencyArc, RtkRinexDualSignalPair, RtkRinexSignalPair, RtkStaticArcConfig,
-    RtkStaticArcSolution, RtkWideLaneArcConfig, RtkWideLaneArcSolution, RtkWideLaneFixedArcConfig,
+    FloatBaselineSolution, FloatResidual, FloatSolveStatus, IntegerSearchMeta, IntegerStatus,
+    MeasModel, ResidualComponentKind, ResidualValidationMeta, ResidualValidationOutlier,
+    RtkArcConfig, RtkArcEpoch, RtkArcEpochSolution, RtkArcObservation, RtkArcPreprocessing,
+    RtkArcSolution, RtkDualCycleSlipConfig, RtkDualFrequencyArcEpoch, RtkDualFrequencyObservation,
+    RtkDualFrequencySatelliteObservation, RtkIonosphereFreeArcConfig, RtkIonosphereFreeArcSolution,
+    RtkRinexArc, RtkRinexArcOptions, RtkRinexDualArcOptions, RtkRinexDualFrequencyArc,
+    RtkRinexDualSignalPair, RtkRinexSignalPair, RtkStaticArcConfig, RtkStaticArcSolution,
+    RtkWideLaneArcConfig, RtkWideLaneArcSolution, RtkWideLaneFixedArcConfig,
     RtkWideLaneFixedArcIntegerMethod, RtkWideLaneFixedArcMetadata, RtkWideLaneFixedArcSolution,
     RtkWideLaneFixedStaticArcSolution, SearchOpts, StochasticModel, UpdateOpts,
     ValidatedFixedBaselineSolution, ValidatedFixedSolveOpts, WideLaneOptions,
@@ -571,23 +571,6 @@ impl ReferenceSelectionInput {
     }
 }
 
-/// Optional predicted-residual screen: `{ thresholdSigma, minRows }`.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct InnovationScreenInput {
-    threshold_sigma: f64,
-    min_rows: usize,
-}
-
-impl InnovationScreenInput {
-    fn to_core(&self) -> InnovationScreenOpts {
-        InnovationScreenOpts {
-            threshold_sigma: self.threshold_sigma,
-            min_rows: self.min_rows,
-        }
-    }
-}
-
 /// Per-epoch sequential-update controls.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -599,7 +582,6 @@ struct UpdateOptsInput {
     process_noise_baseline_sigma_m: f64,
     dynamics_model: String,
     float_only_systems: Vec<String>,
-    innovation_screen: Option<InnovationScreenInput>,
     report_residuals: bool,
     ar_arming_sigma_m: Option<f64>,
     ratio_threshold: f64,
@@ -615,7 +597,6 @@ impl Default for UpdateOptsInput {
             process_noise_baseline_sigma_m: 0.0,
             dynamics_model: "constantPosition".to_string(),
             float_only_systems: Vec::new(),
-            innovation_screen: None,
             report_residuals: false,
             ar_arming_sigma_m: None,
             ratio_threshold: defaults::RATIO_THRESHOLD,
@@ -642,10 +623,6 @@ impl UpdateOptsInput {
             process_noise_baseline_sigma_m: self.process_noise_baseline_sigma_m,
             dynamics_model,
             float_only_systems: self.float_only_systems.clone(),
-            innovation_screen: self
-                .innovation_screen
-                .as_ref()
-                .map(InnovationScreenInput::to_core),
             report_residuals: self.report_residuals,
             receiver_antenna_corrections: None,
             ar_arming_sigma_m: self.ar_arming_sigma_m,
@@ -1299,40 +1276,6 @@ struct ResidualObject {
     phase_normalized: f64,
 }
 
-/// Per-epoch predicted-residual (innovation) screen outcome, present only when
-/// the screen was enabled for the arc via `updateOpts.innovationScreen`.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct InnovationScreenObject {
-    threshold_sigma: f64,
-    min_rows: usize,
-    input_rows: usize,
-    accepted_rows: usize,
-    rejected_rows: usize,
-    rejected_code_rows: usize,
-    rejected_phase_rows: usize,
-    max_abs_normalized_innovation: Option<f64>,
-    max_rejected_abs_normalized_innovation: Option<f64>,
-    coasted: bool,
-}
-
-impl From<&InnovationScreen> for InnovationScreenObject {
-    fn from(s: &InnovationScreen) -> Self {
-        Self {
-            threshold_sigma: s.threshold_sigma,
-            min_rows: s.min_rows,
-            input_rows: s.input_rows,
-            accepted_rows: s.accepted_rows,
-            rejected_rows: s.rejected_rows,
-            rejected_code_rows: s.rejected_code_rows,
-            rejected_phase_rows: s.rejected_phase_rows,
-            max_abs_normalized_innovation: s.max_abs_normalized_innovation,
-            max_rejected_abs_normalized_innovation: s.max_rejected_abs_normalized_innovation,
-            coasted: s.coasted,
-        }
-    }
-}
-
 fn cycle_slip_receiver_label(receiver: CycleSlipReceiver) -> &'static str {
     match receiver {
         CycleSlipReceiver::Base => "base",
@@ -1585,7 +1528,6 @@ struct EpochSolutionObject {
     search: Option<SearchSummary>,
     residuals: Vec<ResidualObject>,
     geometry_quality: GeometryQualityJs,
-    innovation_screen: Option<InnovationScreenObject>,
 }
 
 impl From<&RtkArcEpochSolution> for EpochSolutionObject {
@@ -1603,10 +1545,6 @@ impl From<&RtkArcEpochSolution> for EpochSolutionObject {
             search: e.search.as_ref().map(SearchSummary::from),
             residuals: e.residuals.iter().map(ResidualObject::from).collect(),
             geometry_quality: e.geometry_quality.into(),
-            innovation_screen: e
-                .innovation_screen
-                .as_ref()
-                .map(InnovationScreenObject::from),
         }
     }
 }
