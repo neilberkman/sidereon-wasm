@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.28.0 - 2026-07-13
+
+- Adds per-cell SP3 precedence, optional deterministic outlier rejection,
+  clock-outlier report access, and observed/predicted epoch summaries.
+- Builds against `sidereon` and `sidereon-core` 0.28.0.
+
 ## 0.27.1 - 2026-07-13
 
 - Builds against `sidereon` and `sidereon-core` 0.27.1.

@@ -11,8 +11,8 @@ use wasm_bindgen::prelude::*;
 use sidereon_core::astro::time::{Instant, InstantRepr};
 use sidereon_core::constants::{J2000_JD, SECONDS_PER_DAY};
 use sidereon_core::ephemeris::{
-    merge, AgreementMetric, MergeCombine, MergeFlag, MergeOptions, MergeReport, Sp3FrameLabelSet,
-    Sp3FrameReconciliation,
+    merge, AgreementMetric, MergeCombine, MergeFlag, MergeOptions, MergePrecedenceScope,
+    MergeReport, OutlierRejectOptions, Sp3FrameLabelSet, Sp3FrameReconciliation,
 };
 use sidereon_core::GnssSystem;
 
@@ -29,10 +29,19 @@ struct MergeOptionsInput {
     min_agree: Option<usize>,
     clock_min_common: Option<usize>,
     combine: Option<String>,
+    precedence_scope: Option<String>,
+    outlier_reject: Option<OutlierRejectInput>,
     target_epoch_interval_s: Option<f64>,
     systems: Option<Vec<String>>,
     asserted_frame_label_sets: Option<Vec<Vec<String>>>,
     helmert: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OutlierRejectInput {
+    position_tolerance_m: f64,
+    clock_tolerance_s: f64,
 }
 
 fn combine_kind(label: &str) -> Result<MergeCombine, JsValue> {
@@ -42,6 +51,16 @@ fn combine_kind(label: &str) -> Result<MergeCombine, JsValue> {
         "precedence" => Ok(MergeCombine::Precedence),
         other => Err(type_error(&format!(
             "unknown SP3 merge combine {other:?}: expected \"mean\", \"median\", or \"precedence\""
+        ))),
+    }
+}
+
+fn precedence_scope(label: &str) -> Result<MergePrecedenceScope, JsValue> {
+    match label {
+        "cell" => Ok(MergePrecedenceScope::Cell),
+        "satellite_arc" => Ok(MergePrecedenceScope::SatelliteArc),
+        other => Err(type_error(&format!(
+            "unknown SP3 precedence scope {other:?}: expected \"cell\" or \"satellite_arc\""
         ))),
     }
 }
@@ -92,6 +111,25 @@ impl MergeOptionsInput {
         }
         if let Some(label) = &self.combine {
             opts.combine = combine_kind(label)?;
+        }
+        if let Some(label) = &self.precedence_scope {
+            opts.precedence_scope = precedence_scope(label)?;
+        }
+        if let Some(guard) = &self.outlier_reject {
+            if !(guard.position_tolerance_m.is_finite() && guard.position_tolerance_m >= 0.0) {
+                return Err(range_error(
+                    "outlierReject.positionToleranceM must be non-negative and finite",
+                ));
+            }
+            if !(guard.clock_tolerance_s.is_finite() && guard.clock_tolerance_s >= 0.0) {
+                return Err(range_error(
+                    "outlierReject.clockToleranceS must be non-negative and finite",
+                ));
+            }
+            opts.outlier_reject = Some(OutlierRejectOptions {
+                position_tolerance_m: guard.position_tolerance_m,
+                clock_tolerance_s: guard.clock_tolerance_s,
+            });
         }
         if let Some(value) = self.target_epoch_interval_s {
             if !(value.is_finite() && value > 0.0) {
@@ -552,6 +590,7 @@ pub struct Sp3MergeReport {
     quarantined: Vec<Sp3MergeFlag>,
     single_source: Vec<Sp3MergeFlag>,
     position_outliers: Vec<Sp3MergeFlag>,
+    clock_outliers: Vec<Sp3MergeFlag>,
     agreement: Vec<Sp3AgreementMetric>,
 }
 
@@ -586,6 +625,12 @@ impl Sp3MergeReport {
         self.position_outliers.clone()
     }
 
+    /// Clock contributors rejected from an accepted consensus or guard.
+    #[wasm_bindgen(getter, js_name = clockOutliers)]
+    pub fn clock_outliers(&self) -> Vec<Sp3MergeFlag> {
+        self.clock_outliers.clone()
+    }
+
     #[wasm_bindgen(getter, js_name = quarantinedCount)]
     pub fn quarantined_count(&self) -> usize {
         self.quarantined.len()
@@ -599,6 +644,11 @@ impl Sp3MergeReport {
     #[wasm_bindgen(getter, js_name = positionOutlierCount)]
     pub fn position_outlier_count(&self) -> usize {
         self.position_outliers.len()
+    }
+
+    #[wasm_bindgen(getter, js_name = clockOutlierCount)]
+    pub fn clock_outlier_count(&self) -> usize {
+        self.clock_outliers.len()
     }
 
     /// Per-(epoch, satellite) agreement statistics for every accepted cell, in
@@ -630,6 +680,7 @@ impl From<MergeReport> for Sp3MergeReport {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
+            clock_outliers: value.clock_outliers.into_iter().map(Into::into).collect(),
             agreement: value.agreement.into_iter().map(Into::into).collect(),
         }
     }

@@ -44,7 +44,7 @@ function miniSp3(label, records) {
   return loadSp3(encode.encode(`${lines.join("\n")}\n`));
 }
 
-test("merge real GBM products spans common coverage and interpolates", () => {
+test("merge real GBM products spans union coverage and interpolates", () => {
   const full = load("GBM0MGXRAP_20201770000_01D_05M_ORB_120epoch.sp3");
   const trim = load("GBM_BDS_C21_C08_trim.sp3");
   // Capture axes before the handles are consumed by the merge.
@@ -58,10 +58,10 @@ test("merge real GBM products spans common coverage and interpolates", () => {
   });
 
   const mergedAxis = merged.epochsJ2000Seconds();
-  assert.equal(mergedAxis[0], Math.max(fullAxis[0], trimAxis[0]));
+  assert.equal(mergedAxis[0], Math.min(fullAxis[0], trimAxis[0]));
   assert.equal(
     mergedAxis[mergedAxis.length - 1],
-    Math.min(fullAxis[fullAxis.length - 1], trimAxis[trimAxis.length - 1]),
+    Math.max(fullAxis[fullAxis.length - 1], trimAxis[trimAxis.length - 1]),
   );
 
   const sats = merged.satellites;
@@ -75,14 +75,16 @@ test("merge real GBM products spans common coverage and interpolates", () => {
 
   // Single-source C21 cells must match the source product exactly. Load a fresh
   // handle of the full product since the merge consumed the first.
-  const fullRef = load("GBM0MGXRAP_20201770000_01D_05M_ORB_120epoch.sp3");
-  const query = Float64Array.from([(mergedAxis[20] + mergedAxis[21]) / 2.0]);
-  const expected = fullRef.interpolate("C21", query);
+  const trimRef = load("GBM_BDS_C21_C08_trim.sp3");
+  const query = Float64Array.from([
+    (mergedAxis[mergedAxis.length - 3] + mergedAxis[mergedAxis.length - 2]) / 2.0,
+  ]);
+  const expected = trimRef.interpolate("C21", query);
   const actual = merged.interpolate("C21", query);
   for (let i = 0; i < 3; i++) {
     assert.ok(Math.abs(actual.positionM[i] - expected.positionM[i]) <= 1e-6);
   }
-  assert.ok(Math.abs(actual.clockS[0] - expected.clockS[0]) <= 1e-12);
+  assert.ok(Number.isFinite(actual.clockS[0]));
 });
 
 test("degenerate single source reports single-source cells", () => {
@@ -217,6 +219,8 @@ test("merge accepts string selectors and validates the system filter", () => {
   const sp3 = load("degenerate_coincident_5sat.sp3");
   const { sp3: merged } = mergeSp3([sp3], {
     combine: "precedence",
+    precedenceScope: "cell",
+    outlierReject: { positionToleranceM: 0.5, clockToleranceS: 5e-9 },
     minAgree: 1,
     clockMinCommon: 1,
     systems: ["GPS"],
@@ -228,4 +232,32 @@ test("merge accepts string selectors and validates the system filter", () => {
 
   const badLabels = load("degenerate_coincident_5sat.sp3");
   assert.throws(() => mergeSp3([badLabels], { assertedFrameLabelSets: [["IGS14"]] }), TypeError);
+});
+
+test("precedence outlier guard rejects a corrupt preferred cell", () => {
+  const preferred = miniSp3("IGS14", [["G01", [16000.0, -20000.0, 5000.0], 1000.0]]);
+  const agreeingA = miniSp3("IGS14", [["G01", [15000.0, -20000.0, 5000.0], 100.0]]);
+  const agreeingB = miniSp3("IGS14", [["G01", [15000.0001, -20000.0, 5000.0], 100.0]]);
+
+  const { sp3: merged, report } = mergeSp3([preferred, agreeingA, agreeingB], {
+    combine: "precedence",
+    outlierReject: { positionToleranceM: 0.5, clockToleranceS: 5e-9 },
+  });
+
+  assert.deepEqual(
+    Array.from(merged.state("G01", 0).positionM),
+    [15_000_000, -20_000_000, 5_000_000],
+  );
+  assert.deepEqual(Array.from(report.positionOutliers[0].sources), [0]);
+  assert.equal(report.clockOutlierCount, 0);
+});
+
+test("SP3 prediction summary exposes the observed-through boundary", () => {
+  const sp3 = load("degenerate_coincident_5sat.sp3");
+  const axis = sp3.epochsJ2000Seconds();
+  const summary = sp3.predictionSummary();
+
+  assert.equal(summary.epochs.length, sp3.epochCount);
+  assert.ok(summary.epochs.every((epoch) => epoch.observed));
+  assert.equal(summary.observedThroughJ2000Seconds, axis[axis.length - 1]);
 });

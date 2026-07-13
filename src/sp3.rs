@@ -54,6 +54,22 @@ fn typed_artifact_error<T: Serialize>(name: &'static str, message: String, detai
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct Sp3EpochPredictionJs {
+    epoch_j2000_seconds: f64,
+    observed: bool,
+    orbit_predicted_satellites: Vec<String>,
+    clock_predicted_satellites: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sp3PredictionSummaryJs {
+    epochs: Vec<Sp3EpochPredictionJs>,
+    observed_through_j2000_seconds: Option<f64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PreciseInterpolantArtifactErrorDetail {
     name: &'static str,
     message: String,
@@ -208,6 +224,38 @@ impl Sp3 {
     #[wasm_bindgen(getter, js_name = epochCount)]
     pub fn epoch_count(&self) -> usize {
         self.inner.epoch_count()
+    }
+
+    /// Per-epoch observed/predicted flags and the contiguous observed-through
+    /// boundary, derived from the parsed SP3 record flags.
+    #[wasm_bindgen(js_name = predictionSummary)]
+    pub fn prediction_summary(&self) -> Result<JsValue, JsValue> {
+        let summary = self.inner.prediction_summary();
+        let value = Sp3PredictionSummaryJs {
+            epochs: summary
+                .epochs
+                .into_iter()
+                .map(|epoch| Sp3EpochPredictionJs {
+                    epoch_j2000_seconds: instant_to_j2000_seconds(&epoch.epoch),
+                    observed: epoch.is_observed(),
+                    orbit_predicted_satellites: epoch
+                        .orbit_predicted_satellites
+                        .into_iter()
+                        .map(|satellite| satellite.to_string())
+                        .collect(),
+                    clock_predicted_satellites: epoch
+                        .clock_predicted_satellites
+                        .into_iter()
+                        .map(|satellite| satellite.to_string())
+                        .collect(),
+                })
+                .collect(),
+            observed_through_j2000_seconds: summary
+                .observed_through
+                .as_ref()
+                .map(instant_to_j2000_seconds),
+        };
+        serde_wasm_bindgen::to_value(&value).map_err(|error| engine_error(error.to_string()))
     }
 
     /// Satellite tokens present in the product (e.g. `"G01"`), ascending.
