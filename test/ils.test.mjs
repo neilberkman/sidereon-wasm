@@ -57,6 +57,20 @@ test("a near-integer, well-conditioned case fixes to the rounded vector", () => 
   assert.ok(r.ratio > 3.0);
 });
 
+test("lambdaIlsSearch rejects finite ambiguities outside the integer search domain", () => {
+  assert.throws(
+    () => lambdaIlsSearch(Float64Array.from([Number.MAX_VALUE]), [[1.0]], 3.0),
+    (error) => {
+      assert.ok(error instanceof RangeError);
+      assert.equal(
+        error.message,
+        "invalid integer least-squares input ils float_cycles: outside integer search range",
+      );
+      return true;
+    },
+  );
+});
+
 test("a singular covariance throws an Error", () => {
   const a = Float64Array.from([1.1, 2.2]);
   const zero = [

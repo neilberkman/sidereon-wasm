@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.27.1 - 2026-07-13
+
+- Builds against `sidereon` and `sidereon-core` 0.27.1.
+- Rejects finite LAMBDA ambiguity inputs outside the signed 64-bit integer
+  search domain with a `RangeError`, instead of returning saturated integers
+  and non-finite scores.
+
 ## 0.27.0 - 2026-07-12
 
 - Builds against `sidereon` and `sidereon-core` 0.27.0.
