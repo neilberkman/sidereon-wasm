@@ -4,8 +4,10 @@
 //! the COARSE built-in 30-degree global grid; [`GeoidGrid`] wraps a real grid
 //! (built from samples or parsed from the documented text format) for
 //! survey-grade lookups. Heights and undulations are metres, positions radians
-//! or degrees as named.
+//! or degrees as named. PROJ EGM96 GTX lookups require an explicit arithmetic
+//! recipe because conforming PROJ builds can differ by one ULP.
 
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::geoid::{
@@ -18,6 +20,8 @@ use sidereon_core::geoid::{
     geoid_undulations_rad as core_geoid_undulations_rad,
     orthometric_height_m as core_orthometric_height_m,
     Egm2008GridSpacing as CoreEgm2008GridSpacing, Egm2008RasterWindow, GeoidGrid as CoreGeoidGrid,
+    ProjVgridshiftArithmetic as CoreProjVgridshiftArithmetic,
+    ProjVgridshiftError as CoreProjVgridshiftError,
 };
 
 use crate::error::{engine_error, type_error};
@@ -52,6 +56,81 @@ impl From<Egm2008GridSpacing> for CoreEgm2008GridSpacing {
             Egm2008GridSpacing::TwoPointFiveMinute => Self::TwoPointFiveMinute,
         }
     }
+}
+
+/// Floating-point evaluation recipe for PROJ vertical-grid interpolation.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjVgridshiftArithmetic {
+    /// Round every multiplication and addition separately. This matches the
+    /// reviewed x86-64 PROJ 9.3.0 build with contraction disabled.
+    SeparateMultiplyAdd,
+    /// Evaluate each accumulation with a fused multiply-add and one rounding.
+    /// This matches the contracted AArch64 PROJ 9.3.0 reference build.
+    FusedMultiplyAdd,
+}
+
+impl From<ProjVgridshiftArithmetic> for CoreProjVgridshiftArithmetic {
+    fn from(arithmetic: ProjVgridshiftArithmetic) -> Self {
+        match arithmetic {
+            ProjVgridshiftArithmetic::SeparateMultiplyAdd => Self::SeparateMultiplyAdd,
+            ProjVgridshiftArithmetic::FusedMultiplyAdd => Self::FusedMultiplyAdd,
+        }
+    }
+}
+
+/// Error category reported by PROJ vertical-grid coordinate lookup.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjVgridshiftError {
+    /// Latitude or longitude was not finite.
+    NonFiniteCoordinate,
+    /// Latitude or longitude was outside the loaded grid.
+    CoordinateOutsideGrid,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjVgridshiftErrorDetail {
+    name: &'static str,
+    message: String,
+    coordinate: &'static str,
+}
+
+fn proj_vgridshift_error(error: CoreProjVgridshiftError) -> JsValue {
+    let (kind, coordinate) = match error {
+        CoreProjVgridshiftError::NonFiniteCoordinate { field } => {
+            (ProjVgridshiftError::NonFiniteCoordinate, field)
+        }
+        CoreProjVgridshiftError::CoordinateOutsideGrid { field } => {
+            (ProjVgridshiftError::CoordinateOutsideGrid, field)
+        }
+    };
+    let name = match kind {
+        ProjVgridshiftError::NonFiniteCoordinate => "NonFiniteCoordinate",
+        ProjVgridshiftError::CoordinateOutsideGrid => "CoordinateOutsideGrid",
+    };
+    let detail = ProjVgridshiftErrorDetail {
+        name,
+        message: error.to_string(),
+        coordinate,
+    };
+    let js_error = js_sys::RangeError::new(&detail.message);
+    js_error.set_name(name);
+    let value: JsValue = js_error.into();
+    js_sys::Reflect::set(&value, &JsValue::from_str("kind"), &JsValue::from_str(name))
+        .expect("attach PROJ vertical-grid error kind");
+    js_sys::Reflect::set(
+        &value,
+        &JsValue::from_str("coordinate"),
+        &JsValue::from_str(coordinate),
+    )
+    .expect("attach PROJ vertical-grid error coordinate");
+    let detail_value = serde_wasm_bindgen::to_value(&detail)
+        .expect("serialize typed PROJ vertical-grid error detail");
+    js_sys::Reflect::set(&value, &JsValue::from_str("detail"), &detail_value)
+        .expect("attach typed PROJ vertical-grid error detail");
+    value
 }
 
 /// Geoid undulation `N` (metres above the WGS84 ellipsoid) at a geodetic
@@ -205,6 +284,14 @@ impl GeoidGrid {
         Ok(GeoidGrid { inner })
     }
 
+    /// Parse PROJ's public EGM96 15-arcminute `egm96_15.gtx` byte stream.
+    /// Use `undulationProjRad` with an explicit arithmetic recipe.
+    #[wasm_bindgen(js_name = fromProjEgm96Gtx)]
+    pub fn from_proj_egm96_gtx(bytes: &[u8]) -> Result<GeoidGrid, JsValue> {
+        let inner = CoreGeoidGrid::from_proj_egm96_gtx(bytes).map_err(engine_error)?;
+        Ok(GeoidGrid { inner })
+    }
+
     /// Parse a full NGA EGM2008 row-framed interpolation raster.
     ///
     /// The byte stream must contain one north-to-south Fortran sequential record
@@ -248,6 +335,23 @@ impl GeoidGrid {
     #[wasm_bindgen(js_name = undulationRad)]
     pub fn undulation_rad(&self, lat_rad: f64, lon_rad: f64) -> f64 {
         self.inner.undulation_rad(lat_rad, lon_rad)
+    }
+
+    /// Evaluate PROJ 9.3.0-compatible vertical-grid interpolation at geodetic
+    /// radians. The caller must select separate or fused multiply/add behavior;
+    /// no platform-dependent default is inferred. Invalid coordinates throw a
+    /// `RangeError` with machine-readable `kind`, `coordinate`, and `detail`
+    /// properties.
+    #[wasm_bindgen(js_name = undulationProjRad)]
+    pub fn undulation_proj_rad(
+        &self,
+        lat_rad: f64,
+        lon_rad: f64,
+        arithmetic: ProjVgridshiftArithmetic,
+    ) -> Result<f64, JsValue> {
+        self.inner
+            .undulation_proj_rad(lat_rad, lon_rad, arithmetic.into())
+            .map_err(proj_vgridshift_error)
     }
 
     /// Batch undulation lookup for flat `[latRad, lonRad, ...]` pairs.

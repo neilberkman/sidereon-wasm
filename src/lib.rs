@@ -209,7 +209,7 @@ pub use geoid::{
     egm96_ellipsoidal_height_m, egm96_orthometric_height_m, egm96_undulation,
     egm96_undulations_deg, egm96_undulations_rad, ellipsoidal_height_m, geoid_undulation,
     geoid_undulations_deg, geoid_undulations_rad, orthometric_height_m, Egm2008GridSpacing,
-    GeoidGrid,
+    GeoidGrid, ProjVgridshiftArithmetic, ProjVgridshiftError,
 };
 pub use geometry_quality::{observability_tier_label, GeometryQuality, ObservabilityTier};
 pub use gnss::{carrier_band_name, gnss_system_label, gnss_system_letter, CarrierBand, GnssSystem};

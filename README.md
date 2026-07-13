@@ -138,6 +138,29 @@ geometry and an integrity support message. `araimLpv200Allocation()` provides th
 default LPV-200 budget. The direct result has `hplM`, `vplM`, `sigmaAccHM`, and
 `sigmaAccVM`, plus the detailed monitor fields.
 
+## Example: PROJ EGM96 vertical-grid interpolation
+
+`GeoidGrid.fromProjEgm96Gtx(bytes)` loads the public OSGeo
+`egm96_15.gtx` grid. Lookup requires an explicit arithmetic recipe because
+valid PROJ builds can differ by one ULP:
+
+```js
+import { GeoidGrid, ProjVgridshiftArithmetic } from "@neilberkman/sidereon";
+
+const grid = GeoidGrid.fromProjEgm96Gtx(gtxBytes);
+const undulationM = grid.undulationProjRad(
+  latitudeRad,
+  longitudeRad,
+  ProjVgridshiftArithmetic.FusedMultiplyAdd,
+);
+```
+
+Use `SeparateMultiplyAdd` for a PROJ build without floating-point contraction.
+Invalid coordinates throw a `RangeError` whose `kind` is
+`"NonFiniteCoordinate"` or `"CoordinateOutsideGrid"`; its `coordinate` field
+is `"latitude"` or `"longitude"`, and `detail` carries the complete typed
+record.
+
 ## Capabilities
 
 The wasm surface mirrors the full breadth of the engine:
@@ -200,9 +223,10 @@ The wasm surface mirrors the full breadth of the engine:
 - **Almanac:** seasons, moon phases, lunar and solar eclipses, planetary
   conjunctions and oppositions, Sun/Moon/planet meridian transits.
 - **Atmosphere and Earth models:** Klobuchar and NeQuick-G ionosphere, IONEX
-  slant delay, troposphere models, geoid undulation (EGM96), solid Earth and
-  pole tides, ocean tide loading, DTED terrain elevation lookup with batch
-  queries, and memory-mappable terrain stores.
+  slant delay, troposphere models, geoid undulation (EGM96), PROJ EGM96 GTX
+  interpolation with explicit fused/separate arithmetic and typed coordinate
+  errors, solid Earth and pole tides, ocean tide loading, DTED terrain
+  elevation lookup with batch queries, and memory-mappable terrain stores.
 - **RF link budget:** free-space path loss, EIRP, C/N0, antenna gain, Doppler
   shift and range rate.
 - **GNSS/INS fusion:** strapdown mechanization with an error-state EKF (UKF
