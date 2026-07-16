@@ -6,13 +6,18 @@
 use std::collections::BTreeSet;
 
 use serde::Deserialize;
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::{prelude::*, JsCast};
 
 use sidereon_core::astro::time::{Instant, InstantRepr};
 use sidereon_core::constants::{J2000_JD, SECONDS_PER_DAY};
+use sidereon_core::data::{
+    AnalysisCenter, ArchiveCompression, DistributionSource, ProductCampaign, ProductDate,
+    ProductFormat, ProductIdentity, ProductPublisher, ProductType, SolutionClass,
+};
 use sidereon_core::ephemeris::{
     merge, AgreementMetric, MergeCombine, MergeFlag, MergeOptions, MergePrecedenceScope,
-    MergeReport, OutlierRejectOptions, Sp3FrameLabelSet, Sp3FrameReconciliation,
+    MergeReport, OutlierRejectOptions, Sp3ArtifactIdentity, Sp3FrameLabelSet,
+    Sp3FrameReconciliation, Sp3MergeInputIdentity as CoreSp3MergeInputIdentity,
 };
 use sidereon_core::GnssSystem;
 
@@ -42,6 +47,237 @@ struct MergeOptionsInput {
 struct OutlierRejectInput {
     position_tolerance_m: f64,
     clock_tolerance_s: f64,
+}
+
+/// Complete exact product identity accepted from a plain JavaScript object.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProductIdentityInput {
+    family: String,
+    analysis_center: String,
+    publisher: String,
+    solution_class: String,
+    campaign: String,
+    filename_version: u8,
+    year: i32,
+    month: u8,
+    day: u8,
+    issue: Option<String>,
+    span: String,
+    sample: String,
+    official_filename: String,
+    format: String,
+    format_version: Option<String>,
+    prediction_horizon_days: Option<u8>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Sp3ArtifactIdentityInput {
+    requested_identity: ProductIdentityInput,
+    resolved_identity: ProductIdentityInput,
+    distribution_source: String,
+    official_filename: String,
+    product_sha256: String,
+    product_byte_length: u64,
+    archive_sha256: String,
+    archive_byte_length: u64,
+    compression: String,
+}
+
+impl ProductIdentityInput {
+    fn to_core(&self) -> Result<ProductIdentity, JsValue> {
+        let family = ProductType::from_code(&self.family)
+            .ok_or_else(|| type_error("identity.family must be sp3, ionex, clk, or nav"))?;
+        let analysis_center = AnalysisCenter::from_code(&self.analysis_center)
+            .ok_or_else(|| type_error("identity.analysisCenter is unknown"))?;
+        let publisher = match self.publisher.as_str() {
+            "IGS" => ProductPublisher::Igs,
+            "COD" => ProductPublisher::Code,
+            "ESA" => ProductPublisher::Esa,
+            "GFZ" => ProductPublisher::Gfz,
+            _ => {
+                return Err(type_error(
+                    "identity.publisher must be IGS, COD, ESA, or GFZ",
+                ))
+            }
+        };
+        let solution = match self.solution_class.as_str() {
+            "final" => SolutionClass::Final,
+            "rapid" => SolutionClass::Rapid,
+            "ultra_rapid" => SolutionClass::UltraRapid,
+            "predicted" => SolutionClass::Predicted,
+            "broadcast" => SolutionClass::Broadcast,
+            _ => return Err(type_error("identity.solutionClass is unknown")),
+        };
+        let campaign = match self.campaign.as_str() {
+            "OPS" => ProductCampaign::Operational,
+            "MGN" => ProductCampaign::MultiGnss,
+            "MGX" => ProductCampaign::MultiGnssExperiment,
+            "BRD" => ProductCampaign::Broadcast,
+            _ => {
+                return Err(type_error(
+                    "identity.campaign must be OPS, MGN, MGX, or BRD",
+                ))
+            }
+        };
+        let format = match self.format.as_str() {
+            "SP3" => ProductFormat::Sp3,
+            "IONEX" => ProductFormat::Ionex,
+            "RINEX_CLK" => ProductFormat::RinexClock,
+            "RINEX_NAV" => ProductFormat::RinexNavigation,
+            _ => return Err(type_error("identity.format is unknown")),
+        };
+        let identity = ProductIdentity {
+            family,
+            analysis_center,
+            publisher,
+            solution,
+            campaign,
+            version: self.filename_version,
+            date: ProductDate::new(self.year, self.month, self.day).map_err(engine_error)?,
+            issue: self.issue.clone(),
+            span: self.span.clone(),
+            sample: self.sample.clone(),
+            official_filename: self.official_filename.clone(),
+            format,
+            format_version: self.format_version.clone(),
+            prediction_horizon_days: self.prediction_horizon_days,
+        };
+        identity.validate().map_err(engine_error)?;
+        Ok(identity)
+    }
+}
+
+impl Sp3ArtifactIdentityInput {
+    fn to_core(&self) -> Result<Sp3ArtifactIdentity, JsValue> {
+        let distribution_source = match self.distribution_source.as_str() {
+            "direct" => DistributionSource::Direct,
+            "nasa_cddis" => DistributionSource::NasaCddis,
+            "local_file" => DistributionSource::LocalFile,
+            "in_memory" => DistributionSource::InMemory,
+            _ => return Err(type_error("distributionSource is unknown")),
+        };
+        let compression = match self.compression.as_str() {
+            "none" => ArchiveCompression::None,
+            "gzip" => ArchiveCompression::Gzip,
+            _ => return Err(type_error("compression must be none or gzip")),
+        };
+        Ok(Sp3ArtifactIdentity {
+            requested_identity: self.requested_identity.to_core()?,
+            resolved_identity: self.resolved_identity.to_core()?,
+            distribution_source,
+            official_filename: self.official_filename.clone(),
+            product_sha256: self.product_sha256.clone(),
+            product_byte_length: self.product_byte_length,
+            archive_sha256: self.archive_sha256.clone(),
+            archive_byte_length: self.archive_byte_length,
+            compression,
+        })
+    }
+}
+
+const ARTIFACT_FIELDS: &[&str] = &[
+    "requestedIdentity",
+    "resolvedIdentity",
+    "distributionSource",
+    "officialFilename",
+    "productSha256",
+    "productByteLength",
+    "archiveSha256",
+    "archiveByteLength",
+    "compression",
+];
+
+const IDENTITY_FIELDS: &[&str] = &[
+    "family",
+    "analysisCenter",
+    "publisher",
+    "solutionClass",
+    "campaign",
+    "filenameVersion",
+    "year",
+    "month",
+    "day",
+    "issue",
+    "span",
+    "sample",
+    "officialFilename",
+    "format",
+    "formatVersion",
+    "predictionHorizonDays",
+];
+
+const MERGE_OPTION_FIELDS: &[&str] = &[
+    "positionToleranceM",
+    "clockToleranceS",
+    "minAgree",
+    "clockMinCommon",
+    "combine",
+    "precedenceScope",
+    "outlierReject",
+    "targetEpochIntervalS",
+    "systems",
+    "assertedFrameLabelSets",
+    "helmert",
+];
+
+fn reject_unknown_object_fields(
+    value: &JsValue,
+    allowed: &[&str],
+    context: &str,
+) -> Result<(), JsValue> {
+    let object = value
+        .dyn_ref::<js_sys::Object>()
+        .filter(|_| !js_sys::Array::is_array(value))
+        .ok_or_else(|| type_error(&format!("{context} must be an object")))?;
+    for key in js_sys::Object::keys(object).iter() {
+        let key = key
+            .as_string()
+            .ok_or_else(|| type_error(&format!("{context} has a non-string field")))?;
+        if !allowed.contains(&key.as_str()) {
+            return Err(type_error(&format!("{context} has unknown field {key:?}")));
+        }
+    }
+    Ok(())
+}
+
+fn validate_artifact_object_fields(contributors: &JsValue) -> Result<(), JsValue> {
+    if !js_sys::Array::is_array(contributors) {
+        return Err(type_error("SP3 artifact identities must be an array"));
+    }
+    let contributors = js_sys::Array::from(contributors);
+    for (index, artifact) in contributors.iter().enumerate() {
+        let context = format!("contributors[{index}]");
+        reject_unknown_object_fields(&artifact, ARTIFACT_FIELDS, &context)?;
+        for field in ["requestedIdentity", "resolvedIdentity"] {
+            let identity = js_sys::Reflect::get(&artifact, &JsValue::from_str(field))
+                .map_err(|_| type_error(&format!("{context}.{field} is unreadable")))?;
+            reject_unknown_object_fields(
+                &identity,
+                IDENTITY_FIELDS,
+                &format!("{context}.{field}"),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_merge_option_fields(options: &JsValue) -> Result<(), JsValue> {
+    if options.is_null() || options.is_undefined() {
+        return Ok(());
+    }
+    reject_unknown_object_fields(options, MERGE_OPTION_FIELDS, "options")?;
+    let outlier = js_sys::Reflect::get(options, &JsValue::from_str("outlierReject"))
+        .map_err(|_| type_error("options.outlierReject is unreadable"))?;
+    if !outlier.is_null() && !outlier.is_undefined() {
+        reject_unknown_object_fields(
+            &outlier,
+            &["positionToleranceM", "clockToleranceS"],
+            "options.outlierReject",
+        )?;
+    }
+    Ok(())
 }
 
 fn combine_kind(label: &str) -> Result<MergeCombine, JsValue> {
@@ -195,6 +431,67 @@ fn instant_to_j2000_seconds(epoch: &Instant) -> f64 {
     }
 }
 
+fn merge_options_from_js(options: JsValue) -> Result<MergeOptions, JsValue> {
+    let input: MergeOptionsInput = if options.is_undefined() || options.is_null() {
+        MergeOptionsInput::default()
+    } else {
+        serde_wasm_bindgen::from_value(options)
+            .map_err(|error| type_error(&format!("invalid SP3 merge options: {error}")))?
+    };
+    input.to_core()
+}
+
+/// Canonical identity of a complete exact SP3 input set and full merge policy.
+#[wasm_bindgen]
+pub struct Sp3MergeInputIdentity {
+    schema_version: u8,
+    stable_id: String,
+}
+
+#[wasm_bindgen]
+impl Sp3MergeInputIdentity {
+    /// Canonical encoding version.
+    #[wasm_bindgen(getter, js_name = schemaVersion)]
+    pub fn schema_version(&self) -> u8 {
+        self.schema_version
+    }
+
+    /// Versioned stable identity of every artifact and effective merge control.
+    #[wasm_bindgen(getter, js_name = stableId)]
+    pub fn stable_id(&self) -> String {
+        self.stable_id.clone()
+    }
+}
+
+/// Validate complete exact artifact records and return their canonical merge
+/// input identity.
+///
+/// `contributors` must be an array of complete `Sp3ArtifactIdentityInput`
+/// objects. Contributor enumeration order and unordered policy fields do not
+/// affect the result. Empty, duplicate, incomplete, malformed, non-SP3, or
+/// mismatched records fail closed. Acquisition timestamps, URLs, HTTP metadata,
+/// credentials, cache paths, and retry history are not accepted input fields.
+#[wasm_bindgen(js_name = sp3MergeInputIdentity)]
+pub fn sp3_merge_input_identity(
+    contributors: JsValue,
+    options: JsValue,
+) -> Result<Sp3MergeInputIdentity, JsValue> {
+    validate_artifact_object_fields(&contributors)?;
+    validate_merge_option_fields(&options)?;
+    let contributors: Vec<Sp3ArtifactIdentityInput> = serde_wasm_bindgen::from_value(contributors)
+        .map_err(|error| type_error(&format!("invalid SP3 artifact identities: {error}")))?;
+    let contributors = contributors
+        .iter()
+        .map(Sp3ArtifactIdentityInput::to_core)
+        .collect::<Result<Vec<_>, JsValue>>()?;
+    let options = merge_options_from_js(options)?;
+    let identity = CoreSp3MergeInputIdentity::new(&contributors, &options).map_err(engine_error)?;
+    Ok(Sp3MergeInputIdentity {
+        schema_version: identity.schema_version,
+        stable_id: identity.stable_id,
+    })
+}
+
 /// Merge SP3 products with the core consensus merge path.
 ///
 /// `sources` is a JS array of parsed [`Sp3`] products, ordered by source
@@ -209,13 +506,7 @@ pub fn merge_sp3(sources: Vec<Sp3>, options: JsValue) -> Result<Sp3MergeResult, 
         return Err(type_error("mergeSp3 requires at least one SP3 product"));
     }
 
-    let opts_input: MergeOptionsInput = if options.is_undefined() || options.is_null() {
-        MergeOptionsInput::default()
-    } else {
-        serde_wasm_bindgen::from_value(options)
-            .map_err(|e| type_error(&format!("invalid SP3 merge options: {e}")))?
-    };
-    let opts = opts_input.to_core()?;
+    let opts = merge_options_from_js(options)?;
 
     let core_sources: Vec<_> = sources.into_iter().map(|s| s.inner).collect();
     let (merged, report) = merge(&core_sources, &opts).map_err(engine_error)?;

@@ -363,7 +363,8 @@ pub use sp3::{
     PreciseInterpolantArtifactError, Sp3, Sp3ClockReferenceOffset, Sp3Interpolation, Sp3State,
 };
 pub use sp3_merge::{
-    merge_sp3, Sp3FrameReconciliationReport, Sp3MergeFlag, Sp3MergeReport, Sp3MergeResult,
+    merge_sp3, sp3_merge_input_identity, Sp3FrameReconciliationReport, Sp3MergeFlag,
+    Sp3MergeInputIdentity, Sp3MergeReport, Sp3MergeResult,
 };
 pub use space_weather::{
     estimate_decay_with_space_weather, parse_space_weather, parse_space_weather_csv,

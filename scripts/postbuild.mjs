@@ -18,6 +18,51 @@ export type Vec3 = [number, number, number] | Float64Array;
 export type Vec4 = [number, number, number, number] | Float64Array;
 export type Matrix3 = number[] | Float64Array;
 
+export interface ExactProductIdentityInput {
+    family: "sp3" | "ionex" | "clk" | "nav";
+    analysisCenter: string;
+    publisher: "IGS" | "COD" | "ESA" | "GFZ";
+    solutionClass: "final" | "rapid" | "ultra_rapid" | "predicted" | "broadcast";
+    campaign: "OPS" | "MGN" | "MGX" | "BRD";
+    filenameVersion: number;
+    year: number;
+    month: number;
+    day: number;
+    issue?: string | null;
+    span: string;
+    sample: string;
+    officialFilename: string;
+    format: "SP3" | "IONEX" | "RINEX_CLK" | "RINEX_NAV";
+    formatVersion?: string | null;
+    predictionHorizonDays?: number | null;
+}
+
+export interface Sp3ArtifactIdentityInput {
+    requestedIdentity: ExactProductIdentityInput;
+    resolvedIdentity: ExactProductIdentityInput;
+    distributionSource: "direct" | "nasa_cddis" | "local_file" | "in_memory";
+    officialFilename: string;
+    productSha256: string;
+    productByteLength: number;
+    archiveSha256: string;
+    archiveByteLength: number;
+    compression: "none" | "gzip";
+}
+
+export interface Sp3MergeIdentityOptions {
+    positionToleranceM?: number;
+    clockToleranceS?: number;
+    minAgree?: number;
+    clockMinCommon?: number;
+    combine?: "mean" | "median" | "precedence";
+    precedenceScope?: "cell" | "satellite_arc";
+    outlierReject?: { positionToleranceM: number; clockToleranceS: number };
+    targetEpochIntervalS?: number;
+    systems?: string[];
+    assertedFrameLabelSets?: string[][];
+    helmert?: boolean;
+}
+
 export interface SurfaceMetInput {
     pressureHpa: number;
     temperatureK: number;
@@ -564,6 +609,10 @@ export type TerrainOrthometricBatchResult = { ok: true; orthometricHeightM: Orth
 `;
 
 const replacements = [
+  [
+    "export function sp3MergeInputIdentity(contributors: any, options: any): Sp3MergeInputIdentity;",
+    "export function sp3MergeInputIdentity(contributors: Sp3ArtifactIdentityInput[], options?: Sp3MergeIdentityOptions | null): Sp3MergeInputIdentity;",
+  ],
   [
     "export function araim(geometry: any, ism: any, allocation: any): any;",
     "export function araim(geometry: AraimGeometry, ism: AraimIsm, allocation?: AraimAllocation | null): AraimResult;",

@@ -112,11 +112,20 @@ import {
   distributionLocation,
   GnssExactProductSet,
   productIdentity,
+  sp3MergeInputIdentity,
 } from "@neilberkman/sidereon";
 
 const identity = productIdentity("cod", "sp3", 2026, 7, 12);
 console.log(identity.officialFilename);
 // COD0MGXFIN_20261930000_01D_05M_ORB.SP3
+
+// Once every input has been acquired and validated, bind its complete exact
+// artifact record and the full merge policy to one canonical stable ID.
+const mergeInput = sp3MergeInputIdentity([artifactRecord], {
+  combine: "mean",
+  systems: ["G", "E"],
+});
+console.log(mergeInput.schemaVersion, mergeInput.stableId);
 
 const cddis = distributionLocation(
   "cod",
@@ -136,6 +145,14 @@ exactSet.addExpected(identity);
 exactSet.addAvailable(identity); // add only after content validation
 exactSet.validate();
 ```
+
+`artifactRecord` contains the requested and parsed/resolved product identities,
+explicit distributor, official filename, decompressed and archive SHA-256/length
+pairs, and archive compression. Contributor enumeration and object-property
+ordering do not affect the ID; changing an artifact or effective merge control
+does. Incomplete, mismatched, duplicate, non-SP3, and unknown fields are
+rejected. Retrieval timestamps, URLs, HTTP metadata, credentials, cache paths,
+and retry history are intentionally not accepted as canonical inputs.
 
 `productIdentity` returns publisher, solution class, campaign, date, issue,
 coverage span, cadence, official filename, format, and a validated cache key.
