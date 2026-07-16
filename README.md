@@ -108,7 +108,11 @@ Product identity and distribution are separate. The pure derivation functions
 perform no network or file IO:
 
 ```js
-import { distributionLocation, productIdentity } from "@neilberkman/sidereon";
+import {
+  distributionLocation,
+  GnssExactProductSet,
+  productIdentity,
+} from "@neilberkman/sidereon";
 
 const identity = productIdentity("cod", "sp3", 2026, 7, 12);
 console.log(identity.officialFilename);
@@ -126,6 +130,11 @@ const cddis = distributionLocation(
 );
 console.log(cddis.originalUrl);
 console.log(cddis.compression); // gzip
+
+const exactSet = new GnssExactProductSet();
+exactSet.addExpected(identity);
+exactSet.addAvailable(identity); // add only after content validation
+exactSet.validate();
 ```
 
 `productIdentity` returns publisher, solution class, campaign, date, issue,
@@ -135,6 +144,13 @@ coverage span, cadence, official filename, format, and a validated cache key.
 Changing the source cannot change the exact product. Unsupported combinations
 throw instead of selecting another center, tier, issue, date, cadence, or
 family.
+
+`GnssExactProductSet.validate()` rejects an empty declaration, duplicates,
+missing products, undeclared products, and same-filename identities with
+different prediction metadata. Start dependent processing only after it
+returns successfully. For SP3 observed/predicted timing, use
+`sp3.predictionSummary()`; do not infer the boundary from issue times or catalog
+fields.
 
 Browser and Node callers retain control of `fetch`, Earthdata credentials,
 retries, and cache policy. Send credentials only to NASA's documented hosts;

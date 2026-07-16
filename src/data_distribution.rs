@@ -182,6 +182,59 @@ pub fn product_identity(
     Ok(GnssProductIdentity { inner })
 }
 
+/// Require available identities to be exactly the declared product set.
+///
+/// The expected set must be non-empty. Both lists reject duplicates; missing
+/// and undeclared identities fail. Comparison includes every identity field,
+/// not only the official filename. SP3 observed/predicted timing comes from
+/// `Sp3.predictionSummary()`, not catalog fields or issue times.
+#[wasm_bindgen]
+pub struct GnssExactProductSet {
+    expected: Vec<ProductIdentity>,
+    available: Vec<ProductIdentity>,
+}
+
+#[wasm_bindgen]
+impl GnssExactProductSet {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            expected: Vec::new(),
+            available: Vec::new(),
+        }
+    }
+
+    #[wasm_bindgen(js_name = addExpected)]
+    pub fn add_expected(&mut self, identity: &GnssProductIdentity) {
+        self.expected.push(identity.inner.clone());
+    }
+
+    #[wasm_bindgen(js_name = addAvailable)]
+    pub fn add_available(&mut self, identity: &GnssProductIdentity) {
+        self.available.push(identity.inner.clone());
+    }
+
+    #[wasm_bindgen(getter, js_name = expectedCount)]
+    pub fn expected_count(&self) -> usize {
+        self.expected.len()
+    }
+
+    #[wasm_bindgen(getter, js_name = availableCount)]
+    pub fn available_count(&self) -> usize {
+        self.available.len()
+    }
+
+    pub fn validate(&self) -> Result<(), JsValue> {
+        core_data::validate_exact_product_set(&self.expected, &self.available).map_err(engine_error)
+    }
+}
+
+impl Default for GnssExactProductSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Resolve one explicit public distributor without performing network IO.
 #[wasm_bindgen(js_name = distributionLocation)]
 #[allow(clippy::too_many_arguments)]

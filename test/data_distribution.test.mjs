@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { distributionLocation, productIdentity } from "../pkg-node/sidereon.js";
+import {
+  distributionLocation,
+  GnssExactProductSet,
+  productIdentity,
+} from "../pkg-node/sidereon.js";
 
 test("exact product identity remains independent of distributor", () => {
   const identity = productIdentity("cod", "sp3", 2026, 7, 12);
@@ -74,6 +78,41 @@ test("predicted tiers with the same filename retain distinct cache identities", 
   const p2 = productIdentity("cod_prd2", "ionex", 2026, 7, 16);
   assert.equal(p1.officialFilename, p2.officialFilename);
   assert.notEqual(p1.cacheKey, p2.cacheKey);
+});
+
+test("exact product sets fail closed and retain prediction metadata", () => {
+  const first = productIdentity("cod", "sp3", 2026, 7, 12);
+  const second = productIdentity("cod", "sp3", 2026, 7, 13);
+  const complete = new GnssExactProductSet();
+  complete.addExpected(first);
+  complete.addExpected(second);
+  complete.addAvailable(second);
+  complete.addAvailable(first);
+  assert.equal(complete.expectedCount, 2);
+  assert.equal(complete.availableCount, 2);
+  complete.validate();
+
+  const partial = new GnssExactProductSet();
+  partial.addExpected(first);
+  partial.addExpected(second);
+  partial.addAvailable(first);
+  assert.throws(() => partial.validate(), /missing:/);
+
+  const duplicated = new GnssExactProductSet();
+  duplicated.addExpected(first);
+  duplicated.addExpected(first);
+  duplicated.addAvailable(first);
+  duplicated.addAvailable(second);
+  duplicated.addAvailable(second);
+  assert.throws(() => duplicated.validate(), /duplicate expected:/);
+
+  const oneDay = productIdentity("cod_prd1", "ionex", 2026, 7, 16);
+  const twoDay = productIdentity("cod_prd2", "ionex", 2026, 7, 16);
+  assert.equal(oneDay.officialFilename, twoDay.officialFilename);
+  const wrongTier = new GnssExactProductSet();
+  wrongTier.addExpected(oneDay);
+  wrongTier.addAvailable(twoDay);
+  assert.throws(() => wrongTier.validate(), /unexpected:/);
 });
 
 test("unsupported CDDIS families fail instead of changing product", () => {

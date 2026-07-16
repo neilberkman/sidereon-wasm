@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.29.2 - 2026-07-16
+
+- Adds `GnssExactProductSet`, a fail-closed gate for a declared exact identity
+  inventory. Empty declarations, duplicates, missing products, and undeclared
+  products are rejected.
+- Preserves prediction-tier identity during exact-set comparison. SP3
+  observed/predicted timing remains available from the parser's authoritative
+  record-flag summary.
+- Builds against `sidereon` and `sidereon-core` 0.29.2.
+
 ## 0.29.1 - 2026-07-15
 
 - Derives CODE predicted IONEX P1 and P2 direct locations from their current
