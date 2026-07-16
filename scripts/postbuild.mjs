@@ -50,7 +50,9 @@ export interface Sp3ArtifactIdentityInput {
 }
 
 export interface Sp3MergeIdentityOptions {
+    /** Finite, non-negative position agreement tolerance in meters. */
     positionToleranceM?: number;
+    /** Finite, non-negative clock agreement tolerance in seconds. */
     clockToleranceS?: number;
     minAgree?: number;
     clockMinCommon?: number;

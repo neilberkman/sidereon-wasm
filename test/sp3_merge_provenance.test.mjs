@@ -78,6 +78,25 @@ test("artifact bytes and the effective merge policy change the stable identity",
   assert.notEqual(original.stableId, changedPolicy.stableId);
 });
 
+test("zero position and clock tolerances are valid identity policy", () => {
+  const contributor = artifact("esa", 12, "1");
+  const exact = sp3MergeInputIdentity([contributor], {
+    positionToleranceM: 0,
+    clockToleranceS: 0,
+  });
+
+  assert.equal(exact.schemaVersion, 1);
+  assert.match(exact.stableId, /^sidereon-sp3-merge-input-v1:[0-9a-f]{64}$/);
+  assert.throws(
+    () => sp3MergeInputIdentity([contributor], { positionToleranceM: -1 }),
+    /non-negative and finite/,
+  );
+  assert.throws(
+    () => sp3MergeInputIdentity([contributor], { targetEpochIntervalS: 0 }),
+    /positive and finite/,
+  );
+});
+
 test("single contributors work and incomplete, mismatched, or extra records fail closed", () => {
   const contributor = artifact("esa", 12, "1");
   assert.equal(sp3MergeInputIdentity([contributor], undefined).schemaVersion, 1);

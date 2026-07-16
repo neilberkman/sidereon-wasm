@@ -320,16 +320,18 @@ impl MergeOptionsInput {
     fn to_core(&self) -> Result<MergeOptions, JsValue> {
         let mut opts = MergeOptions::default();
         if let Some(value) = self.position_tolerance_m {
-            if !(value.is_finite() && value > 0.0) {
+            if !(value.is_finite() && value >= 0.0) {
                 return Err(range_error(
-                    "positionToleranceM must be positive and finite",
+                    "positionToleranceM must be non-negative and finite",
                 ));
             }
             opts.position_tolerance_m = value;
         }
         if let Some(value) = self.clock_tolerance_s {
-            if !(value.is_finite() && value > 0.0) {
-                return Err(range_error("clockToleranceS must be positive and finite"));
+            if !(value.is_finite() && value >= 0.0) {
+                return Err(range_error(
+                    "clockToleranceS must be non-negative and finite",
+                ));
             }
             opts.clock_tolerance_s = value;
         }
