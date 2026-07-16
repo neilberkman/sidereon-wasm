@@ -37,6 +37,9 @@ jobs:
       - name: Upgrade npm
         run: npm install -g npm@11
 
+      - name: Install
+        run: npm ci
+
       - name: Build (web + node targets)
         run: npm run build
 
