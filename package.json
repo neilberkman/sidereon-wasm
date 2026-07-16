@@ -1,6 +1,6 @@
 {
   "name": "@neilberkman/sidereon",
-  "version": "0.29.2",
+  "version": "0.30.0",
   "description": "WebAssembly / JavaScript interface over the sidereon GNSS + astrodynamics engine: SP3 loading and multi-product merge, SPP / RTK (float + fixed) / PPP (float + fixed) positioning, IONEX slant delay, SGP4 and numerical orbit propagation, RINEX observation/navigation/clock parsing, CRINEX (Hatanaka) decoding, observable-domain math (carrier combinations, cycle slips, Hatch smoothing, weighting, velocity, GPS C/A signal), and the astro domain (scale-tagged time, frame transforms, Sun/Moon ephemerides, eclipse / body angles, DOP, passes / visibility, conjunction + collision probability, CDM / OMM / ANTEX parsing, RF link budget)",
   "type": "module",
   "license": "MIT",
@@ -16,6 +16,10 @@
       "import": "./pkg/sidereon.js",
       "require": "./pkg-node/sidereon.js"
     },
+    "./exact-cache": {
+      "types": "./types/exact-cache.d.ts",
+      "import": "./exact-cache.js"
+    },
     "./types": "./types/sidereon-extra.d.ts"
   },
   "types": "./pkg/sidereon.d.ts",
@@ -30,6 +34,8 @@
     "pkg-node/sidereon.d.ts",
     "pkg-node/sidereon_bg.wasm",
     "pkg-node/sidereon_bg.wasm.d.ts",
+    "exact-cache.js",
+    "types/exact-cache.d.ts",
     "types/sidereon-extra.d.ts",
     "README.md"
   ],
@@ -43,6 +49,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.6.0",
+    "fake-indexeddb": "^6.2.5",
     "globals": "^17.7.0",
     "prettier": "^3.9.1",
     "typescript": "^6.0.3"

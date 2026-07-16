@@ -2,19 +2,25 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildExactCacheCommit,
   distributionLocation,
   GnssExactProductSet,
   productIdentity,
+  verifyExactCacheCommit,
 } from "../pkg-node/sidereon.js";
 
 test("exact product identity remains independent of distributor", () => {
   const identity = productIdentity("cod", "sp3", 2026, 7, 12);
   assert.equal(identity.family, "sp3");
+  assert.equal(identity.analysisCenter, "cod");
   assert.equal(identity.publisher, "COD");
   assert.equal(identity.solutionClass, "final");
   assert.equal(identity.campaign, "MGX");
   assert.equal(identity.sample, "05M");
   assert.equal(identity.officialFilename, "COD0MGXFIN_20261930000_01D_05M_ORB.SP3");
+  assert.equal(identity.format, "SP3");
+  assert.equal(identity.formatVersion, undefined);
+  assert.equal(identity.cacheKey, "cod-final-a91258c21fa4860c34ce");
 
   const direct = distributionLocation("cod", "sp3", 2026, 7, 12, undefined, undefined, "direct");
   const cddis = distributionLocation("cod", "sp3", 2026, 7, 12, undefined, undefined, "nasa_cddis");
@@ -24,6 +30,43 @@ test("exact product identity remains independent of distributor", () => {
   assert.equal(
     cddis.originalUrl,
     "https://cddis.nasa.gov/archive/gnss/products/2427/COD0MGXFIN_20261930000_01D_05M_ORB.SP3.gz",
+  );
+});
+
+test("exact cache commits bind full identity, source, and all immutable bytes", () => {
+  const identity = productIdentity("cod_prd1", "ionex", 2026, 7, 16);
+  const entry = "0123456789abcdef0123456789abcdef";
+  const product = new TextEncoder().encode("validated IONEX");
+  const archive = new TextEncoder().encode("compressed distributor bytes");
+  const provenance = new TextEncoder().encode('{"source":"direct"}');
+  const marker = buildExactCacheCommit(identity, "direct", entry, product, archive, provenance);
+
+  assert.equal(
+    verifyExactCacheCommit(identity, "direct", marker, product, archive, provenance),
+    entry,
+  );
+  assert.throws(
+    () =>
+      verifyExactCacheCommit(
+        identity,
+        "direct",
+        marker,
+        new TextEncoder().encode("different product"),
+        archive,
+        provenance,
+      ),
+    /identity, source, or bytes/,
+  );
+  assert.throws(
+    () => verifyExactCacheCommit(identity, "nasa_cddis", marker, product, archive, provenance),
+    /identity, source, or bytes/,
+  );
+
+  const otherTier = productIdentity("cod_prd2", "ionex", 2026, 7, 16);
+  assert.equal(identity.officialFilename, otherTier.officialFilename);
+  assert.throws(
+    () => verifyExactCacheCommit(otherTier, "direct", marker, product, archive, provenance),
+    /identity, source, or bytes/,
   );
 });
 

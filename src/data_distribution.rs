@@ -7,6 +7,7 @@ use sidereon_core::data::{
     self as core_data, AnalysisCenter, DistributionSource, ProductDate, ProductIdentity,
     ProductType,
 };
+use sidereon_core::exact_cache::{build_commit_record, verify_commit_record};
 use wasm_bindgen::prelude::*;
 
 use crate::error::{engine_error, type_error};
@@ -22,6 +23,11 @@ impl GnssProductIdentity {
     #[wasm_bindgen(getter)]
     pub fn family(&self) -> String {
         self.inner.family.code().to_owned()
+    }
+
+    #[wasm_bindgen(getter, js_name = analysisCenter)]
+    pub fn analysis_center(&self) -> String {
+        self.inner.analysis_center.code().to_owned()
     }
 
     #[wasm_bindgen(getter, js_name = publisher)]
@@ -84,6 +90,11 @@ impl GnssProductIdentity {
         self.inner.format.code().to_owned()
     }
 
+    #[wasm_bindgen(getter, js_name = formatVersion)]
+    pub fn format_version(&self) -> Option<String> {
+        self.inner.format_version.clone()
+    }
+
     #[wasm_bindgen(getter, js_name = predictionHorizonDays)]
     pub fn prediction_horizon_days(&self) -> Option<u8> {
         self.inner.prediction_horizon_days
@@ -94,6 +105,53 @@ impl GnssProductIdentity {
     pub fn cache_key(&self) -> Result<String, JsValue> {
         self.inner.key().map_err(engine_error)
     }
+}
+
+/// Build the shared exact-cache commit bytes for a complete immutable candidate.
+///
+/// Browser hosts should stage product, archive, and provenance under `entry_id`
+/// and make the returned marker visible in the same IndexedDB transaction.
+#[wasm_bindgen(js_name = buildExactCacheCommit)]
+pub fn build_exact_cache_commit(
+    identity: &GnssProductIdentity,
+    source: &str,
+    entry_id: &str,
+    product: &[u8],
+    archive: &[u8],
+    provenance: &[u8],
+) -> Result<Vec<u8>, JsValue> {
+    build_commit_record(
+        &identity.inner,
+        distribution_source(source)?,
+        entry_id,
+        product,
+        archive,
+        provenance,
+    )
+    .map_err(engine_error)
+}
+
+/// Verify a shared commit marker against the requested full identity, source,
+/// and all three immutable byte objects. Returns the committed entry id.
+#[wasm_bindgen(js_name = verifyExactCacheCommit)]
+pub fn verify_exact_cache_commit(
+    identity: &GnssProductIdentity,
+    source: &str,
+    marker: &[u8],
+    product: &[u8],
+    archive: &[u8],
+    provenance: &[u8],
+) -> Result<String, JsValue> {
+    verify_commit_record(
+        &identity.inner,
+        distribution_source(source)?,
+        marker,
+        product,
+        archive,
+        provenance,
+    )
+    .map(|verified| verified.entry_id)
+    .map_err(engine_error)
 }
 
 /// Public location and transport metadata for one exact product identity.

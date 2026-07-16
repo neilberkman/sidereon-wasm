@@ -153,7 +153,28 @@ returns successfully. For SP3 observed/predicted timing, use
 fields.
 
 Browser and Node callers retain control of `fetch`, Earthdata credentials,
-retries, and cache policy. Send credentials only to NASA's documented hosts;
+retries, and product-format validation. The browser cache uses the same WASM
+commit builder/verifier as the other interfaces:
+
+```js
+import { BrowserExactProductCache } from "@neilberkman/sidereon/exact-cache";
+
+const cache = await BrowserExactProductCache.open();
+const entry = await cache.withLock(identity, "nasa_cddis", async (locked) => {
+  const hit = await locked.read();
+  if (hit) return hit;
+  // Fetch and validate first; these are the resulting immutable bytes.
+  return locked.publish(productBytes, archiveBytes, provenanceBytes);
+});
+```
+
+Web Locks coordinate same-origin tabs and workers with a bounded wait.
+IndexedDB publishes the immutable entry and marker in one strict-durability
+transaction; reads return bytes only after shared schema-v3 verification. Node
+hosts can call `buildExactCacheCommit` and `verifyExactCacheCommit` with their
+own storage transaction.
+
+Send credentials only to NASA's documented hosts;
 remove URL queries from diagnostics; reject HTML success bodies; validate
 content length, gzip completion, and hashes; then parse with `loadSp3` or
 `loadIonex`. See [NASA CDDIS archive access](https://www.earthdata.nasa.gov/centers/cddis-daac/archive-access)

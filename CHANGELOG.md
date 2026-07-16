@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.30.0 - 2026-07-16
+
+- Exposes analysis center, parsed format version, and the canonical all-field
+  cache key on exact product identities.
+- Adds the shared schema-v3 commit builder and verifier, binding the full
+  identity, explicit source, and all immutable byte objects.
+- Adds `@neilberkman/sidereon/exact-cache`, using Web Locks for bounded
+  same-origin tab/worker coordination and one strict-durability IndexedDB
+  transaction for atomic immutable-entry publication.
+- Builds against `sidereon` and `sidereon-core` 0.30.0.
 
 ## 0.29.2 - 2026-07-16
 
