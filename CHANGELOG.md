@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.29.1 - 2026-07-15
+
+- Derives CODE predicted IONEX P1 and P2 direct locations from their current
+  official tier-specific HTTPS directories, including identity-year rollover.
+- Keeps same-filename P1 and P2 exact product cache keys distinct.
+- Builds against `sidereon` and `sidereon-core` 0.29.1.
+
 ## 0.29.0 - 2026-07-15
 
 - Adds pure exact GNSS product identity and explicit distribution-location

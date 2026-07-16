@@ -40,6 +40,42 @@ test("IONEX uses the public CDDIS year/day-of-year layout", () => {
   );
 });
 
+test("predicted IONEX direct locations preserve tier and identity year", () => {
+  const p1 = distributionLocation("cod_prd1", "ionex", 2026, 7, 15, undefined, undefined, "direct");
+  assert.equal(
+    p1.originalUrl,
+    "https://www.aiub.unibe.ch/download/CODE/IONO/P1/2026/COD0OPSPRD_20261960000_01D_01H_GIM.INX.gz",
+  );
+
+  const p2 = distributionLocation("cod_prd2", "ionex", 2026, 7, 16, undefined, undefined, "direct");
+  assert.equal(
+    p2.originalUrl,
+    "https://www.aiub.unibe.ch/download/CODE/IONO/P2/2026/COD0OPSPRD_20261970000_01D_01H_GIM.INX.gz",
+  );
+
+  const boundary = distributionLocation(
+    "cod_prd2",
+    "ionex",
+    2027,
+    1,
+    1,
+    undefined,
+    undefined,
+    "direct",
+  );
+  assert.equal(
+    boundary.originalUrl,
+    "https://www.aiub.unibe.ch/download/CODE/IONO/P2/2027/COD0OPSPRD_20270010000_01D_01H_GIM.INX.gz",
+  );
+});
+
+test("predicted tiers with the same filename retain distinct cache identities", () => {
+  const p1 = productIdentity("cod_prd1", "ionex", 2026, 7, 16);
+  const p2 = productIdentity("cod_prd2", "ionex", 2026, 7, 16);
+  assert.equal(p1.officialFilename, p2.officialFilename);
+  assert.notEqual(p1.cacheKey, p2.cacheKey);
+});
+
 test("unsupported CDDIS families fail instead of changing product", () => {
   assert.throws(
     () => distributionLocation("igs", "nav", 2020, 6, 25, undefined, undefined, "nasa_cddis"),
