@@ -102,6 +102,47 @@ console.log(solution.rxClockS);  // receiver clock bias, seconds
 the same pattern: an options object in, a result object with `Float64Array`
 positions and scalar attributes out.
 
+## Exact GNSS product sources
+
+Product identity and distribution are separate. The pure derivation functions
+perform no network or file IO:
+
+```js
+import { distributionLocation, productIdentity } from "@neilberkman/sidereon";
+
+const identity = productIdentity("cod", "sp3", 2026, 7, 12);
+console.log(identity.officialFilename);
+// COD0MGXFIN_20261930000_01D_05M_ORB.SP3
+
+const cddis = distributionLocation(
+  "cod",
+  "sp3",
+  2026,
+  7,
+  12,
+  undefined, // catalog default cadence
+  undefined, // no ultra-rapid issue
+  "nasa_cddis",
+);
+console.log(cddis.originalUrl);
+console.log(cddis.compression); // gzip
+```
+
+`productIdentity` returns publisher, solution class, campaign, date, issue,
+coverage span, cadence, official filename, format, and a validated cache key.
+`distributionLocation` accepts `direct`, `nasa_cddis`, `local_file`, or
+`in_memory` and returns public URL, archive filename, and transport compression.
+Changing the source cannot change the exact product. Unsupported combinations
+throw instead of selecting another center, tier, issue, date, cadence, or
+family.
+
+Browser and Node callers retain control of `fetch`, Earthdata credentials,
+retries, and cache policy. Send credentials only to NASA's documented hosts;
+remove URL queries from diagnostics; reject HTML success bodies; validate
+content length, gzip completion, and hashes; then parse with `loadSp3` or
+`loadIonex`. See [NASA CDDIS archive access](https://www.earthdata.nasa.gov/centers/cddis-daac/archive-access)
+and [Earthdata Login data access](https://urs.earthdata.nasa.gov/documentation/for_users/data_access/curl_and_wget).
+
 ## Example: post-solve integrity
 
 Use `raim` on per-satellite post-fit residuals after a solve. The direct result

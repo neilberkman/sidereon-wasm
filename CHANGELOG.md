@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+## 0.29.0 - 2026-07-15
+
+- Adds pure exact GNSS product identity and explicit distribution-location
+  derivation for direct archives, NASA CDDIS/Earthdata, local files, and
+  in-memory input. The WASM package performs no hidden network or credential IO.
+- Builds against `sidereon` and `sidereon-core` 0.29.0.
+
 ## 0.28.1 - 2026-07-15
 
 - Builds against `sidereon` and `sidereon-core` 0.28.1, inheriting the repaired

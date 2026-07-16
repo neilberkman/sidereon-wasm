@@ -29,6 +29,7 @@ mod constellation;
 mod covariance;
 mod coverage;
 mod crinex;
+mod data_distribution;
 mod dgnss;
 mod dop;
 mod doppler;
@@ -146,6 +147,9 @@ pub use covariance::{
 };
 pub use coverage::{coverage_look_angles, CoverageGrid};
 pub use crinex::{decode_crinex, decode_crinex_lines, encode_crinex, load_crinex};
+pub use data_distribution::{
+    distribution_location, product_identity, GnssDistributionLocation, GnssProductIdentity,
+};
 pub use dgnss::{dgnss_apply, AppliedCorrections, CorrectionEntry, DgnssSolution};
 pub use dop::{
     dop_with_convention_js, error_ellipse_2, gnss_dop, gnss_dop_at_epoch, gnss_dop_series,
