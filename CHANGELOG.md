@@ -1,11 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.31.0 - 2026-07-16
 
 - Adds `sp3MergeInputIdentity`, which validates complete exact SP3 artifact
   records plus the full merge policy and returns the shared versioned stable
   identity. Incomplete, malformed, mismatched, duplicate, non-SP3, and unknown
   fields fail closed.
+- Builds against `sidereon` and `sidereon-core` 0.31.0.
 
 ## 0.30.0 - 2026-07-16
 
