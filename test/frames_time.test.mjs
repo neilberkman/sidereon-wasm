@@ -27,6 +27,14 @@ const FX = fixtureJson("frames_time.json");
 const SAMPLE_POS = FX.sample.position_km_hex.map(hexToF64);
 const SAMPLE_VEL = FX.sample.velocity_km_s_hex.map(hexToF64);
 
+// Independent Skyfield 1.49 oracle. Unlike frames_time.json, these values
+// were captured from Skyfield and were not emitted by Sidereon.
+const SKYFIELD_TEME_POS = ["0x40ace86c23dffb6b", "0x409f7fa61c81cb47", "0x40b4bd8359159cde"];
+const SKYFIELD_TEME_VEL = ["0xc00b2ffb7cf9ad7d", "0x401b7a8751f7fc4a", "0xbfceb36925f07cb4"];
+const SKYFIELD_GCRS_POS = ["0x40ad0bd9193713e1", "0x409f41a3b2073733", "0x40b4b6ffad1289d1"];
+const SKYFIELD_GCRS_VEL = ["0xc00af690723d6cb1", "0x401b88e06212f969", "0xbfcde8575471eaf0"];
+const SKYFIELD_ITRS_POS = ["0xc092d5d32b319db8", "0x40af8b3b3a722474", "0x40b4bd8359159cdb"];
+
 const eqBits = (value, hex) => assert.equal(f64Bits(value), BigInt(hex));
 const epochsArray = () => bigints(FX.epochs.map((e) => e.unix_micros));
 const tile = (vec, n) => {
@@ -124,6 +132,21 @@ test("temeToGcrs matches reference bits (both compat paths)", () => {
   }
 });
 
+test("temeToGcrs matches Skyfield 1.49 at zero ULP", () => {
+  const epoch = Instant.fromUtc(2018, 7, 4, 0, 0, 0).unixMicros;
+  const result = temeToGcrs(
+    Float64Array.from(SKYFIELD_TEME_POS.map(hexToF64)),
+    Float64Array.from(SKYFIELD_TEME_VEL.map(hexToF64)),
+    BigInt64Array.from([epoch]),
+    true,
+  );
+
+  for (let axis = 0; axis < 3; axis++) {
+    eqBits(result.positionKm[axis], SKYFIELD_GCRS_POS[axis]);
+    eqBits(result.velocityKmS[axis], SKYFIELD_GCRS_VEL[axis]);
+  }
+});
+
 test("gcrsToItrs matches reference bits (both compat paths)", () => {
   const epochs = epochsArray();
   const n = FX.epochs.length;
@@ -138,6 +161,17 @@ test("gcrsToItrs matches reference bits (both compat paths)", () => {
       for (let axis = 0; axis < 3; axis++) eqBits(itrs[idx * 3 + axis], e[key][axis]);
     });
   }
+});
+
+test("gcrsToItrs matches Skyfield 1.49 at zero ULP", () => {
+  const epoch = Instant.fromUtc(2018, 7, 4, 0, 0, 0).unixMicros;
+  const itrs = gcrsToItrs(
+    Float64Array.from(SKYFIELD_GCRS_POS.map(hexToF64)),
+    BigInt64Array.from([epoch]),
+    true,
+  );
+
+  for (let axis = 0; axis < 3; axis++) eqBits(itrs[axis], SKYFIELD_ITRS_POS[axis]);
 });
 
 test("itrsToGcrs matches reference bits", () => {
