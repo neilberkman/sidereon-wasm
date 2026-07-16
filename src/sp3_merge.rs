@@ -467,10 +467,12 @@ impl Sp3MergeInputIdentity {
 /// input identity.
 ///
 /// `contributors` must be an array of complete `Sp3ArtifactIdentityInput`
-/// objects. Contributor enumeration order and unordered policy fields do not
-/// affect the result. Empty, duplicate, incomplete, malformed, non-SP3, or
-/// mismatched records fail closed. Acquisition timestamps, URLs, HTTP metadata,
-/// credentials, cache paths, and retry history are not accepted input fields.
+/// objects. Contributor enumeration order does not affect mean or median
+/// identities. Precedence identities bind the original order because it
+/// determines source priority. Unordered policy fields are canonicalized.
+/// Empty, duplicate, incomplete, malformed, non-SP3, or mismatched records fail
+/// closed. Acquisition timestamps, URLs, HTTP metadata, credentials, cache
+/// paths, and retry history are not accepted input fields.
 #[wasm_bindgen(js_name = sp3MergeInputIdentity)]
 pub fn sp3_merge_input_identity(
     contributors: JsValue,

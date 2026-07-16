@@ -148,11 +148,13 @@ exactSet.validate();
 
 `artifactRecord` contains the requested and parsed/resolved product identities,
 explicit distributor, official filename, decompressed and archive SHA-256/length
-pairs, and archive compression. Contributor enumeration and object-property
-ordering do not affect the ID; changing an artifact or effective merge control
-does. Incomplete, mismatched, duplicate, non-SP3, and unknown fields are
-rejected. Retrieval timestamps, URLs, HTTP metadata, credentials, cache paths,
-and retry history are intentionally not accepted as canonical inputs.
+pairs, and archive compression. Contributor enumeration does not affect mean or
+median IDs. Precedence IDs bind the original order because it determines source
+priority. Object-property ordering does not affect any ID; changing an artifact
+or effective merge control does. Incomplete, mismatched, duplicate, non-SP3,
+and unknown fields are rejected. Retrieval timestamps, URLs, HTTP metadata,
+credentials, cache paths, and retry history are intentionally not accepted as
+canonical inputs.
 
 `productIdentity` returns publisher, solution class, campaign, date, issue,
 coverage span, cadence, official filename, format, and a validated cache key.

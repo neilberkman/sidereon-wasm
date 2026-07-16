@@ -39,7 +39,7 @@ function artifact(center, day, digestByte) {
   };
 }
 
-test("merged-SP3 input identity is canonical across contributor and object ordering", () => {
+test("mean merged-SP3 identity is canonical across contributor and object ordering", () => {
   const first = artifact("esa", 12, "1");
   const second = artifact("cod", 13, "2");
   const forward = sp3MergeInputIdentity([first, second], {
@@ -54,6 +54,15 @@ test("merged-SP3 input identity is canonical across contributor and object order
   assert.equal(forward.schemaVersion, 1);
   assert.match(forward.stableId, /^sidereon-sp3-merge-input-v1:[0-9a-f]{64}$/);
   assert.equal(forward.stableId, reverse.stableId);
+});
+
+test("precedence merged-SP3 identity binds contributor priority order", () => {
+  const first = artifact("esa", 12, "1");
+  const second = artifact("cod", 13, "2");
+  const forward = sp3MergeInputIdentity([first, second], { combine: "precedence" });
+  const reverse = sp3MergeInputIdentity([second, first], { combine: "precedence" });
+
+  assert.notEqual(forward.stableId, reverse.stableId);
 });
 
 test("artifact bytes and the effective merge policy change the stable identity", () => {
