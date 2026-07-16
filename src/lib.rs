@@ -148,8 +148,8 @@ pub use covariance::{
 pub use coverage::{coverage_look_angles, CoverageGrid};
 pub use crinex::{decode_crinex, decode_crinex_lines, encode_crinex, load_crinex};
 pub use data_distribution::{
-    distribution_location, product_identity, GnssDistributionLocation, GnssExactProductSet,
-    GnssProductIdentity,
+    build_exact_cache_commit, distribution_location, product_identity, verify_exact_cache_commit,
+    GnssDistributionLocation, GnssExactProductSet, GnssProductIdentity,
 };
 pub use dgnss::{dgnss_apply, AppliedCorrections, CorrectionEntry, DgnssSolution};
 pub use dop::{
