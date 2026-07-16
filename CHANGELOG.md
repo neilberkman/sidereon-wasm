@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.31.2 - 2026-07-16
+
+- Returns canonical contributors and ordered precedence contributors alongside
+  the merged-SP3 stable ID.
+- Rejects artifact byte lengths that are not positive exact JavaScript safe
+  integers and enforces whole-second target epoch intervals.
+- Adds the shared literal provenance fixture and builds against `sidereon` and
+  `sidereon-core` 0.31.2.
+
 ## 0.31.0 - 2026-07-16
 
 - Adds `sp3MergeInputIdentity`, which validates complete exact SP3 artifact

@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::{prelude::*, JsCast};
 
 use sidereon_core::astro::time::{Instant, InstantRepr};
@@ -83,6 +83,110 @@ struct Sp3ArtifactIdentityInput {
     archive_sha256: String,
     archive_byte_length: u64,
     compression: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProductIdentityOutput<'a> {
+    family: &'static str,
+    analysis_center: &'a str,
+    publisher: &'static str,
+    solution_class: &'static str,
+    campaign: &'static str,
+    filename_version: u8,
+    year: i32,
+    month: u8,
+    day: u8,
+    issue: Option<&'a str>,
+    span: &'a str,
+    sample: &'a str,
+    official_filename: &'a str,
+    format: &'static str,
+    format_version: Option<&'a str>,
+    prediction_horizon_days: Option<u8>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sp3ArtifactIdentityOutput<'a> {
+    requested_identity: ProductIdentityOutput<'a>,
+    resolved_identity: ProductIdentityOutput<'a>,
+    distribution_source: &'static str,
+    official_filename: &'a str,
+    product_sha256: &'a str,
+    product_byte_length: f64,
+    archive_sha256: &'a str,
+    archive_byte_length: f64,
+    compression: &'static str,
+}
+
+fn product_identity_output(identity: &ProductIdentity) -> ProductIdentityOutput<'_> {
+    ProductIdentityOutput {
+        family: match identity.family {
+            ProductType::Sp3 => "sp3",
+            ProductType::Ionex => "ionex",
+            ProductType::Clk => "clk",
+            ProductType::Nav => "nav",
+        },
+        analysis_center: identity.analysis_center.code(),
+        publisher: match identity.publisher {
+            ProductPublisher::Igs => "IGS",
+            ProductPublisher::Code => "COD",
+            ProductPublisher::Esa => "ESA",
+            ProductPublisher::Gfz => "GFZ",
+        },
+        solution_class: match identity.solution {
+            SolutionClass::Final => "final",
+            SolutionClass::Rapid => "rapid",
+            SolutionClass::UltraRapid => "ultra_rapid",
+            SolutionClass::Predicted => "predicted",
+            SolutionClass::Broadcast => "broadcast",
+        },
+        campaign: match identity.campaign {
+            ProductCampaign::Operational => "OPS",
+            ProductCampaign::MultiGnss => "MGN",
+            ProductCampaign::MultiGnssExperiment => "MGX",
+            ProductCampaign::Broadcast => "BRD",
+        },
+        filename_version: identity.version,
+        year: identity.date.year,
+        month: identity.date.month,
+        day: identity.date.day,
+        issue: identity.issue.as_deref(),
+        span: &identity.span,
+        sample: &identity.sample,
+        official_filename: &identity.official_filename,
+        format: match identity.format {
+            ProductFormat::Sp3 => "SP3",
+            ProductFormat::Ionex => "IONEX",
+            ProductFormat::RinexClock => "RINEX_CLK",
+            ProductFormat::RinexNavigation => "RINEX_NAV",
+        },
+        format_version: identity.format_version.as_deref(),
+        prediction_horizon_days: identity.prediction_horizon_days,
+    }
+}
+
+fn artifact_identity_output(artifact: &Sp3ArtifactIdentity) -> Sp3ArtifactIdentityOutput<'_> {
+    Sp3ArtifactIdentityOutput {
+        requested_identity: product_identity_output(&artifact.requested_identity),
+        resolved_identity: product_identity_output(&artifact.resolved_identity),
+        distribution_source: match artifact.distribution_source {
+            DistributionSource::Direct => "direct",
+            DistributionSource::NasaCddis => "nasa_cddis",
+            DistributionSource::LocalFile => "local_file",
+            DistributionSource::InMemory => "in_memory",
+        },
+        official_filename: &artifact.official_filename,
+        product_sha256: &artifact.product_sha256,
+        product_byte_length: artifact.product_byte_length as f64,
+        archive_sha256: &artifact.archive_sha256,
+        archive_byte_length: artifact.archive_byte_length as f64,
+        compression: match artifact.compression {
+            ArchiveCompression::None => "none",
+            ArchiveCompression::Gzip => "gzip",
+        },
+    }
 }
 
 impl ProductIdentityInput {
@@ -222,6 +326,8 @@ const MERGE_OPTION_FIELDS: &[&str] = &[
     "helmert",
 ];
 
+const JS_MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
 fn reject_unknown_object_fields(
     value: &JsValue,
     allowed: &[&str],
@@ -250,6 +356,25 @@ fn validate_artifact_object_fields(contributors: &JsValue) -> Result<(), JsValue
     for (index, artifact) in contributors.iter().enumerate() {
         let context = format!("contributors[{index}]");
         reject_unknown_object_fields(&artifact, ARTIFACT_FIELDS, &context)?;
+        for field in ["productByteLength", "archiveByteLength"] {
+            let value = js_sys::Reflect::get(&artifact, &JsValue::from_str(field))
+                .map_err(|_| type_error(&format!("{context}.{field} is unreadable")))?
+                .as_f64()
+                .ok_or_else(|| {
+                    type_error(&format!(
+                        "{context}.{field} must be a positive safe integer Number"
+                    ))
+                })?;
+            if !value.is_finite()
+                || value <= 0.0
+                || value.fract() != 0.0
+                || value > JS_MAX_SAFE_INTEGER
+            {
+                return Err(range_error(&format!(
+                    "{context}.{field} must be a positive safe integer Number"
+                )));
+            }
+        }
         for field in ["requestedIdentity", "resolvedIdentity"] {
             let identity = js_sys::Reflect::get(&artifact, &JsValue::from_str(field))
                 .map_err(|_| type_error(&format!("{context}.{field} is unreadable")))?;
@@ -375,6 +500,11 @@ impl MergeOptionsInput {
                     "targetEpochIntervalS must be positive and finite",
                 ));
             }
+            if (value - value.round()).abs() > 1.0e-6 {
+                return Err(range_error(
+                    "targetEpochIntervalS must be a positive whole number of seconds",
+                ));
+            }
             opts.target_epoch_interval_s = Some(value);
         }
         if let Some(labels) = &self.systems {
@@ -448,6 +578,8 @@ fn merge_options_from_js(options: JsValue) -> Result<MergeOptions, JsValue> {
 pub struct Sp3MergeInputIdentity {
     schema_version: u8,
     stable_id: String,
+    contributors: JsValue,
+    precedence_contributors: JsValue,
 }
 
 #[wasm_bindgen]
@@ -462,6 +594,19 @@ impl Sp3MergeInputIdentity {
     #[wasm_bindgen(getter, js_name = stableId)]
     pub fn stable_id(&self) -> String {
         self.stable_id.clone()
+    }
+
+    /// Contributors in distributor-independent canonical order.
+    #[wasm_bindgen(getter)]
+    pub fn contributors(&self) -> JsValue {
+        self.contributors.clone()
+    }
+
+    /// Contributors in semantic source-priority order for precedence merges;
+    /// undefined for mean and median.
+    #[wasm_bindgen(getter, js_name = precedenceContributors)]
+    pub fn precedence_contributors(&self) -> JsValue {
+        self.precedence_contributors.clone()
     }
 }
 
@@ -490,9 +635,37 @@ pub fn sp3_merge_input_identity(
         .collect::<Result<Vec<_>, JsValue>>()?;
     let options = merge_options_from_js(options)?;
     let identity = CoreSp3MergeInputIdentity::new(&contributors, &options).map_err(engine_error)?;
+    let contributors_output = serde_wasm_bindgen::to_value(
+        &identity
+            .contributors
+            .iter()
+            .map(artifact_identity_output)
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|error| {
+        engine_error(format!(
+            "failed to serialize canonical contributors: {error}"
+        ))
+    })?;
+    let precedence_contributors = match identity.precedence_contributors.as_ref() {
+        Some(contributors) => serde_wasm_bindgen::to_value(
+            &contributors
+                .iter()
+                .map(artifact_identity_output)
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| {
+            engine_error(format!(
+                "failed to serialize precedence contributors: {error}"
+            ))
+        })?,
+        None => JsValue::UNDEFINED,
+    };
     Ok(Sp3MergeInputIdentity {
         schema_version: identity.schema_version,
         stable_id: identity.stable_id,
+        contributors: contributors_output,
+        precedence_contributors,
     })
 }
 

@@ -43,11 +43,16 @@ export interface Sp3ArtifactIdentityInput {
     distributionSource: "direct" | "nasa_cddis" | "local_file" | "in_memory";
     officialFilename: string;
     productSha256: string;
+    /** Positive integer no greater than Number.MAX_SAFE_INTEGER. */
     productByteLength: number;
     archiveSha256: string;
+    /** Positive integer no greater than Number.MAX_SAFE_INTEGER. */
     archiveByteLength: number;
     compression: "none" | "gzip";
 }
+
+/** Validated canonical artifact record returned by merged-SP3 identity APIs. */
+export type Sp3ArtifactIdentity = Sp3ArtifactIdentityInput;
 
 export interface Sp3MergeIdentityOptions {
     /** Finite, non-negative position agreement tolerance in meters. */
@@ -614,6 +619,11 @@ const replacements = [
   [
     "export function sp3MergeInputIdentity(contributors: any, options: any): Sp3MergeInputIdentity;",
     "export function sp3MergeInputIdentity(contributors: Sp3ArtifactIdentityInput[], options?: Sp3MergeIdentityOptions | null): Sp3MergeInputIdentity;",
+  ],
+  ["readonly contributors: any;", "readonly contributors: Sp3ArtifactIdentity[];"],
+  [
+    "readonly precedenceContributors: any;",
+    "readonly precedenceContributors: Sp3ArtifactIdentity[] | undefined;",
   ],
   [
     "export function araim(geometry: any, ism: any, allocation: any): any;",

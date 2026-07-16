@@ -126,6 +126,8 @@ const mergeInput = sp3MergeInputIdentity([artifactRecord], {
   systems: ["G", "E"],
 });
 console.log(mergeInput.schemaVersion, mergeInput.stableId);
+console.log(mergeInput.contributors); // distributor-independent canonical order
+// precedenceContributors is defined only when combine is "precedence".
 
 const cddis = distributionLocation(
   "cod",
@@ -152,7 +154,8 @@ pairs, and archive compression. Contributor enumeration does not affect mean or
 median IDs. Precedence IDs bind the original order because it determines source
 priority. Object-property ordering does not affect any ID; changing an artifact
 or effective merge control does. Incomplete, mismatched, duplicate, non-SP3,
-and unknown fields are rejected. Retrieval timestamps, URLs, HTTP metadata,
+and unknown fields are rejected. Byte lengths must be positive integers no
+greater than `Number.MAX_SAFE_INTEGER`. Retrieval timestamps, URLs, HTTP metadata,
 credentials, cache paths, and retry history are intentionally not accepted as
 canonical inputs.
 
