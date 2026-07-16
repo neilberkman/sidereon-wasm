@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.28.1 - 2026-07-15
+
+- Builds against `sidereon` and `sidereon-core` 0.28.1, inheriting the repaired
+  official HTTPS source for CODE ultra-rapid products and the symmetric RTK
+  candidate-selection fixes.
+
 ## 0.28.0 - 2026-07-13
 
 - Adds per-cell SP3 precedence, optional deterministic outlier rejection,
