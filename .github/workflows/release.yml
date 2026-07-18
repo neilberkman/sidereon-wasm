@@ -40,6 +40,11 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Verify tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node -e "const expected = 'v' + require('./package.json').version; if (process.env.RELEASE_TAG !== expected) { console.error('tag ' + process.env.RELEASE_TAG + ' does not match package ' + expected); process.exit(1); }"
+
       - name: Build (web + node targets)
         run: npm run build
 

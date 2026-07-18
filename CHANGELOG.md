@@ -2,13 +2,17 @@
 
 ## Unreleased
 
+## 0.32.0 - 2026-07-18
+
 - Adds `parseNavcenAt` and `mergeNavcenAt` for deterministic NAVCEN usability
-  decisions at explicit UTC Unix microseconds. Assessments preserve NANU type,
+  decisions at explicit UTC Unix microseconds supplied as JavaScript `bigint`.
+  Assessments preserve NANU type,
   subject, raw Outage Start text, evaluation time, and parsed/unparseable/not-
   applicable interval provenance.
 - Keeps `parseNavcen` and `mergeNavcen` unchanged for compatibility. The new
   path applies active forecasts only on their validated half-open intervals and
   additionally recognizes active `UNUSUFN` notices as immediately unusable.
+- Builds against `sidereon` and `sidereon-core` 0.32.0.
 
 ## 0.31.2 - 2026-07-16
 
