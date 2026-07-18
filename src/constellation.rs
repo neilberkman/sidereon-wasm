@@ -12,13 +12,15 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::astro::omm::parse_json_array;
+use sidereon_core::astro::passes::UtcInstant;
 use sidereon_core::constellation::{
     changed as core_changed, diff as core_diff, from_celestrak_omm, from_celestrak_omm_lenient,
     glonass_fdma_channel as core_glonass_fdma_channel, gnss_sp3_id as core_gnss_sp3_id,
-    is_valid as core_is_valid, merge_navcen, parse_navcen as core_parse_navcen, to_csv,
+    is_valid as core_is_valid, merge_navcen, merge_navcen_at as core_merge_navcen_at,
+    parse_navcen as core_parse_navcen, parse_navcen_at as core_parse_navcen_at, to_csv,
     validate as core_validate, validate_against_sp3_ids, BoolStyle, CelestrakSource,
-    ConstellationError, Diff, FieldChange, NavcenSource, NavcenStatus, Record, RecordSource,
-    SkippedOmm, Validation,
+    ConstellationError, Diff, FieldChange, NavcenAssessment, NavcenEffectiveInterval, NavcenSource,
+    NavcenStatus, NavcenTiming, Record, RecordSource, SkippedOmm, Validation,
 };
 use sidereon_core::GnssSystem;
 
@@ -246,6 +248,75 @@ fn status_to_core(s: &NavcenStatusJs) -> Result<NavcenStatus, JsValue> {
         slot: s.slot.clone(),
         block_type: s.block_type.clone(),
         clock: s.clock.clone(),
+    })
+}
+
+/// A time-aware NAVCEN assessment. Unix timestamps are exact microseconds.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NavcenAssessmentJs {
+    status: NavcenStatusJs,
+    evaluated_at_unix_us: i64,
+    outage_start: Option<String>,
+    timing: String,
+    effective_start_unix_us: Option<i64>,
+    effective_end_unix_us: Option<i64>,
+}
+
+impl From<&NavcenAssessment> for NavcenAssessmentJs {
+    fn from(assessment: &NavcenAssessment) -> Self {
+        let (timing, effective_start_unix_us, effective_end_unix_us) = match assessment.timing {
+            NavcenTiming::Parsed(interval) => (
+                "parsed",
+                Some(interval.start_utc.unix_microseconds()),
+                Some(interval.end_utc.unix_microseconds()),
+            ),
+            NavcenTiming::Unparseable => ("unparseable", None, None),
+            NavcenTiming::NotApplicable => ("not_applicable", None, None),
+        };
+        Self {
+            status: NavcenStatusJs::from(&assessment.status),
+            evaluated_at_unix_us: assessment.evaluated_at_utc.unix_microseconds(),
+            outage_start: assessment.outage_start.clone(),
+            timing: timing.to_string(),
+            effective_start_unix_us,
+            effective_end_unix_us,
+        }
+    }
+}
+
+fn assessment_to_core(assessment: &NavcenAssessmentJs) -> Result<NavcenAssessment, JsValue> {
+    let timing = match assessment.timing.as_str() {
+        "parsed" => {
+            let start = assessment.effective_start_unix_us.ok_or_else(|| {
+                type_error("parsed NAVCEN assessment requires effectiveStartUnixUs")
+            })?;
+            let end = assessment.effective_end_unix_us.ok_or_else(|| {
+                type_error("parsed NAVCEN assessment requires effectiveEndUnixUs")
+            })?;
+            if end <= start {
+                return Err(type_error(
+                    "parsed NAVCEN assessment requires effectiveEndUnixUs > effectiveStartUnixUs",
+                ));
+            }
+            NavcenTiming::Parsed(NavcenEffectiveInterval {
+                start_utc: UtcInstant::from_unix_microseconds(start),
+                end_utc: UtcInstant::from_unix_microseconds(end),
+            })
+        }
+        "unparseable" => NavcenTiming::Unparseable,
+        "not_applicable" => NavcenTiming::NotApplicable,
+        other => {
+            return Err(type_error(&format!(
+                "invalid NAVCEN assessment timing {other:?}"
+            )))
+        }
+    };
+    Ok(NavcenAssessment {
+        status: status_to_core(&assessment.status)?,
+        evaluated_at_utc: UtcInstant::from_unix_microseconds(assessment.evaluated_at_unix_us),
+        outage_start: assessment.outage_start.clone(),
+        timing,
     })
 }
 
@@ -580,6 +651,24 @@ pub fn parse_navcen(html: &str) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&out).map_err(|e| engine_error(e.to_string()))
 }
 
+/// Parse NAVCEN status HTML and evaluate usability at explicit UTC Unix
+/// microseconds. Parsed intervals are half-open; ambiguous forecasts are
+/// retained without disabling the satellite.
+#[wasm_bindgen(js_name = parseNavcenAt)]
+pub fn parse_navcen_at(html: &str, evaluated_at_unix_us: i64) -> Result<JsValue, JsValue> {
+    let assessments = core_parse_navcen_at(
+        html.as_bytes(),
+        UtcInstant::from_unix_microseconds(evaluated_at_unix_us),
+    )
+    .map_err(const_error)?;
+    let out: Vec<NavcenAssessmentJs> = assessments.iter().map(NavcenAssessmentJs::from).collect();
+    let serializer = serde_wasm_bindgen::Serializer::new()
+        .serialize_maps_as_objects(true)
+        .serialize_large_number_types_as_bigints(true);
+    out.serialize(&serializer)
+        .map_err(|e| engine_error(e.to_string()))
+}
+
 /// Merge NAVCEN status rows into records by PRN.
 ///
 /// `records` is a `Record[]` (from [`fromCelestrakJson`]); `statuses` is a
@@ -596,6 +685,19 @@ pub fn merge_navcen_js(records: JsValue, statuses: JsValue) -> Result<JsValue, J
         .collect::<Result<Vec<_>, _>>()?;
     let merged = merge_navcen(&records, &statuses);
     records_to_js(&merged)
+}
+
+/// Merge time-aware NAVCEN assessments into records by PRN.
+#[wasm_bindgen(js_name = mergeNavcenAt)]
+pub fn merge_navcen_at_js(records: JsValue, assessments: JsValue) -> Result<JsValue, JsValue> {
+    let records = records_from_js(records, "records")?;
+    let assessment_js: Vec<NavcenAssessmentJs> = serde_wasm_bindgen::from_value(assessments)
+        .map_err(|e| type_error(&format!("invalid assessments: {e}")))?;
+    let assessments = assessment_js
+        .iter()
+        .map(assessment_to_core)
+        .collect::<Result<Vec<_>, _>>()?;
+    records_to_js(&core_merge_navcen_at(&records, &assessments))
 }
 
 /// Export records as the compact mapping CSV (`prn,norad_cat_id,active,sp3_id`).

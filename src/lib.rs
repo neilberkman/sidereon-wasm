@@ -138,8 +138,8 @@ pub use conjunction::{
 };
 pub use constellation::{
     changed_js, diff_js, from_celestrak_json, from_celestrak_json_lenient, glonass_fdma_channel_js,
-    gnss_sp3_id_js, is_valid_js, merge_navcen_js, parse_navcen, to_csv_js,
-    validate_against_sp3_ids_js, validate_js,
+    gnss_sp3_id_js, is_valid_js, merge_navcen_at_js, merge_navcen_js, parse_navcen,
+    parse_navcen_at, to_csv_js, validate_against_sp3_ids_js, validate_js,
 };
 pub use covariance::{
     propagate_covariance, transport_covariance_js, CovarianceEphemeris, CovarianceFrame,

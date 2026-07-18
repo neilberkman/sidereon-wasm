@@ -8,7 +8,9 @@ import assert from "node:assert/strict";
 import {
   fromCelestrakJson,
   parseNavcen,
+  parseNavcenAt,
   mergeNavcen,
+  mergeNavcenAt,
   toCsv,
   validate,
   validateAgainstSp3Ids,
@@ -20,10 +22,26 @@ import { fixtureText } from "./helpers.mjs";
 
 const GPS_OPS = fixtureText("constellation/gps_ops_sample.json");
 const NAVCEN = fixtureText("constellation/navcen_gps_sample.html");
+const NAVCEN_FORECAST = fixtureText("constellation/navcen_forecast_cases.html");
+const NAVCEN_PRN19_FORECAST = `
+  <table><tr>
+    <td class="views-field-field-gps-prn">19</td>
+    <td class="views-field-field-gps-svn">59</td>
+    <td class="views-field-field-gps-con-block-type">IIR</td>
+    <td class="views-field-field-nanu-outage-start-date">24 JUL 2026</td>
+    <td class="views-field-field-nanu-type">FCSTDV</td>
+    <td class="views-field-field-nanu-subject">
+      SVN59 (PRN19) FORECAST OUTAGE JDAY 205/0115 - JDAY 205/1315
+    </td>
+    <td class="nanu-active-check">1</td>
+  </tr></table>
+`;
 
 // The core uses None for an absent optional field, which serde surfaces as
 // `undefined`; normalize to `null` so both spellings of "absent" compare equal.
 const opt = (v) => v ?? null;
+const unixUs = (year, month, day, hour, minute) =>
+  BigInt(Date.UTC(year, month - 1, day, hour, minute)) * 1000n;
 
 test("fromCelestrakJson derives PRN-sorted GPS records", () => {
   const records = fromCelestrakJson(GPS_OPS);
@@ -55,6 +73,53 @@ test("parseNavcen reads PRN/SVN rows and NANU usability", () => {
   assert.equal(prn19.usable, false);
   assert.equal(prn19.activeNanu, true);
   assert.equal(prn19.nanuType, "UNUSABLE");
+});
+
+test("parseNavcenAt applies forecast only during its UTC interval", () => {
+  const before = parseNavcenAt(NAVCEN_FORECAST, unixUs(2026, 7, 24, 1, 14));
+  const during = parseNavcenAt(NAVCEN_FORECAST, unixUs(2026, 7, 24, 1, 15));
+  const after = parseNavcenAt(NAVCEN_FORECAST, unixUs(2026, 7, 24, 13, 15));
+  const row = (rows, prn) => rows.find((item) => item.status.prn === prn);
+
+  assert.equal(row(before, 7).status.usable, true);
+  assert.equal(row(during, 7).status.usable, false);
+  assert.equal(row(after, 7).status.usable, true);
+  assert.equal(row(during, 7).timing, "parsed");
+  assert.equal(row(during, 7).outageStart, "24 JUL 2026");
+  assert.equal(row(during, 7).effectiveStartUnixUs, unixUs(2026, 7, 24, 1, 15));
+  assert.equal(row(during, 7).effectiveEndUnixUs, unixUs(2026, 7, 24, 13, 15));
+
+  assert.equal(row(during, 19).status.usable, false);
+  assert.equal(row(during, 19).timing, "not_applicable");
+  assert.equal(row(during, 13).status.usable, false);
+  assert.equal(row(during, 13).timing, "not_applicable");
+  assert.equal(row(during, 4).status.usable, true);
+  assert.equal(row(during, 4).timing, "unparseable");
+  assert.equal(opt(row(during, 4).effectiveStartUnixUs), null);
+  assert.equal(row(during, 8).status.usable, true);
+  assert.equal(row(during, 8).status.activeNanu, false);
+  assert.equal(row(during, 8).timing, "parsed");
+  assert.equal(row(during, 20).status.usable, false);
+  assert.equal(row(during, 20).status.nanuType, "UNUSUFN");
+  assert.equal(row(during, 20).timing, "not_applicable");
+
+  const merged = mergeNavcenAt(fromCelestrakJson(GPS_OPS), during);
+  assert.equal(merged.find((record) => record.prn === 19).usable, false);
+});
+
+test("legacy NAVCEN parser retains its preexisting UNUSUFN behavior", () => {
+  const statuses = parseNavcen(NAVCEN_FORECAST);
+  assert.equal(statuses.find((status) => status.prn === 7).usable, false);
+  assert.equal(statuses.find((status) => status.prn === 20).usable, true);
+});
+
+test("mergeNavcenAt propagates forecast time for an existing record", () => {
+  const records = fromCelestrakJson(GPS_OPS);
+  const during = parseNavcenAt(NAVCEN_PRN19_FORECAST, unixUs(2026, 7, 24, 2, 0));
+  const after = parseNavcenAt(NAVCEN_PRN19_FORECAST, unixUs(2026, 7, 24, 13, 15));
+
+  assert.equal(mergeNavcenAt(records, during).find((r) => r.prn === 19).usable, false);
+  assert.equal(mergeNavcenAt(records, after).find((r) => r.prn === 19).usable, true);
 });
 
 test("mergeNavcen overlays SVN/usability onto compatible PRNs", () => {
