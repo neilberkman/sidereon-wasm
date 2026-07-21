@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.34.0 - 2026-07-21
+
+- Adds `supportedSamples`, returning the core's complete date- and issue-aware
+  cadence set as a JavaScript array. `productIdentity` enforces that same set,
+  including the GFZ ultra-rapid overlap and ESA ultra-rapid issue transition.
+- Adds the `Sp3ContentStartConvention` enum,
+  `sp3ContentStartConvention`, and `sp3ContentStartOffsetSeconds` with strict
+  issue validation. Historical GFZ ultra-rapid identity-derived exact requests
+  now inherit the cataloged one-day content-start offset, including across a
+  GPS week boundary.
+- Exact SP3 parsing now inherits the core's complete-record terminal validation:
+  standards-compatible ASCII-space padding and LF/CRLF endings are accepted,
+  while malformed, missing, premature, or followed-by-data `EOF` records still
+  fail closed. The shared cross-interface corpus exercises all accepted and
+  rejected forms through `parseExactSp3`; numerical behavior is unchanged.
+- Caller-built exact identities now reject a span that is syntactically valid
+  but not cataloged for that product family. This is an integrity-policy change
+  only; JavaScript/TypeScript APIs and numerical calculations are unchanged.
+- Builds against `sidereon` and `sidereon-core` 0.34.0.
+
 ## 0.33.1 - 2026-07-20
 
 - Node ESM and CommonJS now both select the synchronous Node build; browser and

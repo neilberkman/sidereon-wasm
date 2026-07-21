@@ -125,7 +125,11 @@ import {
   parseExactSp3,
   productIdentity,
   productSolutionClass,
+  Sp3ContentStartConvention,
+  sp3ContentStartConvention,
+  sp3ContentStartOffsetSeconds,
   sp3MergeInputIdentity,
+  supportedSamples,
 } from "@neilberkman/sidereon";
 
 const identity = productIdentity("cod", "sp3", 2026, 7, 12);
@@ -164,6 +168,11 @@ console.log(productSolutionClass("igs", "sp3")); // final
 console.log(productSolutionClass("igs", "nav")); // broadcast
 console.log(defaultSampleForDate("gfz", "sp3", 2021, 5, 17)); // 15M
 console.log(defaultSampleForDate("gfz_ult", "sp3", 2021, 5, 16)); // 05M
+console.log(supportedSamples("gfz_ult", "sp3", 2021, 5, 15, "0000"));
+// ["15M", "05M"]; the 2100 issue supports only "15M"
+const start = sp3ContentStartConvention("gfz_ult", 2022, 9, 7, "0300");
+console.log(start === Sp3ContentStartConvention.FilenameEpochMinusOneDay); // true
+console.log(sp3ContentStartOffsetSeconds(start)); // -86400n
 
 // Exact acquisition accepts either the official half-open or inclusive epoch
 // grid, but rejects malformed, irregular, wrong-cadence, or wrong-span bytes.
@@ -172,6 +181,15 @@ const validated = parseExactSp3(decompressedSp3Bytes, exactRequest);
 console.log(validated.coverage); // ExactSp3Coverage.HalfOpen or .Inclusive
 const sp3 = validated.product;
 ```
+
+`supportedSamples` reports the complete officially evidenced cadence set for
+the selected product date and issue; `productIdentity` rejects any cadence not
+in that set. The content-start query is strict catalog metadata: an ultra-rapid
+issue is required and validated, while product lines without issue times reject
+one.
+Its offset is a JavaScript `bigint`, matching this interface's other exact
+`i64` values. `ExactSp3Request.fromIdentity` applies the same convention
+internally and does not expose an override.
 
 `artifactRecord` contains the requested and parsed/resolved product identities,
 explicit distributor, official filename, decompressed and archive SHA-256/length

@@ -58,9 +58,9 @@ try {
     "licenses/IERS-Conventions-Software-License.txt",
     "licenses/SciPy-BSD-3-Clause.txt",
     "licenses/libloading-ISC.txt",
-    "third_party_source/sidereon-core-0.33.1/tides/mod.rs",
-    "third_party_source/sidereon-core-0.33.1/tides/ocean.rs",
-    "third_party_source/sidereon-core-0.33.1/tides/pole.rs",
+    "third_party_source/sidereon-core-0.34.0/tides/mod.rs",
+    "third_party_source/sidereon-core-0.34.0/tides/ocean.rs",
+    "third_party_source/sidereon-core-0.34.0/tides/pole.rs",
     "pkg/sidereon.js",
     "pkg/sidereon.d.ts",
     "pkg/sidereon_bg.wasm",
@@ -83,11 +83,11 @@ try {
   }
 
   const coreSourceDigests = {
-    "third_party_source/sidereon-core-0.33.1/tides/mod.rs":
+    "third_party_source/sidereon-core-0.34.0/tides/mod.rs":
       "7c71cb8facbd81af8473d3634e4c63d97dda8cb37a2f59888d3397cfdde4d39b",
-    "third_party_source/sidereon-core-0.33.1/tides/ocean.rs":
+    "third_party_source/sidereon-core-0.34.0/tides/ocean.rs":
       "6bd72d6647b634f979b670040d8c0b659e1f581fa41fdeec41b74b85d8c26c01",
-    "third_party_source/sidereon-core-0.33.1/tides/pole.rs":
+    "third_party_source/sidereon-core-0.34.0/tides/pole.rs":
       "b4cc4c16bdd8ce1d8f04073602ab47dfb85a002b946ab192e8d4d2d600f0a1f8",
   };
   const exactThirdPartyDigests = {
@@ -110,19 +110,27 @@ try {
     "ExactSp3Coverage",
     "ExactSp3ParseResult",
     "ExactSp3Request",
+    "Sp3ContentStartConvention",
     "defaultSampleForDate",
     "parseExactSp3",
     "productSolutionClass",
+    "sp3ContentStartConvention",
+    "sp3ContentStartOffsetSeconds",
+    "supportedSamples",
     "validateExactSp3",
   ];
   const requiredExportsLiteral = JSON.stringify(requiredExports);
   const requiredDeclarations = [
     "export enum ExactSp3Coverage",
+    "export enum Sp3ContentStartConvention",
     "export class ExactSp3ParseResult",
     "export class ExactSp3Request",
     "export function defaultSampleForDate(",
     "export function parseExactSp3(",
     "export function productSolutionClass(",
+    "export function sp3ContentStartConvention(",
+    "export function sp3ContentStartOffsetSeconds(",
+    "export function supportedSamples(",
     "export function validateExactSp3(",
     'compression: "none" | "gzip" | "unix_compress";',
   ];
@@ -207,6 +215,10 @@ for (const name of ${requiredExportsLiteral}) {
   assert.ok(name in Sidereon, \`Node ESM is missing runtime export \${name}\`);
 }
 assert.equal(Sidereon.defaultSampleForDate("gfz", "sp3", 2021, 5, 17), "15M");
+const contentStart = Sidereon.sp3ContentStartConvention("gfz_ult", 2022, 9, 7, "0300");
+assert.equal(contentStart, Sidereon.Sp3ContentStartConvention.FilenameEpochMinusOneDay);
+assert.equal(Sidereon.sp3ContentStartOffsetSeconds(contentStart), -86400n);
+assert.deepEqual(Sidereon.supportedSamples("gfz_ult", "sp3", 2021, 5, 15, "0000"), ["15M", "05M"]);
 assert.equal(typeof BrowserExactProductCache, "function");
 assert.deepEqual(Object.keys(LegacyTypes), []);
 `,
@@ -223,6 +235,10 @@ for (const name of ${requiredExportsLiteral}) {
   assert.ok(name in Sidereon, \`CommonJS is missing runtime export \${name}\`);
 }
 assert.equal(Sidereon.defaultSampleForDate("gfz", "sp3", 2021, 5, 17), "15M");
+const contentStart = Sidereon.sp3ContentStartConvention("gfz_ult", 2022, 9, 7, "0300");
+assert.equal(contentStart, Sidereon.Sp3ContentStartConvention.FilenameEpochMinusOneDay);
+assert.equal(Sidereon.sp3ContentStartOffsetSeconds(contentStart), -86400n);
+assert.deepEqual(Sidereon.supportedSamples("gfz_ult", "sp3", 2021, 5, 15, "0000"), ["15M", "05M"]);
 `,
   );
   writeConsumer(
@@ -251,8 +267,19 @@ type Assert<Condition extends true> = Condition;
 type HasWebInitializer = "initSync" extends keyof typeof Sidereon ? true : false;
 type _NodeUsesNodeDeclarations = Assert<HasWebInitializer extends false ? true : false>;
 const sample: string = Sidereon.defaultSampleForDate("gfz", "sp3", 2021, 5, 17);
+const contentStart: Sidereon.Sp3ContentStartConvention = Sidereon.sp3ContentStartConvention(
+  "gfz_ult",
+  2022,
+  9,
+  7,
+  "0300",
+);
+const contentStartOffset: bigint = Sidereon.sp3ContentStartOffsetSeconds(contentStart);
+const samples: string[] = Sidereon.supportedSamples("gfz_ult", "sp3", 2021, 5, 15, "0000");
 const entry: ExactCacheEntry | undefined = undefined;
 void sample;
+void samples;
+void contentStartOffset;
 void entry;
 `,
   );
@@ -266,8 +293,19 @@ type HasWebInitializer = "initSync" extends keyof typeof Sidereon ? true : false
 type _CommonJsUsesNodeDeclarations = Assert<HasWebInitializer extends false ? true : false>;
 const sample: string = Sidereon.defaultSampleForDate("gfz", "sp3", 2021, 5, 17);
 const namedSample: string = namedDefaultSampleForDate("gfz", "sp3", 2021, 5, 17);
+const contentStart: Sidereon.Sp3ContentStartConvention = Sidereon.sp3ContentStartConvention(
+  "gfz_ult",
+  2022,
+  9,
+  7,
+  "0300",
+);
+const contentStartOffset: bigint = Sidereon.sp3ContentStartOffsetSeconds(contentStart);
+const samples: string[] = Sidereon.supportedSamples("gfz_ult", "sp3", 2021, 5, 15, "0000");
 void sample;
 void namedSample;
+void samples;
+void contentStartOffset;
 `,
   );
   writeConsumer(
@@ -291,16 +329,34 @@ void namedSample;
   );
   writeConsumer(
     "browser-consumer.ts",
-    `import initialize, { initSync, defaultSampleForDate } from "@neilberkman/sidereon";
+    `import initialize, {
+  initSync,
+  defaultSampleForDate,
+  sp3ContentStartConvention,
+  sp3ContentStartOffsetSeconds,
+  supportedSamples,
+  type Sp3ContentStartConvention,
+} from "@neilberkman/sidereon";
 import type { BrowserExactProductCache } from "@neilberkman/sidereon/exact-cache";
 
 const asyncInitializer: typeof initialize = initialize;
 const syncInitializer: typeof initSync = initSync;
 const sample: string = defaultSampleForDate("gfz", "sp3", 2021, 5, 17);
+const contentStart: Sp3ContentStartConvention = sp3ContentStartConvention(
+  "gfz_ult",
+  2022,
+  9,
+  7,
+  "0300",
+);
+const contentStartOffset: bigint = sp3ContentStartOffsetSeconds(contentStart);
+const samples: string[] = supportedSamples("gfz_ult", "sp3", 2021, 5, 15, "0000");
 const cache: BrowserExactProductCache | undefined = undefined;
 void asyncInitializer;
 void syncInitializer;
 void sample;
+void samples;
+void contentStartOffset;
 void cache;
 `,
   );

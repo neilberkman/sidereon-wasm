@@ -18,6 +18,33 @@ type _NodeNtripDoesNotTakeFusionConfig = Assert<IsAny<NodeNtripConfig>>;
 type _WebTrackDoesNotTakeFusionConfig = Assert<IsAny<WebTrackConfig>>;
 type _NodeTrackDoesNotTakeFusionConfig = Assert<IsAny<NodeTrackConfig>>;
 
+const webContentStart: WebBindings.Sp3ContentStartConvention =
+  WebBindings.sp3ContentStartConvention("gfz_ult", 2022, 9, 7, "0300");
+const nodeContentStart: NodeBindings.Sp3ContentStartConvention =
+  NodeBindings.sp3ContentStartConvention("gfz_ult", 2022, 9, 7, "0300");
+const webContentStartOffset: bigint = WebBindings.sp3ContentStartOffsetSeconds(webContentStart);
+const nodeContentStartOffset: bigint = NodeBindings.sp3ContentStartOffsetSeconds(nodeContentStart);
+const webSupportedSamples: string[] = WebBindings.supportedSamples(
+  "gfz_ult",
+  "sp3",
+  2021,
+  5,
+  15,
+  "0000",
+);
+const nodeSupportedSamples: string[] = NodeBindings.supportedSamples(
+  "gfz_ult",
+  "sp3",
+  2021,
+  5,
+  15,
+  "0000",
+);
+void webContentStartOffset;
+void nodeContentStartOffset;
+void webSupportedSamples;
+void nodeSupportedSamples;
+
 type _WebNmeaEpochsAreNotFusionEpochs = Assert<IsAny<WebBindings.NmeaParseResult["epochs"]>>;
 type _NodeNmeaEpochsAreNotFusionEpochs = Assert<IsAny<NodeBindings.NmeaParseResult["epochs"]>>;
 type _WebTrackEpochsAreNotFusionEpochs = Assert<IsAny<WebBindings.TrackRtsHistory["epochs"]>>;

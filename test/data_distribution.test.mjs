@@ -8,6 +8,10 @@ import {
   GnssExactProductSet,
   productIdentity,
   productSolutionClass,
+  Sp3ContentStartConvention,
+  sp3ContentStartConvention,
+  sp3ContentStartOffsetSeconds,
+  supportedSamples,
   verifyExactCacheCommit,
 } from "../pkg-node/sidereon.js";
 
@@ -58,6 +62,83 @@ test("ultra-rapid SP3 defaults follow the evidenced cadence boundaries", () => {
   assert.equal(defaultSampleForDate("gfz_ult", "sp3", 2021, 5, 16), "05M");
   assert.equal(productIdentity("gfz_ult", "sp3", 2021, 5, 15, undefined, "0600").sample, "15M");
   assert.equal(productIdentity("gfz_ult", "sp3", 2021, 5, 16, undefined, "0600").sample, "05M");
+});
+
+test("supported samples preserve every date and issue boundary", () => {
+  assert.deepEqual(supportedSamples("esa", "sp3", 2026, 6, 15), ["05M"]);
+  assert.deepEqual(supportedSamples("gfz", "sp3", 2021, 5, 17), ["15M"]);
+  assert.deepEqual(supportedSamples("gfz", "sp3", 2021, 5, 18), ["05M"]);
+  assert.deepEqual(supportedSamples("esa_ult", "sp3", 2025, 2, 2, "0600"), ["15M"]);
+  assert.deepEqual(supportedSamples("esa_ult", "sp3", 2025, 2, 2, "1200"), ["05M"]);
+  assert.deepEqual(supportedSamples("gfz_ult", "sp3", 2021, 5, 15, "0000"), ["15M", "05M"]);
+  assert.deepEqual(supportedSamples("gfz_ult", "sp3", 2021, 5, 15, "2100"), ["15M"]);
+  assert.deepEqual(supportedSamples("cod", "clk", 2026, 6, 15), ["30S"]);
+  assert.deepEqual(supportedSamples("cod", "ionex", 2026, 6, 15), ["01H"]);
+  assert.deepEqual(supportedSamples("igs", "nav", 2026, 6, 15), ["01D"]);
+  assert.throws(() => supportedSamples("gfz_ult", "sp3", 2021, 5, 15, "0130"));
+
+  assert.throws(() => productIdentity("esa", "sp3", 2026, 6, 15, "15M"));
+  assert.throws(() => productIdentity("gfz", "sp3", 2021, 5, 17, "05M"));
+  assert.throws(() => productIdentity("esa_ult", "sp3", 2025, 2, 2, "05M", "0600"));
+  assert.throws(() => productIdentity("gfz_ult", "sp3", 2021, 5, 15, "05M", "2100"));
+  assert.equal(productIdentity("gfz_ult", "sp3", 2021, 5, 15, "05M", "0000").sample, "05M");
+});
+
+test("SP3 content-start conventions preserve the complete GFZ transition catalog", () => {
+  const issues = ["0000", "0300", "0600", "0900", "1200", "1500", "1800", "2100"];
+  const minusOneDay = Sp3ContentStartConvention.FilenameEpochMinusOneDay;
+  const filenameEpoch = Sp3ContentStartConvention.FilenameEpoch;
+  const expected = new Map([
+    [
+      "2022-09-07",
+      [
+        filenameEpoch,
+        minusOneDay,
+        minusOneDay,
+        minusOneDay,
+        minusOneDay,
+        minusOneDay,
+        minusOneDay,
+        minusOneDay,
+      ],
+    ],
+    [
+      "2022-09-08",
+      [
+        filenameEpoch,
+        minusOneDay,
+        minusOneDay,
+        filenameEpoch,
+        filenameEpoch,
+        filenameEpoch,
+        filenameEpoch,
+        filenameEpoch,
+      ],
+    ],
+  ]);
+
+  assert.equal(sp3ContentStartConvention("gfz_ult", 2022, 9, 6, "2100"), minusOneDay);
+  assert.equal(sp3ContentStartOffsetSeconds(minusOneDay), -86400n);
+  assert.equal(sp3ContentStartConvention("gfz_ult", 2022, 9, 9, "0000"), filenameEpoch);
+  assert.equal(sp3ContentStartOffsetSeconds(filenameEpoch), 0n);
+  assert.equal(sp3ContentStartConvention("igs", 2022, 9, 7), filenameEpoch);
+
+  for (const [date, conventions] of expected) {
+    const day = Number(date.slice(-2));
+    for (let index = 0; index < issues.length; index += 1) {
+      const convention = sp3ContentStartConvention("gfz_ult", 2022, 9, day, issues[index]);
+      assert.equal(convention, conventions[index], `${date} ${issues[index]}`);
+      assert.equal(
+        sp3ContentStartOffsetSeconds(convention),
+        convention === filenameEpoch ? 0n : -86400n,
+        `${date} ${issues[index]} offset`,
+      );
+    }
+  }
+
+  assert.throws(() => sp3ContentStartConvention("gfz_ult", 2022, 9, 7, "0130"));
+  assert.throws(() => sp3ContentStartConvention("gfz_ult", 2022, 9, 7));
+  assert.throws(() => sp3ContentStartConvention("gfz", 2022, 9, 7, "0000"));
 });
 
 test("IGS final identity and CDDIS packaging follow the official naming eras", () => {

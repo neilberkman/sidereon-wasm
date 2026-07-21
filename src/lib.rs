@@ -149,8 +149,9 @@ pub use coverage::{coverage_look_angles, CoverageGrid};
 pub use crinex::{decode_crinex, decode_crinex_lines, encode_crinex, load_crinex};
 pub use data_distribution::{
     build_exact_cache_commit, default_sample_for_date, distribution_location, product_identity,
-    product_solution_class, verify_exact_cache_commit, GnssDistributionLocation,
-    GnssExactProductSet, GnssProductIdentity,
+    product_solution_class, sp3_content_start_convention, sp3_content_start_offset_seconds,
+    supported_samples, verify_exact_cache_commit, GnssDistributionLocation, GnssExactProductSet,
+    GnssProductIdentity, Sp3ContentStartConvention,
 };
 pub use dgnss::{dgnss_apply, AppliedCorrections, CorrectionEntry, DgnssSolution};
 pub use dop::{

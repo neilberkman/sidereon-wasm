@@ -5,12 +5,52 @@
 
 use sidereon_core::data::{
     self as core_data, AnalysisCenter, DistributionSource, ProductDate, ProductIdentity,
-    ProductType,
+    ProductType, Sp3ContentStartConvention as CoreSp3ContentStartConvention,
 };
 use sidereon_core::exact_cache::{build_commit_record, verify_commit_record};
 use wasm_bindgen::prelude::*;
 
 use crate::error::{engine_error, type_error};
+
+/// Cataloged relationship between an SP3 filename epoch and its first content
+/// epoch.
+///
+/// New values may be appended in later interface releases.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sp3ContentStartConvention {
+    /// The first content epoch equals the filename epoch.
+    FilenameEpoch = 0,
+    /// The first content epoch is exactly 24 hours before the filename epoch.
+    FilenameEpochMinusOneDay = 1,
+}
+
+fn content_start_from_core(
+    value: CoreSp3ContentStartConvention,
+) -> Result<Sp3ContentStartConvention, JsValue> {
+    match value {
+        CoreSp3ContentStartConvention::FilenameEpoch => {
+            Ok(Sp3ContentStartConvention::FilenameEpoch)
+        }
+        CoreSp3ContentStartConvention::FilenameEpochMinusOneDay => {
+            Ok(Sp3ContentStartConvention::FilenameEpochMinusOneDay)
+        }
+        // The core enum is non-exhaustive. A WASM release must add an explicit
+        // public value before exposing a future convention.
+        _ => Err(engine_error(
+            "the core returned a content-start convention not exposed by this WASM interface",
+        )),
+    }
+}
+
+fn content_start_to_core(value: Sp3ContentStartConvention) -> CoreSp3ContentStartConvention {
+    match value {
+        Sp3ContentStartConvention::FilenameEpoch => CoreSp3ContentStartConvention::FilenameEpoch,
+        Sp3ContentStartConvention::FilenameEpochMinusOneDay => {
+            CoreSp3ContentStartConvention::FilenameEpochMinusOneDay
+        }
+    }
+}
 
 /// Exact public GNSS product identity, independent of distributor.
 #[wasm_bindgen]
@@ -253,6 +293,64 @@ pub fn default_sample_for_date(
     core_data::default_sample_for_date(analysis_center(center)?, product_type(family)?, date)
         .map(str::to_owned)
         .map_err(engine_error)
+}
+
+/// Return every officially cataloged sampling token for a product date and
+/// issue.
+///
+/// Syntax alone is not publication evidence: this is the complete catalog set
+/// enforced by [`productIdentity`](product_identity). For issue-based product
+/// lines, omitting `issue` selects `0000`, matching
+/// [`defaultSampleForDate`](default_sample_for_date). Product construction
+/// itself still requires an explicit issue.
+#[wasm_bindgen(js_name = supportedSamples)]
+pub fn supported_samples(
+    center: &str,
+    family: &str,
+    year: i32,
+    month: u8,
+    day: u8,
+    issue: Option<String>,
+) -> Result<Vec<String>, JsValue> {
+    let date = ProductDate::new(year, month, day).map_err(engine_error)?;
+    core_data::supported_samples(
+        analysis_center(center)?,
+        product_type(family)?,
+        date,
+        issue.as_deref(),
+    )
+    .map(|samples| samples.iter().map(|sample| (*sample).to_owned()).collect())
+    .map_err(engine_error)
+}
+
+/// Return the cataloged relationship between an SP3 filename epoch and its
+/// first content epoch.
+///
+/// `issue` is required for ultra-rapid centers, must name a published issue,
+/// and must be omitted for product lines without issue times. Exact requests
+/// built with `ExactSp3Request.fromIdentity` apply this same catalog fact.
+#[wasm_bindgen(js_name = sp3ContentStartConvention)]
+pub fn sp3_content_start_convention(
+    center: &str,
+    year: i32,
+    month: u8,
+    day: u8,
+    issue: Option<String>,
+) -> Result<Sp3ContentStartConvention, JsValue> {
+    let date = ProductDate::new(year, month, day).map_err(engine_error)?;
+    core_data::sp3_content_start_convention(analysis_center(center)?, date, issue.as_deref())
+        .map_err(engine_error)
+        .and_then(content_start_from_core)
+}
+
+/// Return the signed whole seconds added to the filename epoch for a public
+/// content-start convention.
+///
+/// JavaScript receives the `i64` result as a `bigint`, consistent with other
+/// exact integral values in this interface.
+#[wasm_bindgen(js_name = sp3ContentStartOffsetSeconds)]
+pub fn sp3_content_start_offset_seconds(convention: Sp3ContentStartConvention) -> i64 {
+    content_start_to_core(convention).content_start_offset_s()
 }
 
 /// Resolve an exact catalog product independently from distributor. When the
