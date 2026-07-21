@@ -185,6 +185,7 @@ fn artifact_identity_output(artifact: &Sp3ArtifactIdentity) -> Sp3ArtifactIdenti
         compression: match artifact.compression {
             ArchiveCompression::None => "none",
             ArchiveCompression::Gzip => "gzip",
+            ArchiveCompression::UnixCompress => "unix_compress",
         },
     }
 }
@@ -265,7 +266,12 @@ impl Sp3ArtifactIdentityInput {
         let compression = match self.compression.as_str() {
             "none" => ArchiveCompression::None,
             "gzip" => ArchiveCompression::Gzip,
-            _ => return Err(type_error("compression must be none or gzip")),
+            "unix_compress" => ArchiveCompression::UnixCompress,
+            _ => {
+                return Err(type_error(
+                    "compression must be none, gzip, or unix_compress",
+                ))
+            }
         };
         Ok(Sp3ArtifactIdentity {
             requested_identity: self.requested_identity.to_core()?,

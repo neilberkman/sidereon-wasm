@@ -229,6 +229,27 @@ test("artifact bytes and the effective merge policy change the stable identity",
   assert.notEqual(original.stableId, changedPolicy.stableId);
 });
 
+test("Unix-compress artifact provenance is accepted and bound", () => {
+  const identity = productIdentity("igs", "sp3", 2022, 11, 26);
+  const contributor = {
+    requestedIdentity: identityRecord(identity),
+    resolvedIdentity: identityRecord(identity, "d"),
+    distributionSource: "nasa_cddis",
+    officialFilename: identity.officialFilename,
+    productSha256: "a".repeat(64),
+    productByteLength: 12345,
+    archiveSha256: "b".repeat(64),
+    archiveByteLength: 6789,
+    compression: "unix_compress",
+  };
+
+  const compressed = sp3MergeInputIdentity([contributor], undefined);
+  const mislabeled = structuredClone(contributor);
+  mislabeled.compression = "gzip";
+  assert.equal(compressed.contributors[0].compression, "unix_compress");
+  assert.notEqual(compressed.stableId, sp3MergeInputIdentity([mislabeled], undefined).stableId);
+});
+
 test("zero position and clock tolerances are valid identity policy", () => {
   const contributor = artifact("esa", 12, "1");
   const exact = sp3MergeInputIdentity([contributor], {

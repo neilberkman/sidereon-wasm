@@ -109,9 +109,13 @@ perform no network or file IO:
 
 ```js
 import {
+  defaultSampleForDate,
   distributionLocation,
+  ExactSp3Request,
   GnssExactProductSet,
+  parseExactSp3,
   productIdentity,
+  productSolutionClass,
   sp3MergeInputIdentity,
 } from "@neilberkman/sidereon";
 
@@ -146,6 +150,18 @@ const exactSet = new GnssExactProductSet();
 exactSet.addExpected(identity);
 exactSet.addAvailable(identity); // add only after content validation
 exactSet.validate();
+
+console.log(productSolutionClass("igs", "sp3")); // final
+console.log(productSolutionClass("igs", "nav")); // broadcast
+console.log(defaultSampleForDate("gfz", "sp3", 2021, 5, 17)); // 15M
+console.log(defaultSampleForDate("gfz_ult", "sp3", 2021, 5, 16)); // 05M
+
+// Exact acquisition accepts either the official half-open or inclusive epoch
+// grid, but rejects malformed, irregular, wrong-cadence, or wrong-span bytes.
+const exactRequest = ExactSp3Request.fromIdentity(identity);
+const validated = parseExactSp3(decompressedSp3Bytes, exactRequest);
+console.log(validated.coverage); // ExactSp3Coverage.HalfOpen or .Inclusive
+const sp3 = validated.product;
 ```
 
 `artifactRecord` contains the requested and parsed/resolved product identities,
@@ -163,9 +179,27 @@ canonical inputs.
 coverage span, cadence, official filename, format, and a validated cache key.
 `distributionLocation` accepts `direct`, `nasa_cddis`, `local_file`, or
 `in_memory` and returns public URL, archive filename, and transport compression.
+Historical IGS finals use their official short filename and `unix_compress`
+CDDIS packaging; current products use long filenames and `gzip`.
 Changing the source cannot change the exact product. Unsupported combinations
 throw instead of selecting another center, tier, issue, date, cadence, or
 family.
+
+Product derivation is also bounded by the publicly evidenced eras: ESA final
+SP3/clock starts 2014-01-05, GFZ rapid SP3/clock starts 2020-05-13, GFZ
+ultra-rapid starts 2020-10-06, ESA ultra-rapid starts 2022-10-04, and IGS and
+CODE ultra-rapid long names start with GPS week 2238. GFZ ultra-rapid defaults
+change from `15M` to `05M` on 2021-05-16. ESA ultra-rapid defaults are `15M`
+through the 2025-02-02 `0600` issue and `05M` from the `1200` issue; the
+date-only query reports the start-of-day (`0000`) default. CDDIS rejects
+unmodeled pre-week-2238 long-name SP3/IONEX locations; the modeled legacy IGS
+final `.sp3.Z` family remains available. ESA `ESA0MGNFIN` final SP3 is
+direct-only because the catalog does not substitute a different CDDIS family.
+
+`ExactSp3Request`, `parseExactSp3`, and `validateExactSp3` bind declared start,
+epoch count, cadence, regular grid, coverage span, mandatory structure, and
+optional producing agency to one exact request. `Sp3.declaredEpochCount` and
+`Sp3.declaredStartJ2000Seconds` expose the independent header declarations.
 
 `GnssExactProductSet.validate()` rejects an empty declaration, duplicates,
 missing products, undeclared products, and same-filename identities with
@@ -198,7 +232,8 @@ own storage transaction.
 
 Send credentials only to NASA's documented hosts;
 remove URL queries from diagnostics; reject HTML success bodies; validate
-content length, gzip completion, and hashes; then parse with `loadSp3` or
+content length, compression completion, and hashes; then parse with
+`parseExactSp3` for exact acquisition (or `loadSp3` for permissive parsing) or
 `loadIonex`. See [NASA CDDIS archive access](https://www.earthdata.nasa.gov/centers/cddis-daac/archive-access)
 and [Earthdata Login data access](https://urs.earthdata.nasa.gov/documentation/for_users/data_access/curl_and_wget).
 

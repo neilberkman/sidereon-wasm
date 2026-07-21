@@ -148,8 +148,9 @@ pub use covariance::{
 pub use coverage::{coverage_look_angles, CoverageGrid};
 pub use crinex::{decode_crinex, decode_crinex_lines, encode_crinex, load_crinex};
 pub use data_distribution::{
-    build_exact_cache_commit, distribution_location, product_identity, verify_exact_cache_commit,
-    GnssDistributionLocation, GnssExactProductSet, GnssProductIdentity,
+    build_exact_cache_commit, default_sample_for_date, distribution_location, product_identity,
+    product_solution_class, verify_exact_cache_commit, GnssDistributionLocation,
+    GnssExactProductSet, GnssProductIdentity,
 };
 pub use dgnss::{dgnss_apply, AppliedCorrections, CorrectionEntry, DgnssSolution};
 pub use dop::{
@@ -358,9 +359,11 @@ pub use source_localization::{
     source_solve_mode_toa,
 };
 pub use sp3::{
-    load_sp3, open_precise_interpolant_artifact, precise_interpolant_artifact_checksum64,
-    precise_interpolant_artifact_error_label, PreciseInterpolantArtifact,
-    PreciseInterpolantArtifactError, Sp3, Sp3ClockReferenceOffset, Sp3Interpolation, Sp3State,
+    load_sp3, open_precise_interpolant_artifact, parse_exact_sp3,
+    precise_interpolant_artifact_checksum64, precise_interpolant_artifact_error_label,
+    validate_exact_sp3, ExactSp3Coverage, ExactSp3ParseResult, ExactSp3Request,
+    PreciseInterpolantArtifact, PreciseInterpolantArtifactError, Sp3, Sp3ClockReferenceOffset,
+    Sp3Interpolation, Sp3State,
 };
 pub use sp3_merge::{
     merge_sp3, sp3_merge_input_identity, Sp3FrameReconciliationReport, Sp3MergeFlag,

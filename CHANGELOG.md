@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.33.0 - 2026-07-20
+
+- Adds product-aware solution classification and date-aware default sampling,
+  including the historical GFZ rapid and ultra-rapid cadence changes and the
+  issue-sensitive ESA ultra-rapid transition.
+- Preserves both official IGS final-SP3 naming eras and exposes legacy CDDIS
+  Unix-compress (`.Z`) packaging without substituting another product.
+- Rejects SP3/clock dates before each evidenced family start, including the
+  CODE ultra long-name boundary, and rejects unmodeled pre-week-2238 CDDIS
+  long-name SP3/IONEX locations. ESA `ESA0MGNFIN` final SP3 remains direct-only
+  instead of being substituted at CDDIS.
+- Adds `ExactSp3Request`, `parseExactSp3`, and `validateExactSp3`, accepting
+  both official half-open and inclusive grids while rejecting malformed,
+  irregular, cadence-mismatched, span-mismatched, and identity-invalid bytes.
+- Exposes the independently declared SP3 epoch count and start epoch.
+- Adds `unix_compress` to merged-SP3 provenance without changing the existing
+  `none` and `gzip` spellings.
+- Builds against `sidereon` and `sidereon-core` 0.33.0.
+
 ## 0.32.0 - 2026-07-18
 
 - Adds `parseNavcenAt` and `mergeNavcenAt` for deterministic NAVCEN usability

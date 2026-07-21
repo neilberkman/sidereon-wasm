@@ -48,7 +48,7 @@ export interface Sp3ArtifactIdentityInput {
     archiveSha256: string;
     /** Positive integer no greater than Number.MAX_SAFE_INTEGER. */
     archiveByteLength: number;
-    compression: "none" | "gzip";
+    compression: "none" | "gzip" | "unix_compress";
 }
 
 /** Validated canonical artifact record returned by merged-SP3 identity APIs. */

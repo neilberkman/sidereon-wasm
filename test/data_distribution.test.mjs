@@ -3,11 +3,126 @@ import test from "node:test";
 
 import {
   buildExactCacheCommit,
+  defaultSampleForDate,
   distributionLocation,
   GnssExactProductSet,
   productIdentity,
+  productSolutionClass,
   verifyExactCacheCommit,
 } from "../pkg-node/sidereon.js";
+
+test("product-aware classification distinguishes IGS final orbit and broadcast navigation", () => {
+  assert.equal(productSolutionClass("igs", "sp3"), "final");
+  assert.equal(productSolutionClass("igs", "nav"), "broadcast");
+  assert.equal(defaultSampleForDate("gfz", "sp3", 2021, 5, 17), "15M");
+  assert.equal(defaultSampleForDate("gfz", "sp3", 2021, 5, 18), "05M");
+});
+
+test("final and ultra-rapid SP3 catalogs preserve their evidenced start dates", () => {
+  assert.throws(() => productIdentity("esa", "sp3", 2014, 1, 4));
+  assert.equal(
+    productIdentity("esa", "sp3", 2014, 1, 5).officialFilename,
+    "ESA0MGNFIN_20140050000_01D_05M_ORB.SP3",
+  );
+
+  assert.throws(() => productIdentity("gfz", "sp3", 2020, 5, 12));
+  assert.equal(productIdentity("gfz", "sp3", 2020, 5, 13).sample, "15M");
+
+  assert.throws(() => productIdentity("igs_ult", "sp3", 2022, 11, 26, undefined, "0600"));
+  assert.equal(productIdentity("igs_ult", "sp3", 2022, 11, 27, undefined, "0600").sample, "15M");
+
+  assert.throws(() => productIdentity("cod_ult", "sp3", 2022, 11, 26, undefined, "0000"));
+  assert.equal(productIdentity("cod_ult", "sp3", 2022, 11, 27, undefined, "0000").sample, "05M");
+
+  assert.throws(() => productIdentity("esa_ult", "sp3", 2022, 10, 3, undefined, "0600"));
+  assert.equal(productIdentity("esa_ult", "sp3", 2022, 10, 4, undefined, "0600").sample, "15M");
+
+  assert.throws(() => productIdentity("gfz_ult", "sp3", 2020, 10, 5, undefined, "0600"));
+  assert.equal(productIdentity("gfz_ult", "sp3", 2020, 10, 6, undefined, "0600").sample, "15M");
+
+  assert.throws(() => productIdentity("esa", "clk", 2014, 1, 4));
+  assert.equal(productIdentity("esa", "clk", 2014, 1, 5).sample, "30S");
+  assert.throws(() => productIdentity("gfz", "clk", 2020, 5, 12));
+  assert.equal(productIdentity("gfz", "clk", 2020, 5, 13).sample, "30S");
+});
+
+test("ultra-rapid SP3 defaults follow the evidenced cadence boundaries", () => {
+  assert.equal(defaultSampleForDate("esa_ult", "sp3", 2024, 9, 3), "15M");
+  assert.equal(defaultSampleForDate("esa_ult", "sp3", 2025, 2, 2), "15M");
+  assert.equal(defaultSampleForDate("esa_ult", "sp3", 2025, 2, 3), "05M");
+  assert.equal(productIdentity("esa_ult", "sp3", 2024, 9, 3, undefined, "0600").sample, "15M");
+  assert.equal(productIdentity("esa_ult", "sp3", 2025, 2, 2, undefined, "0600").sample, "15M");
+  assert.equal(productIdentity("esa_ult", "sp3", 2025, 2, 2, undefined, "1200").sample, "05M");
+
+  assert.equal(defaultSampleForDate("gfz_ult", "sp3", 2021, 5, 15), "15M");
+  assert.equal(defaultSampleForDate("gfz_ult", "sp3", 2021, 5, 16), "05M");
+  assert.equal(productIdentity("gfz_ult", "sp3", 2021, 5, 15, undefined, "0600").sample, "15M");
+  assert.equal(productIdentity("gfz_ult", "sp3", 2021, 5, 16, undefined, "0600").sample, "05M");
+});
+
+test("IGS final identity and CDDIS packaging follow the official naming eras", () => {
+  const legacy = productIdentity("igs", "sp3", 2022, 11, 26);
+  assert.equal(legacy.solutionClass, "final");
+  assert.equal(legacy.officialFilename, "igs22376.sp3");
+  const legacyCddis = distributionLocation(
+    "igs",
+    "sp3",
+    2022,
+    11,
+    26,
+    undefined,
+    undefined,
+    "nasa_cddis",
+  );
+  assert.equal(legacyCddis.compression, "unix_compress");
+  assert.equal(legacyCddis.archiveFilename, "igs22376.sp3.Z");
+  assert.equal(
+    legacyCddis.originalUrl,
+    "https://cddis.nasa.gov/archive/gnss/products/2237/igs22376.sp3.Z",
+  );
+
+  const current = productIdentity("igs", "sp3", 2022, 11, 27);
+  assert.equal(current.officialFilename, "IGS0OPSFIN_20223310000_01D_15M_ORB.SP3");
+  const navigation = productIdentity("igs", "nav", 2022, 11, 26);
+  assert.equal(navigation.solutionClass, "broadcast");
+
+  assert.throws(() => productIdentity("igs", "sp3", 1994, 1, 1), /no cataloged naming convention/);
+  assert.throws(() => productIdentity("cod_prd1", "sp3", 2026, 7, 12), /does not serve sp3/);
+});
+
+test("pre-week-2238 CDDIS rejects unmodeled long-name SP3 products", () => {
+  // Direct archives retain their independently evidenced historical products.
+  assert.equal(productIdentity("esa", "sp3", 2020, 6, 24).sample, "05M");
+  assert.equal(productIdentity("gfz", "sp3", 2020, 6, 24).sample, "15M");
+
+  assert.throws(() =>
+    distributionLocation("esa", "sp3", 2020, 6, 24, undefined, undefined, "nasa_cddis"),
+  );
+  assert.throws(() =>
+    distributionLocation("gfz", "sp3", 2020, 6, 24, undefined, undefined, "nasa_cddis"),
+  );
+
+  for (const [center, year, month, day, issue] of [
+    ["esa_ult", 2022, 10, 4, "0600"],
+    ["gfz_ult", 2020, 10, 6, "0600"],
+  ]) {
+    assert.ok(distributionLocation(center, "sp3", year, month, day, undefined, issue, "direct"));
+    assert.throws(() =>
+      distributionLocation(center, "sp3", year, month, day, undefined, issue, "nasa_cddis"),
+    );
+  }
+
+  // CODE ultra is itself unmodeled before the long-name transition.
+  assert.throws(() =>
+    distributionLocation("cod_ult", "sp3", 2022, 11, 26, undefined, "0000", "direct"),
+  );
+
+  // The separately modeled legacy IGS final remains available as .sp3.Z.
+  assert.equal(
+    distributionLocation("igs", "sp3", 2020, 6, 24, undefined, undefined, "nasa_cddis").compression,
+    "unix_compress",
+  );
+});
 
 test("exact product identity remains independent of distributor", () => {
   const identity = productIdentity("cod", "sp3", 2026, 7, 12);
@@ -30,6 +145,50 @@ test("exact product identity remains independent of distributor", () => {
   assert.equal(
     cddis.originalUrl,
     "https://cddis.nasa.gov/archive/gnss/products/2427/COD0MGXFIN_20261930000_01D_05M_ORB.SP3.gz",
+  );
+});
+
+test("CODE direct routing remains product-specific across current families", () => {
+  const sp3 = distributionLocation("cod", "sp3", 2026, 4, 30, undefined, undefined, "direct");
+  assert.equal(
+    sp3.originalUrl,
+    "https://www.aiub.unibe.ch/download/CODE_MGEX/CODE/2026/COD0MGXFIN_20261200000_01D_05M_ORB.SP3.gz",
+  );
+
+  const clock = distributionLocation("cod", "clk", 2026, 4, 30, undefined, undefined, "direct");
+  assert.equal(
+    clock.originalUrl,
+    "https://www.aiub.unibe.ch/download/CODE_MGEX/CODE/2026/COD0MGXFIN_20261200000_01D_30S_CLK.CLK.gz",
+  );
+
+  const finalIonex = distributionLocation(
+    "cod",
+    "ionex",
+    2026,
+    4,
+    30,
+    undefined,
+    undefined,
+    "direct",
+  );
+  assert.equal(
+    finalIonex.originalUrl,
+    "https://www.aiub.unibe.ch/download/CODE/2026/COD0OPSFIN_20261200000_01D_01H_GIM.INX.gz",
+  );
+
+  const rapidIonex = distributionLocation(
+    "cod_rap",
+    "ionex",
+    2026,
+    4,
+    30,
+    undefined,
+    undefined,
+    "direct",
+  );
+  assert.equal(
+    rapidIonex.originalUrl,
+    "https://www.aiub.unibe.ch/download/CODE/COD0OPSRAP_20261200000_01D_01H_GIM.INX.gz",
   );
 });
 
@@ -70,11 +229,14 @@ test("exact cache commits bind full identity, source, and all immutable bytes", 
   );
 });
 
-test("IONEX uses the public CDDIS year/day-of-year layout", () => {
+test("IONEX uses the public current CDDIS layout without inventing a historical long name", () => {
+  assert.throws(() =>
+    distributionLocation("esa", "ionex", 2022, 11, 26, undefined, undefined, "nasa_cddis"),
+  );
   const location = distributionLocation(
     "esa",
     "ionex",
-    2020,
+    2024,
     6,
     24,
     undefined,
@@ -83,7 +245,14 @@ test("IONEX uses the public CDDIS year/day-of-year layout", () => {
   );
   assert.equal(
     location.originalUrl,
-    "https://cddis.nasa.gov/archive/gnss/products/ionex/2020/176/ESA0OPSFIN_20201760000_01D_02H_GIM.INX.gz",
+    "https://cddis.nasa.gov/archive/gnss/products/ionex/2024/176/ESA0OPSFIN_20241760000_01D_02H_GIM.INX.gz",
+  );
+});
+
+test("CDDIS does not substitute for ESA MGEX final SP3", () => {
+  assert.ok(distributionLocation("esa", "sp3", 2024, 6, 24, undefined, undefined, "direct"));
+  assert.throws(() =>
+    distributionLocation("esa", "sp3", 2024, 6, 24, undefined, undefined, "nasa_cddis"),
   );
 });
 

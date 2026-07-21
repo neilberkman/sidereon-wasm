@@ -15,7 +15,7 @@ use crate::error::{engine_error, type_error};
 /// Exact public GNSS product identity, independent of distributor.
 #[wasm_bindgen]
 pub struct GnssProductIdentity {
-    inner: ProductIdentity,
+    pub(crate) inner: ProductIdentity,
 }
 
 #[wasm_bindgen]
@@ -223,7 +223,40 @@ fn product_spec(
         .map_err(engine_error)
 }
 
-/// Resolve an exact catalog product independently from distributor.
+/// Return the catalog solution class for one center/product family.
+///
+/// This product-aware query distinguishes IGS combined final SP3 (`final`)
+/// from IGS broadcast navigation (`broadcast`).
+#[wasm_bindgen(js_name = productSolutionClass)]
+pub fn product_solution_class(center: &str, family: &str) -> Result<String, JsValue> {
+    core_data::product_solution_class(analysis_center(center)?, product_type(family)?)
+        .map(|solution| solution.code().to_owned())
+        .map_err(engine_error)
+}
+
+/// Return the officially cataloged default sampling token for a product date.
+///
+/// Unlike the legacy date-free default, this preserves historical cadence
+/// changes such as the GFZ rapid and ultra-rapid transitions. On ESA
+/// ultra-rapid's issue-level transition date this reports the `0000`/
+/// start-of-day default; [`productIdentity`](product_identity) also considers
+/// the requested issue.
+#[wasm_bindgen(js_name = defaultSampleForDate)]
+pub fn default_sample_for_date(
+    center: &str,
+    family: &str,
+    year: i32,
+    month: u8,
+    day: u8,
+) -> Result<String, JsValue> {
+    let date = ProductDate::new(year, month, day).map_err(engine_error)?;
+    core_data::default_sample_for_date(analysis_center(center)?, product_type(family)?, date)
+        .map(str::to_owned)
+        .map_err(engine_error)
+}
+
+/// Resolve an exact catalog product independently from distributor. When the
+/// sample is omitted, ultra-rapid issue-level cadence transitions are applied.
 #[wasm_bindgen(js_name = productIdentity)]
 pub fn product_identity(
     center: &str,

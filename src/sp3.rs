@@ -7,17 +7,21 @@ use wasm_bindgen::prelude::*;
 
 use sidereon_core::astro::time::{Instant, InstantRepr};
 use sidereon_core::constants::{J2000_JD, SECONDS_PER_DAY};
+use sidereon_core::data::ProductDate;
 use sidereon_core::ephemeris::{
     align_clock_reference as core_align_clock_reference,
-    clock_reference_offset as core_clock_reference_offset,
+    clock_reference_offset as core_clock_reference_offset, parse_exact_sp3 as core_parse_exact_sp3,
     precise_interpolant_store_checksum64 as core_precise_interpolant_store_checksum64,
-    ClockReferenceOffset as CoreClockReferenceOffset,
+    validate_exact_sp3 as core_validate_exact_sp3,
+    ClockReferenceOffset as CoreClockReferenceOffset, ExactSp3Coverage as CoreExactSp3Coverage,
+    ExactSp3Request as CoreExactSp3Request,
     MmapPreciseEphemerisInterpolant as CorePreciseInterpolantArtifact,
     PreciseInterpolantStoreError as CorePreciseInterpolantStoreError, Sp3 as CoreSp3,
 };
 use sidereon_core::Error as CoreError;
 use sidereon_core::GnssSatelliteId;
 
+use crate::data_distribution::GnssProductIdentity;
 use crate::error::{engine_error, range_error, type_error};
 use crate::spp::{self, SppSolution};
 
@@ -207,6 +211,156 @@ pub fn precise_interpolant_artifact_error_label(error: PreciseInterpolantArtifac
     precise_artifact_error_name(error).to_string()
 }
 
+/// Accepted boundary convention for a validated exact SP3 product.
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExactSp3Coverage {
+    /// The declared boundary is excluded (288 five-minute epochs in one day).
+    HalfOpen,
+    /// The declared boundary epoch is present (289 five-minute epochs).
+    Inclusive,
+}
+
+impl From<CoreExactSp3Coverage> for ExactSp3Coverage {
+    fn from(value: CoreExactSp3Coverage) -> Self {
+        match value {
+            CoreExactSp3Coverage::HalfOpen => Self::HalfOpen,
+            CoreExactSp3Coverage::Inclusive => Self::Inclusive,
+        }
+    }
+}
+
+/// Source-independent exact SP3 content request.
+#[wasm_bindgen]
+pub struct ExactSp3Request {
+    inner: CoreExactSp3Request,
+}
+
+#[wasm_bindgen]
+impl ExactSp3Request {
+    /// Construct an exact request from explicit catalog identity fields.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        year: i32,
+        month: u8,
+        day: u8,
+        span: &str,
+        sample: &str,
+        issue: Option<String>,
+    ) -> Result<ExactSp3Request, JsValue> {
+        let date = ProductDate::new(year, month, day).map_err(engine_error)?;
+        let inner =
+            CoreExactSp3Request::new(date, issue.as_deref(), span, sample).map_err(engine_error)?;
+        Ok(Self { inner })
+    }
+
+    /// Construct an exact request from a complete catalog product identity.
+    #[wasm_bindgen(js_name = fromIdentity)]
+    pub fn from_identity(identity: &GnssProductIdentity) -> Result<ExactSp3Request, JsValue> {
+        CoreExactSp3Request::from_identity(&identity.inner)
+            .map(|inner| Self { inner })
+            .map_err(engine_error)
+    }
+
+    /// Require a particular SP3 line-1 producing-agency code.
+    #[wasm_bindgen(js_name = requireAgency)]
+    pub fn require_agency(&mut self, agency: &str) -> Result<(), JsValue> {
+        self.inner = self
+            .inner
+            .clone()
+            .with_expected_agency(agency)
+            .map_err(engine_error)?;
+        Ok(())
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn year(&self) -> i32 {
+        self.inner.date().year
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn month(&self) -> u8 {
+        self.inner.date().month
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn day(&self) -> u8 {
+        self.inner.date().day
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn issue(&self) -> Option<String> {
+        self.inner.issue().map(str::to_owned)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn span(&self) -> String {
+        self.inner.span().to_owned()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn sample(&self) -> String {
+        self.inner.sample().to_owned()
+    }
+
+    #[wasm_bindgen(getter, js_name = formatVersion)]
+    pub fn format_version(&self) -> Option<String> {
+        self.inner.format_version().map(str::to_owned)
+    }
+
+    #[wasm_bindgen(getter, js_name = expectedAgency)]
+    pub fn expected_agency(&self) -> Option<String> {
+        self.inner.expected_agency().map(str::to_owned)
+    }
+}
+
+/// Result of parsing and validating exact SP3 bytes in one core call.
+#[wasm_bindgen]
+pub struct ExactSp3ParseResult {
+    product: CoreSp3,
+    coverage: ExactSp3Coverage,
+}
+
+#[wasm_bindgen]
+impl ExactSp3ParseResult {
+    #[wasm_bindgen(getter)]
+    pub fn coverage(&self) -> ExactSp3Coverage {
+        self.coverage
+    }
+
+    /// Return the validated parsed product.
+    #[wasm_bindgen(getter)]
+    pub fn product(&self) -> Sp3 {
+        Sp3 {
+            inner: self.product.clone(),
+        }
+    }
+}
+
+/// Parse and exact-validate SP3 bytes, returning both product and coverage.
+#[wasm_bindgen(js_name = parseExactSp3)]
+pub fn parse_exact_sp3(
+    bytes: &[u8],
+    request: &ExactSp3Request,
+) -> Result<ExactSp3ParseResult, JsValue> {
+    let (product, coverage) = core_parse_exact_sp3(bytes, &request.inner).map_err(engine_error)?;
+    Ok(ExactSp3ParseResult {
+        product,
+        coverage: coverage.into(),
+    })
+}
+
+/// Validate an already parsed SP3 product against an exact request.
+#[wasm_bindgen(js_name = validateExactSp3)]
+pub fn validate_exact_sp3(
+    product: &Sp3,
+    request: &ExactSp3Request,
+) -> Result<ExactSp3Coverage, JsValue> {
+    core_validate_exact_sp3(&product.inner, &request.inner)
+        .map(Into::into)
+        .map_err(engine_error)
+}
+
 /// A parsed SP3-c or SP3-d precise-ephemeris product.
 ///
 /// Create with [`load_sp3`]. Query interpolated states with
@@ -224,6 +378,20 @@ impl Sp3 {
     #[wasm_bindgen(getter, js_name = epochCount)]
     pub fn epoch_count(&self) -> usize {
         self.inner.epoch_count()
+    }
+
+    /// Epoch count declared by SP3 header line 1, independent of the parsed
+    /// body count used by [`Sp3::epochCount`].
+    #[wasm_bindgen(getter, js_name = declaredEpochCount)]
+    pub fn declared_epoch_count(&self) -> usize {
+        usize::try_from(self.inner.declared_epoch_count()).unwrap_or(usize::MAX)
+    }
+
+    /// Start epoch declared by SP3 header line 1, in product-scale seconds
+    /// since J2000. Missing or malformed legacy header fields return undefined.
+    #[wasm_bindgen(getter, js_name = declaredStartJ2000Seconds)]
+    pub fn declared_start_j2000_seconds(&self) -> Option<f64> {
+        self.inner.declared_start_j2000_s()
     }
 
     /// Per-epoch observed/predicted flags and the contiguous observed-through
