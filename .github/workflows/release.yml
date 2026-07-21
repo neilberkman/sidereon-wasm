@@ -51,5 +51,11 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Check npm package
+        run: npm run check:package
+
       - name: Publish (keyless OIDC + provenance)
         run: npm publish --access public --provenance

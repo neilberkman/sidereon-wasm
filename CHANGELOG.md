@@ -2,8 +2,18 @@
 
 ## Unreleased
 
-## 0.33.0 - 2026-07-20
+## 0.33.1 - 2026-07-20
 
+- Node ESM and CommonJS now both select the synchronous Node build; browser and
+  bundler imports continue to select the fetch-initialized web build. Release
+  checks install the packed tarball and compile and execute clean consumers for
+  all three resolution paths.
+- The legacy `@neilberkman/sidereon/types` subpath now has a harmless runtime
+  target while preserving its type-only declaration target.
+- The npm package now includes `THIRD-PARTY-NOTICES.md`, complete Apache-2.0,
+  ISC, ERFA, SciPy, and IERS license texts, and the exact public
+  `sidereon-core` 0.33.1 non-test tide sources required for the distributed
+  IERS-derived routines.
 - Adds product-aware solution classification and date-aware default sampling,
   including the historical GFZ rapid and ultra-rapid cadence changes and the
   issue-sensitive ESA ultra-rapid transition.
@@ -19,7 +29,8 @@
 - Exposes the independently declared SP3 epoch count and start epoch.
 - Adds `unix_compress` to merged-SP3 provenance without changing the existing
   `none` and `gzip` spellings.
-- Builds against `sidereon` and `sidereon-core` 0.33.0.
+- Builds against `sidereon` and `sidereon-core` 0.33.1 and
+  `trust-region-least-squares` 0.9.2.
 
 ## 0.32.0 - 2026-07-18
 

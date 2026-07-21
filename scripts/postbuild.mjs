@@ -9,8 +9,6 @@
 // object contracts for the audited high-level APIs.
 import { readFileSync, writeFileSync } from "node:fs";
 
-writeFileSync("pkg-node/package.json", JSON.stringify({ type: "commonjs" }, null, 2) + "\n");
-
 const OVERLAY_MARKER = "/* sidereon typed JsValue overlay */";
 
 const overlay = `${OVERLAY_MARKER}
@@ -517,68 +515,44 @@ export interface PppTemporalCorrelation {
 
 export type PppScalarMap = Record<string, number>;
 
+/**
+ * Fusion serde contracts are intentionally unrefined until their complete
+ * current input and serialized-output surfaces are audited together.
+ */
 export interface FusionConfig {
-    filterKind?: "ekf" | "ukf";
-    initialState?: Record<string, number | number[]>;
-    processNoise?: Record<string, number>;
-    leverArmBodyM?: Vec3;
-    timeSync?: FusionTimeSyncConfig;
+    [key: string]: any;
 }
 
 export interface FusionTimeSyncConfig {
-    maxRetainedSamples?: number;
-    maxRetainedEpochs?: number;
+    [key: string]: any;
 }
 
 export interface ImuSampleInput {
-    dtS: number;
-    accelMps2?: Vec3;
-    gyroRadS?: Vec3;
-    deltaVelocityMps?: Vec3;
-    deltaAngleRad?: Vec3;
+    [key: string]: any;
 }
 
 export interface FusionLooseMeasurement {
-    epochJ2000S?: number;
-    positionM: Vec3;
-    velocityMps?: Vec3;
-    positionCovarianceM2?: Matrix3;
-    velocityCovarianceM2?: Matrix3;
+    [key: string]: any;
 }
 
 export interface FusionTightEpoch {
-    observations: SppObservation[];
-    tRxJ2000S: number;
-    tRxSecondOfDayS: number;
-    dayOfYear: number;
-    corrections?: SppCorrections;
-    met?: SurfaceMetInput;
+    [key: string]: any;
 }
 
 export interface FusionUpdate {
-    accepted: boolean;
-    normalizedInnovationSquared?: number;
-    reason?: string;
+    [key: string]: any;
 }
 
 export interface FusionState {
-    epochJ2000S?: number;
-    positionM: [number, number, number];
-    velocityMps: [number, number, number];
-    attitudeQuaternion?: [number, number, number, number];
-    covariance?: number[];
+    [key: string]: any;
 }
 
 export interface FusionTimeSyncStatus {
-    retainedSamples: number;
-    retainedEpochs: number;
-    maxRetainedSamples: number;
-    maxRetainedEpochs: number;
+    [key: string]: any;
 }
 
 export interface FusionRtsEpoch {
-    epochJ2000S: number;
-    state: FusionState;
+    [key: string]: any;
 }
 
 export interface DllJitterOptions {
@@ -615,15 +589,10 @@ export type TerrainOrthometricBatchResult = { ok: true; orthometricHeightM: Orth
 
 `;
 
-const replacements = [
+const topLevelReplacements = [
   [
     "export function sp3MergeInputIdentity(contributors: any, options: any): Sp3MergeInputIdentity;",
     "export function sp3MergeInputIdentity(contributors: Sp3ArtifactIdentityInput[], options?: Sp3MergeIdentityOptions | null): Sp3MergeInputIdentity;",
-  ],
-  ["readonly contributors: any;", "readonly contributors: Sp3ArtifactIdentity[];"],
-  [
-    "readonly precedenceContributors: any;",
-    "readonly precedenceContributors: Sp3ArtifactIdentity[] | undefined;",
   ],
   [
     "export function araim(geometry: any, ism: any, allocation: any): any;",
@@ -648,20 +617,6 @@ const replacements = [
   [
     "export function raimFdeDesign(rows: any, options: any): any;",
     "export function raimFdeDesign(rows: RangeFdeRow[], options?: RangeFdeOptions | null): RangeFdeResult;",
-  ],
-  ["fde(request: any): FdeSolution;", "fde(request: FdeRequest): FdeSolution;"],
-  [
-    "solveBroadcast(request: any): SppSolution;",
-    "solveBroadcast(request: SppRequest): SppSolution;",
-  ],
-  ["solveSpp(request: any): SppSolution;", "solveSpp(request: SppRequest): SppSolution;"],
-  [
-    "solveSppBatch(epochs: any, options: any): SppBatchSolution;",
-    "solveSppBatch(epochs: SppRequest[], options?: SppBatchOptions | null): SppBatchSolution;",
-  ],
-  [
-    "sppRobustFdeDriver(request: any): FdeSolution;",
-    "sppRobustFdeDriver(request: FdeRequest): FdeSolution;",
   ],
   [
     "export function sppInputsFromRinexObs(source: BroadcastEphemeris, obs: RinexObs, options: any): any;",
@@ -711,132 +666,206 @@ const replacements = [
     "export function solvePppFloat(sp3: Sp3, epochs: any, initial_state: any, config: any): PppFloatSolution;",
     "export function solvePppFloat(sp3: Sp3, epochs: PppEpoch[], initial_state: PppFloatState, config: PppFloatConfig): PppFloatSolution;",
   ],
-  ["readonly ambiguitiesM: any;", "readonly ambiguitiesM: PppScalarMap;"],
+];
+
+const classMemberReplacements = [
   [
-    "readonly fixedAmbiguitiesCycles: any;",
-    "readonly fixedAmbiguitiesCycles: Record<string, number>;",
-  ],
-  ["readonly fixedAmbiguitiesM: any;", "readonly fixedAmbiguitiesM: PppScalarMap;"],
-  ["readonly residualIonosphereM: any;", "readonly residualIonosphereM: PppScalarMap;"],
-  ["readonly residuals: any;", "readonly residuals: PppResidual[];"],
-  ["readonly temporalCorrelation: any;", "readonly temporalCorrelation: PppTemporalCorrelation;"],
-  ["constructor(config: any);", "constructor(config: FusionConfig);"],
-  [
-    "static fromStateBytes(config: any, bytes: Uint8Array): GnssInsFilter;",
-    "static fromStateBytes(config: FusionConfig, bytes: Uint8Array): GnssInsFilter;",
-  ],
-  [
-    "configureTimeSync(config: any): void;",
-    "configureTimeSync(config: FusionTimeSyncConfig): void;",
-  ],
-  ["propagate(sample: any): any;", "propagate(sample: ImuSampleInput): FusionState;"],
-  [
-    "propagateBatch(samples: any): any;",
-    "propagateBatch(samples: ImuSampleInput[]): FusionState[];",
+    "Sp3MergeInputIdentity",
+    [
+      ["readonly contributors: any;", "readonly contributors: Sp3ArtifactIdentity[];"],
+      [
+        "readonly precedenceContributors: any;",
+        "readonly precedenceContributors: Sp3ArtifactIdentity[] | undefined;",
+      ],
+    ],
   ],
   [
-    "propagateRecorded(sample: any, history: FusionRtsHistoryBuilder): any;",
-    "propagateRecorded(sample: ImuSampleInput, history: FusionRtsHistoryBuilder): FusionState;",
-  ],
-  ["state(): any;", "state(): FusionState;"],
-  ["tightClockState(): any;", "tightClockState(): Record<string, number>;"],
-  ["timeSyncStatus(): any;", "timeSyncStatus(): FusionTimeSyncStatus;"],
-  [
-    "updateLoose(measurement: any): any;",
-    "updateLoose(measurement: FusionLooseMeasurement): FusionUpdate;",
-  ],
-  [
-    "updateLooseRecorded(measurement: any, history: FusionRtsHistoryBuilder): any;",
-    "updateLooseRecorded(measurement: FusionLooseMeasurement, history: FusionRtsHistoryBuilder): FusionUpdate;",
+    "BroadcastEphemeris",
+    [
+      ["fde(request: any): FdeSolution;", "fde(request: FdeRequest): FdeSolution;"],
+      [
+        "solveBroadcast(request: any): SppSolution;",
+        "solveBroadcast(request: SppRequest): SppSolution;",
+      ],
+    ],
   ],
   [
-    "updateLooseTimeSync(measurement: any): any;",
-    "updateLooseTimeSync(measurement: FusionLooseMeasurement): FusionUpdate;",
-  ],
-  ["updateNonHolonomic(): any;", "updateNonHolonomic(): FusionUpdate;"],
-  [
-    "updateNonHolonomicRecorded(history: FusionRtsHistoryBuilder): any;",
-    "updateNonHolonomicRecorded(history: FusionRtsHistoryBuilder): FusionUpdate;",
-  ],
-  ["updateStationary(): any;", "updateStationary(): FusionUpdate;"],
-  [
-    "updateStationaryRecorded(history: FusionRtsHistoryBuilder): any;",
-    "updateStationaryRecorded(history: FusionRtsHistoryBuilder): FusionUpdate;",
-  ],
-  [
-    "updateTightBroadcast(broadcast: BroadcastEphemeris, epoch: any): any;",
-    "updateTightBroadcast(broadcast: BroadcastEphemeris, epoch: FusionTightEpoch): FusionUpdate;",
+    "Sp3",
+    [
+      ["fde(request: any): FdeSolution;", "fde(request: FdeRequest): FdeSolution;"],
+      ["solveSpp(request: any): SppSolution;", "solveSpp(request: SppRequest): SppSolution;"],
+      [
+        "solveSppBatch(epochs: any, options: any): SppBatchSolution;",
+        "solveSppBatch(epochs: SppRequest[], options?: SppBatchOptions | null): SppBatchSolution;",
+      ],
+      [
+        "sppRobustFdeDriver(request: any): FdeSolution;",
+        "sppRobustFdeDriver(request: FdeRequest): FdeSolution;",
+      ],
+    ],
   ],
   [
-    "updateTightBroadcastRecorded(broadcast: BroadcastEphemeris, epoch: any, history: FusionRtsHistoryBuilder): any;",
-    "updateTightBroadcastRecorded(broadcast: BroadcastEphemeris, epoch: FusionTightEpoch, history: FusionRtsHistoryBuilder): FusionUpdate;",
+    "PppFixedSolution",
+    [
+      [
+        "readonly fixedAmbiguitiesCycles: any;",
+        "readonly fixedAmbiguitiesCycles: Record<string, number>;",
+      ],
+      ["readonly fixedAmbiguitiesM: any;", "readonly fixedAmbiguitiesM: PppScalarMap;"],
+      ["readonly residualIonosphereM: any;", "readonly residualIonosphereM: PppScalarMap;"],
+      ["readonly residuals: any;", "readonly residuals: PppResidual[];"],
+      [
+        "readonly temporalCorrelation: any;",
+        "readonly temporalCorrelation: PppTemporalCorrelation;",
+      ],
+    ],
   ],
   [
-    "updateTightBroadcastTimeSync(broadcast: BroadcastEphemeris, epoch: any): any;",
-    "updateTightBroadcastTimeSync(broadcast: BroadcastEphemeris, epoch: FusionTightEpoch): FusionUpdate;",
+    "PppFloatSolution",
+    [
+      ["readonly ambiguitiesM: any;", "readonly ambiguitiesM: PppScalarMap;"],
+      ["readonly residualIonosphereM: any;", "readonly residualIonosphereM: PppScalarMap;"],
+      ["readonly residuals: any;", "readonly residuals: PppResidual[];"],
+      [
+        "readonly temporalCorrelation: any;",
+        "readonly temporalCorrelation: PppTemporalCorrelation;",
+      ],
+    ],
+  ],
+  // Fusion JsValue members intentionally retain wasm-bindgen's `any` until
+  // their current input and serialized-output contracts are audited together.
+  [
+    "SignalAnalysisModulation",
+    [
+      [
+        "dllLowerBound(options: any): any;",
+        "dllLowerBound(options: DllJitterOptions): DllJitterResult;",
+      ],
+      [
+        "dllThermalNoiseJitter(options: any, processing: DllProcessing): any;",
+        "dllThermalNoiseJitter(options: DllJitterOptions, processing: DllProcessing): DllJitterResult;",
+      ],
+      [
+        "multipathErrorEnvelope(options: any, delay_chips: Float64Array): any;",
+        "multipathErrorEnvelope(options: MultipathEnvelopeOptions, delay_chips: Float64Array): MultipathEnvelopeResult;",
+      ],
+    ],
   ],
   [
-    "updateTightSp3(sp3: Sp3, epoch: any): any;",
-    "updateTightSp3(sp3: Sp3, epoch: FusionTightEpoch): FusionUpdate;",
+    "DtedTerrain",
+    [
+      [
+        "heightBatch(points: any, options: any): any;",
+        "heightBatch(points: TerrainPoint[], options?: TerrainLookupOptions | null): TerrainHeightBatchResult[];",
+      ],
+      [
+        "heightMWithOptions(longitude_deg: number, latitude_deg: number, options: any): number;",
+        "heightMWithOptions(longitude_deg: number, latitude_deg: number, options?: TerrainLookupOptions | null): number;",
+      ],
+    ],
   ],
   [
-    "updateTightSp3Recorded(sp3: Sp3, epoch: any, history: FusionRtsHistoryBuilder): any;",
-    "updateTightSp3Recorded(sp3: Sp3, epoch: FusionTightEpoch, history: FusionRtsHistoryBuilder): FusionUpdate;",
-  ],
-  [
-    "updateTightSp3TimeSync(sp3: Sp3, epoch: any): any;",
-    "updateTightSp3TimeSync(sp3: Sp3, epoch: FusionTightEpoch): FusionUpdate;",
-  ],
-  ["readonly epochs: any;", "readonly epochs: FusionRtsEpoch[];"],
-  [
-    "dllLowerBound(options: any): any;",
-    "dllLowerBound(options: DllJitterOptions): DllJitterResult;",
-  ],
-  [
-    "dllThermalNoiseJitter(options: any, processing: DllProcessing): any;",
-    "dllThermalNoiseJitter(options: DllJitterOptions, processing: DllProcessing): DllJitterResult;",
-  ],
-  [
-    "multipathErrorEnvelope(options: any, delay_chips: Float64Array): any;",
-    "multipathErrorEnvelope(options: MultipathEnvelopeOptions, delay_chips: Float64Array): MultipathEnvelopeResult;",
-  ],
-  [
-    "heightBatch(points: any, options: any): any;",
-    "heightBatch(points: TerrainPoint[], options?: TerrainLookupOptions | null): TerrainHeightBatchResult[];",
-  ],
-  [
-    "heightMWithOptions(longitude_deg: number, latitude_deg: number, options: any): number;",
-    "heightMWithOptions(longitude_deg: number, latitude_deg: number, options?: TerrainLookupOptions | null): number;",
-  ],
-  [
-    "ellipsoidalHeightMWithModel(longitude_deg: number, latitude_deg: number, options: any, geoid: TerrainGeoidModel): EllipsoidalHeightM;",
-    "ellipsoidalHeightMWithModel(longitude_deg: number, latitude_deg: number, options: TerrainLookupOptions | null | undefined, geoid: TerrainGeoidModel): EllipsoidalHeightM;",
-  ],
-  [
-    "ellipsoidalHeightMWithOptions(longitude_deg: number, latitude_deg: number, options: any): EllipsoidalHeightM;",
-    "ellipsoidalHeightMWithOptions(longitude_deg: number, latitude_deg: number, options?: TerrainLookupOptions | null): EllipsoidalHeightM;",
-  ],
-  [
-    "orthometricHeightBatch(points: any, options: any): any;",
-    "orthometricHeightBatch(points: TerrainPoint[], options?: TerrainLookupOptions | null): TerrainOrthometricBatchResult[];",
-  ],
-  [
-    "orthometricHeightMWithOptions(longitude_deg: number, latitude_deg: number, options: any): OrthometricHeightM;",
-    "orthometricHeightMWithOptions(longitude_deg: number, latitude_deg: number, options?: TerrainLookupOptions | null): OrthometricHeightM;",
+    "MmapTerrain",
+    [
+      [
+        "heightBatch(points: any, options: any): any;",
+        "heightBatch(points: TerrainPoint[], options?: TerrainLookupOptions | null): TerrainHeightBatchResult[];",
+      ],
+      [
+        "heightMWithOptions(longitude_deg: number, latitude_deg: number, options: any): number;",
+        "heightMWithOptions(longitude_deg: number, latitude_deg: number, options?: TerrainLookupOptions | null): number;",
+      ],
+      [
+        "ellipsoidalHeightMWithModel(longitude_deg: number, latitude_deg: number, options: any, geoid: TerrainGeoidModel): EllipsoidalHeightM;",
+        "ellipsoidalHeightMWithModel(longitude_deg: number, latitude_deg: number, options: TerrainLookupOptions | null | undefined, geoid: TerrainGeoidModel): EllipsoidalHeightM;",
+      ],
+      [
+        "ellipsoidalHeightMWithOptions(longitude_deg: number, latitude_deg: number, options: any): EllipsoidalHeightM;",
+        "ellipsoidalHeightMWithOptions(longitude_deg: number, latitude_deg: number, options?: TerrainLookupOptions | null): EllipsoidalHeightM;",
+      ],
+      [
+        "orthometricHeightBatch(points: any, options: any): any;",
+        "orthometricHeightBatch(points: TerrainPoint[], options?: TerrainLookupOptions | null): TerrainOrthometricBatchResult[];",
+      ],
+      [
+        "orthometricHeightMWithOptions(longitude_deg: number, latitude_deg: number, options: any): OrthometricHeightM;",
+        "orthometricHeightMWithOptions(longitude_deg: number, latitude_deg: number, options?: TerrainLookupOptions | null): OrthometricHeightM;",
+      ],
+    ],
   ],
 ];
 
-function patchDeclarations(path) {
-  let text = readFileSync(path, "utf8");
-  if (!text.includes(OVERLAY_MARKER)) {
-    text = text.replace("/* eslint-disable */\n", "/* eslint-disable */\n\n" + overlay);
-  }
-  for (const [from, to] of replacements) {
-    text = text.split(from).join(to);
-  }
-  writeFileSync(path, text);
+function occurrenceCount(text, needle) {
+  return text.split(needle).length - 1;
 }
 
-for (const path of ["pkg/sidereon.d.ts", "pkg-node/sidereon.d.ts"]) {
-  patchDeclarations(path);
+function replaceExactly(text, from, to, context) {
+  const fromCount = occurrenceCount(text, from);
+  const toCount = occurrenceCount(text, to);
+  if (fromCount === 1 && toCount === 0) {
+    return text.replace(from, to);
+  }
+  if (fromCount === 0 && toCount === 1) {
+    return text;
+  }
+  throw new Error(
+    `${context}: expected exactly one source declaration (or one already-patched declaration), found source=${fromCount}, patched=${toCount}`,
+  );
+}
+
+function replaceClassMember(text, className, from, to, path) {
+  const classMarker = `export class ${className} {`;
+  const classCount = occurrenceCount(text, classMarker);
+  if (classCount !== 1) {
+    throw new Error(`${path}: expected exactly one ${classMarker}, found ${classCount}`);
+  }
+  const start = text.indexOf(classMarker);
+  const nextExport = text.indexOf("\nexport ", start + classMarker.length);
+  const end = nextExport === -1 ? text.length : nextExport;
+  const declaration = text.slice(start, end);
+  const patched = replaceExactly(declaration, from, to, `${path}: ${className}`);
+  return text.slice(0, start) + patched + text.slice(end);
+}
+
+function insertOverlay(text, path) {
+  const anchor = "/* eslint-disable */\n";
+  const anchorCount = occurrenceCount(text, anchor);
+  if (anchorCount !== 1) {
+    throw new Error(
+      `${path}: expected exactly one declaration overlay anchor, found ${anchorCount}`,
+    );
+  }
+  const markerCount = occurrenceCount(text, OVERLAY_MARKER);
+  if (markerCount === 1) {
+    return text;
+  }
+  if (markerCount !== 0) {
+    throw new Error(`${path}: expected zero or one overlay markers, found ${markerCount}`);
+  }
+  const patched = text.replace(anchor, anchor + "\n" + overlay);
+  if (occurrenceCount(patched, OVERLAY_MARKER) !== 1) {
+    throw new Error(`${path}: declaration overlay insertion failed`);
+  }
+  return patched;
+}
+
+function patchDeclarations(path) {
+  let text = insertOverlay(readFileSync(path, "utf8"), path);
+  for (const [from, to] of topLevelReplacements) {
+    text = replaceExactly(text, from, to, `${path}: top-level declaration`);
+  }
+  for (const [className, replacements] of classMemberReplacements) {
+    for (const [from, to] of replacements) {
+      text = replaceClassMember(text, className, from, to, path);
+    }
+  }
+  return text;
+}
+
+const declarationPaths = ["pkg/sidereon.d.ts", "pkg-node/sidereon.d.ts"];
+const patchedDeclarations = declarationPaths.map((path) => [path, patchDeclarations(path)]);
+
+writeFileSync("pkg-node/package.json", JSON.stringify({ type: "commonjs" }, null, 2) + "\n");
+for (const [path, text] of patchedDeclarations) {
+  writeFileSync(path, text);
 }

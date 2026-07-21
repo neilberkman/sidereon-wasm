@@ -2,8 +2,30 @@
 
 sidereon is licensed under the MIT License (see LICENSE). It contains, ports,
 or reimplements algorithms from the following third-party sources. All are
-permissive licenses; their required attributions are reproduced below. No
-copyleft (GPL/LGPL/AGPL/MPL/EUPL/CDDL) code or dependencies are included.
+permissive licenses; their attributions and applicable license texts are
+included in this package. No copyleft (GPL/LGPL/AGPL/MPL/EUPL/CDDL) code or
+dependencies are included.
+
+--------------------------------------------------------------------------------
+## Apache-2.0 Rust components
+
+The compiled WebAssembly package uses the following Apache-2.0 components (the
+procedural-macro entry participates at build time):
+
+- `approx` 0.5.1
+- `nalgebra` 0.33.3
+- `nalgebra-macros` 0.2.2
+- `simba` 0.9.1
+
+The complete Apache License, Version 2.0 is reproduced in
+`licenses/Apache-2.0.txt`.
+
+--------------------------------------------------------------------------------
+## libloading (ISC)
+
+The normal dependency graph used to build the WebAssembly package includes
+`libloading` 0.8.9. Its complete copyright and ISC license notice is reproduced
+in `licenses/libloading-ISC.txt`.
 
 --------------------------------------------------------------------------------
 ## RTKLIB (BSD 2-Clause)
@@ -34,25 +56,32 @@ The integer least-squares (MLAMBDA/LAMBDA) routine is a Rust port of RTKLIB's
 
 Nutation/precession coefficient tables and conventions are derived from ERFA
 (Essential Routines for Fundamental Astronomy), itself derived from IAU SOFA.
-
-  Copyright (C) 2013-2023, NumFOCUS Foundation. All rights reserved.
-  Licensed under the BSD 3-Clause License.
+The complete official ERFA 2.0.1 license, including its SOFA heritage terms, is
+reproduced in `licenses/ERFA-BSD-3-Clause.txt`.
 
 --------------------------------------------------------------------------------
 ## SciPy (BSD 3-Clause)
 
 The trust-region least-squares solver (`trust-region-least-squares`)
 reimplements algorithms equivalent to SciPy's least-squares routines.
-
-  Copyright (c) 2001-2024, SciPy Developers. All rights reserved.
-  Licensed under the BSD 3-Clause License.
+The complete official SciPy 1.18.0 license is reproduced in
+`licenses/SciPy-BSD-3-Clause.txt`.
 
 --------------------------------------------------------------------------------
 ## IERS Conventions Software
 
-The solid-earth / ocean / pole tide displacement follows the IERS Conventions
-reference routines (e.g. DEHANTTIDEINEL), used under the IERS Conventions
-Software License. The IERS acknowledgment is retained in the relevant source.
+The solid-earth tide implementation is a renamed Rust derived work of the IERS
+Conventions `DEHANTTIDEINEL` reference routine and its companion routines. Its
+source documents how it is based on and differs from the original. The complete
+official IERS notice is reproduced in
+`licenses/IERS-Conventions-Software-License.txt`.
+
+The exact public non-test tide sources distributed in `sidereon-core` 0.33.1
+are included under
+`third_party_source/sidereon-core-0.33.1/tides/`. These copies provide the
+source for every tide routine in the compiled WebAssembly artifact; they are
+not represented as original IERS software or as endorsed by the IERS
+Conventions Center.
 
 --------------------------------------------------------------------------------
 ## Reference algorithms (no code copied)

@@ -1,6 +1,6 @@
 {
   "name": "@neilberkman/sidereon",
-  "version": "0.33.0",
+  "version": "0.33.1",
   "description": "WebAssembly / JavaScript interface over the sidereon GNSS + astrodynamics engine: SP3 loading and multi-product merge, SPP / RTK (float + fixed) / PPP (float + fixed) positioning, IONEX slant delay, SGP4 and numerical orbit propagation, RINEX observation/navigation/clock parsing, CRINEX (Hatanaka) decoding, observable-domain math (carrier combinations, cycle slips, Hatch smoothing, weighting, velocity, GPS C/A signal), and the astro domain (scale-tagged time, frame transforms, Sun/Moon ephemerides, eclipse / body angles, DOP, passes / visibility, conjunction + collision probability, CDM / OMM / ANTEX parsing, RF link budget)",
   "type": "module",
   "license": "MIT",
@@ -12,19 +12,43 @@
   "bugs": "https://github.com/neilberkman/sidereon-wasm/issues",
   "exports": {
     ".": {
+      "browser": {
+        "types": "./pkg/sidereon.d.ts",
+        "import": "./pkg/sidereon.js",
+        "default": "./pkg/sidereon.js"
+      },
+      "node": {
+        "types": "./pkg-node/sidereon.d.ts",
+        "import": "./pkg-node/sidereon.js",
+        "require": "./pkg-node/sidereon.js"
+      },
       "types": "./pkg/sidereon.d.ts",
       "import": "./pkg/sidereon.js",
-      "require": "./pkg-node/sidereon.js"
+      "default": "./pkg/sidereon.js"
     },
     "./exact-cache": {
       "types": "./types/exact-cache.d.ts",
       "import": "./exact-cache.js"
     },
-    "./types": "./types/sidereon-extra.d.ts"
+    "./types": {
+      "types": "./types/sidereon-extra.d.ts",
+      "import": "./types/sidereon-extra.js",
+      "require": "./types/sidereon-extra.cjs",
+      "default": "./types/sidereon-extra.js"
+    }
   },
   "types": "./pkg/sidereon.d.ts",
   "files": [
     "CHANGELOG.md",
+    "THIRD-PARTY-NOTICES.md",
+    "licenses/Apache-2.0.txt",
+    "licenses/ERFA-BSD-3-Clause.txt",
+    "licenses/IERS-Conventions-Software-License.txt",
+    "licenses/SciPy-BSD-3-Clause.txt",
+    "licenses/libloading-ISC.txt",
+    "third_party_source/sidereon-core-0.33.1/tides/mod.rs",
+    "third_party_source/sidereon-core-0.33.1/tides/ocean.rs",
+    "third_party_source/sidereon-core-0.33.1/tides/pole.rs",
     "pkg/sidereon.js",
     "pkg/sidereon.d.ts",
     "pkg/sidereon_bg.wasm",
@@ -36,6 +60,8 @@
     "pkg-node/sidereon_bg.wasm.d.ts",
     "exact-cache.js",
     "types/exact-cache.d.ts",
+    "types/sidereon-extra.js",
+    "types/sidereon-extra.cjs",
     "types/sidereon-extra.d.ts",
     "README.md"
   ],
@@ -43,8 +69,9 @@
     "build": "wasm-pack build --target web --out-dir pkg --out-name sidereon && wasm-pack build --target nodejs --out-dir pkg-node --out-name sidereon && node scripts/postbuild.mjs",
     "test": "node --test",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . && prettier --check \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"*.json\" \"eslint.config.js\"",
-    "format": "prettier --write \"test/**/*.mjs\" \"scripts/**/*.mjs\" \"*.json\" \"eslint.config.js\""
+    "check:package": "node scripts/check-package.mjs",
+    "lint": "eslint . && prettier --check \"test/**/*.mjs\" \"type-test/**/*.ts\" \"scripts/**/*.mjs\" \"*.json\" \"eslint.config.js\"",
+    "format": "prettier --write \"test/**/*.mjs\" \"type-test/**/*.ts\" \"scripts/**/*.mjs\" \"*.json\" \"eslint.config.js\""
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

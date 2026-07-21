@@ -19,12 +19,13 @@ npm install @neilberkman/sidereon
 ```
 
 The package is dual ESM/CJS and ships prebuilt wasm with bundled TypeScript
-declarations. The two entry points initialize differently:
+declarations. Browser and Node entry points initialize differently:
 
 - **Browser / bundler (ESM):** import the default `init`, `await` it once, then
   call the API. `init()` fetches the `.wasm` for you.
-- **Node (CommonJS):** `require(...)` loads and initializes the wasm at require
-  time, so there is no init step and everything is ready synchronously.
+- **Node (ESM or CommonJS):** `import` and `require` both resolve to the Node
+  build, which loads the packaged `.wasm` locally and is ready synchronously.
+  There is no `init()` call and no network fetch.
 
 ## Example: propagate a TLE
 
@@ -52,9 +53,17 @@ console.log(look.azimuthDeg[0], look.elevationDeg[0], look.rangeKm[0]);
 `BigInt64Array` of unix-microsecond epochs) and `findPasses(station, start, end,
 minElevationDeg)` for visibility windows.
 
-### Node (CommonJS)
+### Node (ESM or CommonJS)
 
-`require` resolves to the Node build, which initializes the wasm at require time:
+Both module systems resolve to the Node build, which initializes the wasm while
+loading:
+
+```js
+import { Tle, GroundStation } from "@neilberkman/sidereon";
+
+const tle = new Tle(line1, line2);
+const look = tle.lookAngles(new GroundStation(51.5, -0.1, 10.0), epochs);
+```
 
 ```js
 const { Tle, GroundStation } = require("@neilberkman/sidereon");
@@ -386,8 +395,8 @@ computes. Failures surface as the JS exception you would expect (`Error` for
 engine rejections such as parse failures, non-converging solves, and SGP4 error
 codes; `TypeError` for malformed input; `RangeError` for out-of-domain numbers).
 Full signatures live in the bundled TypeScript declarations (`sidereon.d.ts`),
-with the plain-object request types in `@neilberkman/sidereon/types`, including
-typed ARAIM, RTK/PPP, fusion, signal-analysis, and terrain protocols.
+including the plain-object request types for ARAIM, RTK/PPP, fusion,
+signal-analysis, and terrain protocols.
 
 A few conventions to know: positions and state arrays cross as
 `Float64Array` (multi-epoch arrays are flat row-major, `3 * epochCount`); SGP4
