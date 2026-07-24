@@ -10,9 +10,10 @@ use sidereon::rinex_qc::{
 use sidereon_core::observation_qc::{
     observation_qc_with_options, render_html as core_render_html, render_text as core_render_text,
     ClockJump, CycleSlipQc, IntervalSource, MpStats, MultipathReport, ObservationDataGap,
-    ObservationQcNote, ObservationQcOptions, ObservationQcReport as CoreObservationQcReport,
-    SatelliteMultipathQc, SatelliteObservationQc, SatelliteSignalQc, SnrStats, SsiHistogram,
-    SystemCycleSlipQc, SystemMultipathQc, SystemSignalQc,
+    ObservationQcFinding, ObservationQcNote, ObservationQcOptions,
+    ObservationQcReport as CoreObservationQcReport, SatelliteMultipathQc, SatelliteObservationQc,
+    SatelliteSignalQc, SnrStats, SsiHistogram, SystemCycleSlipQc, SystemMultipathQc,
+    SystemSignalQc,
 };
 use sidereon_core::rinex::nav::encode_nav;
 use sidereon_core::rinex::observations::{ObsEpochTime, PgmRunByDate};
@@ -617,6 +618,22 @@ fn note_js(note: ObservationQcNote) -> ObservationQcNoteJs {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ObservationQcFindingJs {
+    code: String,
+    severity: &'static str,
+    spec_ref: String,
+}
+
+fn observation_qc_finding_js(finding: &ObservationQcFinding) -> ObservationQcFindingJs {
+    ObservationQcFindingJs {
+        code: finding.code.clone(),
+        severity: severity_label(finding.severity),
+        spec_ref: finding.spec_ref.clone(),
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ObservationQcReportJs {
     total_epoch_records: usize,
     observation_epochs: usize,
@@ -633,6 +650,7 @@ struct ObservationQcReportJs {
     satellites: Vec<SatelliteObservationQcJs>,
     satellite_signals: Vec<SatelliteSignalQcJs>,
     system_signals: Vec<SystemSignalQcJs>,
+    lint_findings: Vec<ObservationQcFindingJs>,
     notes: Vec<ObservationQcNoteJs>,
 }
 
@@ -660,6 +678,11 @@ fn observation_qc_report_js(report: &CoreObservationQcReport) -> ObservationQcRe
             .system_signals
             .iter()
             .map(system_signal_qc_js)
+            .collect(),
+        lint_findings: report
+            .lint_findings
+            .iter()
+            .map(observation_qc_finding_js)
             .collect(),
         notes: report.notes.iter().copied().map(note_js).collect(),
     }
@@ -761,6 +784,17 @@ impl ObservationQcReport {
             .map(system_signal_qc_js)
             .collect();
         to_value(&signals)
+    }
+
+    #[wasm_bindgen(getter, js_name = lintFindings)]
+    pub fn lint_findings(&self) -> Result<JsValue, JsValue> {
+        let findings: Vec<_> = self
+            .inner
+            .lint_findings
+            .iter()
+            .map(observation_qc_finding_js)
+            .collect();
+        to_value(&findings)
     }
 
     #[wasm_bindgen(getter)]

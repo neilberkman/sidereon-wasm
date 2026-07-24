@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.35.0 - 2026-07-24
+
+- RINEX observation QC now treats a source `INTERVAL` of zero as
+  standards-compatible unavailable metadata. `lintRinexObs` reports the
+  informational `OBS-H19`; default `observationQc` infers cadence from regular
+  epochs when possible and otherwise reports an unresolved interval. Explicit
+  zero, negative, or non-finite caller overrides remain errors.
+- Negative parsed source cadence metadata is reported separately as `OBS-H20`
+  and is likewise excluded from QC calculations. Non-finite RINEX text remains
+  a parse error; programmatically constructed non-finite headers receive
+  `OBS-H20` in the core.
+- When interval repair is requested, `repairRinexObs` replaces an unavailable
+  source `INTERVAL` with an inferred cadence, or removes the record when
+  cadence cannot be resolved.
+- Adds `ObservationQcReport.lintFindings`, so QC consumers can inspect the
+  compact core lint summary without making a separate lint call.
+- Builds against `sidereon` and `sidereon-core` 0.35.0. Positioning and orbit
+  propagation numerical kernels are unchanged.
+
 ## 0.34.0 - 2026-07-21
 
 - Adds `supportedSamples`, returning the core's complete date- and issue-aware

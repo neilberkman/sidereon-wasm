@@ -23,6 +23,21 @@ function assertClose(actual, expected, tolerance = 1e-12) {
   );
 }
 
+function observationTextWithIntervalRecord(replacement) {
+  const source = fixture("obs/ESBC00DNK_R_20201770000_01D_30S_MO_trim.rnx").toString("utf8");
+  const valid = "    30.000                                                  INTERVAL";
+  assert.equal(replacement.length, valid.length);
+  assert.ok(source.includes(valid), "fixture contains the expected INTERVAL record");
+  return source.replace(valid, replacement);
+}
+
+function retainFirstObservationEpoch(source) {
+  const first = source.indexOf("\n> ");
+  const second = source.indexOf("\n> ", first + 1);
+  assert.ok(first >= 0 && second > first, "fixture contains two observation epochs");
+  return source.slice(0, second + 1);
+}
+
 test("lintRinexObs reports the core diagnostics for RINEX 2 OBS", () => {
   const report = lintRinexObs(fixture("obs/algo0010_2015001_v1_trim.rnx"));
 
@@ -51,6 +66,118 @@ test("lintRinexObs reports the core diagnostics for RINEX 2 OBS", () => {
   assert.equal(report.findings[0].severity, "info");
   assert.equal(report.findings[0].repairable, false);
   assert.match(report.findings[0].detail, /WAVELENGTH FACT L1\/2/);
+});
+
+test("unavailable source INTERVAL is linted while QC infers or reports cadence", () => {
+  const source = observationTextWithIntervalRecord(
+    "     0.000                                                  INTERVAL",
+  );
+  const bytes = encoder.encode(source);
+  const lint = lintRinexObs(bytes);
+  const finding = lint.findings.find((entry) => entry.code === "OBS-H19");
+  assert.ok(finding);
+  assert.equal(finding.severity, "info");
+  assert.equal(finding.repairable, true);
+
+  const obs = parseRinexObs(bytes);
+  const qc = observationQc(obs);
+  assert.equal(qc.intervalS, 30);
+  assert.equal(qc.intervalSource, "inferred");
+  assert.deepEqual(qc.notes, []);
+  const h19 = {
+    code: "OBS-H19",
+    severity: "info",
+    specRef: "RINEX 2.11 section 5.3; RINEX 3.05/4.02 section 6.5 and Table A2, INTERVAL",
+  };
+  assert.deepEqual(
+    qc.lintFindings.find((entry) => entry.code === "OBS-H19"),
+    h19,
+  );
+  assert.deepEqual(
+    JSON.parse(qc.toJson()).lintFindings.find((entry) => entry.code === "OBS-H19"),
+    h19,
+  );
+
+  assert.throws(
+    () => observationQc(obs, { intervalOverrideS: 0 }),
+    /invalid observation QC interval: must be finite and positive/,
+  );
+
+  const preserved = repairRinexObs(bytes, {});
+  assert.match(preserved.repairedText, /^ {5}0\.000 {50}INTERVAL$/m);
+  assert.equal(
+    preserved.remaining.findings.some((entry) => entry.code === "OBS-H19"),
+    true,
+  );
+
+  const repaired = repairRinexObs(bytes, { setInterval: true });
+  assert.ok(repaired.actions.some((action) => action.id === "A6"));
+  assert.match(
+    repaired.repairedText,
+    /^ {4}30\.000 {50}INTERVAL$/m,
+    "repair replaces unavailable metadata with inferred cadence",
+  );
+  assert.equal(
+    repaired.remaining.findings.some((entry) => entry.code === "OBS-H19"),
+    false,
+  );
+
+  const singleEpoch = retainFirstObservationEpoch(source);
+  const unresolved = observationQc(parseRinexObs(encoder.encode(singleEpoch)));
+  assert.equal(unresolved.intervalS, undefined);
+  assert.equal(unresolved.intervalSource, "unresolved");
+  assert.deepEqual(unresolved.notes, [{ kind: "intervalUnresolved", epochIndex: undefined }]);
+
+  const unresolvedRepair = repairRinexObs(encoder.encode(singleEpoch), { setInterval: true });
+  assert.doesNotMatch(unresolvedRepair.repairedText, /INTERVAL/);
+  assert.equal(
+    unresolvedRepair.remaining.findings.some((entry) => entry.code === "OBS-H19"),
+    false,
+  );
+});
+
+test("invalid source INTERVAL is reported separately and excluded from QC calculations", () => {
+  const source = observationTextWithIntervalRecord(
+    "    -1.000                                                  INTERVAL",
+  );
+  const bytes = encoder.encode(source);
+  const lint = lintRinexObs(bytes);
+  const finding = lint.findings.find((entry) => entry.code === "OBS-H20");
+  assert.ok(finding);
+  assert.equal(finding.severity, "error");
+  assert.equal(finding.repairable, true);
+
+  const qc = observationQc(parseRinexObs(bytes));
+  assert.equal(qc.intervalS, 30);
+  assert.equal(qc.intervalSource, "inferred");
+  assert.deepEqual(qc.notes, []);
+  const h20 = {
+    code: "OBS-H20",
+    severity: "error",
+    specRef: "RINEX 2.11 Table A2; RINEX 3.05/4.02 Table A2, INTERVAL",
+  };
+  assert.deepEqual(
+    qc.lintFindings.find((entry) => entry.code === "OBS-H20"),
+    h20,
+  );
+  assert.deepEqual(
+    JSON.parse(qc.toJson()).lintFindings.find((entry) => entry.code === "OBS-H20"),
+    h20,
+  );
+
+  const preserved = repairRinexObs(bytes, {});
+  assert.match(preserved.repairedText, /^ {4}-1\.000 {50}INTERVAL$/m);
+  assert.equal(
+    preserved.remaining.findings.some((entry) => entry.code === "OBS-H20"),
+    true,
+  );
+
+  const repaired = repairRinexObs(bytes, { setInterval: true });
+  assert.match(repaired.repairedText, /^ {4}30\.000 {50}INTERVAL$/m);
+  assert.equal(
+    repaired.remaining.findings.some((entry) => entry.code === "OBS-H20"),
+    false,
+  );
 });
 
 test("repairRinexObs fixes header-derived fields and leaves a clean report", () => {
