@@ -4,6 +4,11 @@
 
 ## 0.36.1 - 2026-08-04
 
+- Builds against `sidereon` and `sidereon-core` 0.36.1 (version-alignment
+  engine release; no engine changes), and the vendored IERS-derived tides
+  source under `third_party_source/` is relabeled to the matching engine
+  version - its bytes are identical to the 0.35.0 copies.
+
 - Merge-provenance identity inputs now accept the `WUM` publisher token and
   the `near_real_time` solution class introduced by core 0.36.0, so
   `wum_nrt` artifacts round-trip through `sp3MergeInputIdentity`. 0.36.0
