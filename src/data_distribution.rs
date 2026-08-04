@@ -3,6 +3,7 @@
 //! Browser and Node callers own fetch, credentials, and cache policy. This
 //! module only delegates exact catalog derivation to the network-free core.
 
+use serde::Serialize;
 use sidereon_core::data::{
     self as core_data, AnalysisCenter, DistributionSource, ProductDate, ProductIdentity,
     ProductType, Sp3ContentStartConvention as CoreSp3ContentStartConvention,
@@ -261,6 +262,201 @@ fn product_spec(
     let date = ProductDate::new(year, month, day).map_err(engine_error)?;
     core_data::product(center, family, date, sample.as_deref(), issue.as_deref())
         .map_err(engine_error)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PredictedLineCandidate {
+    center: String,
+    date: String,
+    sample: String,
+    issue: Option<String>,
+    filename: String,
+    url: String,
+}
+
+/// Ordered cross-line candidates for one predicted IONEX map date.
+///
+/// Both CODE predicted lines publish the same official filename for a map
+/// date, but the two-day line is produced a day earlier, so `cod_prd2` is
+/// routinely published while `cod_prd1` is still absent when CODE runs
+/// behind. Candidates are ordered `cod_prd1` first, all cover the SAME map
+/// date (never a neighboring day's map), and each keeps its own line
+/// identity so resolved provenance names the line actually served. The walk
+/// is opt-in; single-line requests keep their fail-closed behavior.
+///
+/// Returns an array of `{center, date, sample, issue, filename, url}`.
+#[wasm_bindgen(js_name = predictedIonexLineCandidates)]
+pub fn predicted_ionex_line_candidates(
+    year: i32,
+    month: u8,
+    day: u8,
+    sample: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let date = ProductDate::new(year, month, day).map_err(engine_error)?;
+    let candidates =
+        core_data::predicted_ionex_line_candidates(date, sample.as_deref()).map_err(engine_error)?;
+    let mut rows = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        rows.push(PredictedLineCandidate {
+            center: candidate.center.code().to_owned(),
+            date: format!(
+                "{:04}-{:02}-{:02}",
+                candidate.date.year, candidate.date.month, candidate.date.day
+            ),
+            sample: candidate.sample.clone(),
+            issue: candidate.issue.clone(),
+            filename: candidate.canonical_filename().map_err(engine_error)?,
+            url: candidate.archive_url().map_err(engine_error)?,
+        });
+    }
+    serde_wasm_bindgen::to_value(&rows).map_err(|error| engine_error(error.to_string()))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishedObjectRow {
+    path: String,
+    observed_at: Option<String>,
+}
+
+/// Parse the object entries out of an archive listing body.
+///
+/// Dialect detection is closed: a body that fits none of the recognized
+/// listing surfaces (Apache/XHTML autoindex, AIUB whole-tree CSV, FTP
+/// `LIST`) throws instead of returning a best-effort empty result - a silent
+/// empty parse would be indistinguishable from "nothing published".
+/// `observedAt` is the archive-reported modification text, verbatim; archives
+/// disagree on format and time zone, so it is never reinterpreted.
+///
+/// Returns an array of `{path, observedAt}`.
+#[wasm_bindgen(js_name = parseArchiveListing)]
+pub fn parse_archive_listing(body: &str) -> Result<JsValue, JsValue> {
+    let objects = core_data::parse_archive_listing(body).map_err(engine_error)?;
+    let rows: Vec<PublishedObjectRow> = objects
+        .into_iter()
+        .map(|object| PublishedObjectRow {
+            path: object.path,
+            observed_at: object.observed_at,
+        })
+        .collect();
+    serde_wasm_bindgen::to_value(&rows).map_err(|error| engine_error(error.to_string()))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewestPublishedRow {
+    date: String,
+    issue: String,
+    filename: String,
+    observed_at: Option<String>,
+}
+
+/// Newest published issue for one center + product family within a listing
+/// body, or `null` when the listing is readable but holds no object of the
+/// line - deliberately distinct from an unreadable listing, which throws.
+///
+/// Returns `{date, issue, filename, observedAt}` or `null`.
+#[wasm_bindgen(js_name = newestPublishedProduct)]
+pub fn newest_published_product(
+    center: &str,
+    family: &str,
+    listing_body: &str,
+) -> Result<JsValue, JsValue> {
+    let objects = core_data::parse_archive_listing(listing_body).map_err(engine_error)?;
+    let newest = core_data::newest_published_product(
+        analysis_center(center)?,
+        product_type(family)?,
+        &objects,
+    )
+    .map_err(engine_error)?;
+    match newest {
+        None => Ok(JsValue::NULL),
+        Some(product) => {
+            let row = NewestPublishedRow {
+                date: format!(
+                    "{:04}-{:02}-{:02}",
+                    product.date.year, product.date.month, product.date.day
+                ),
+                issue: product.issue,
+                filename: product.filename,
+                observed_at: product.observed_at,
+            };
+            serde_wasm_bindgen::to_value(&row).map_err(|error| engine_error(error.to_string()))
+        }
+    }
+}
+
+/// Bounded archive listing URLs answering "newest published issue" for one
+/// center + product family: at most two URLs, newest directory first (or one
+/// whole-tree listing); never a polling loop. Browser and Node callers own
+/// the fetch itself.
+#[wasm_bindgen(js_name = publicationListingUrls)]
+pub fn publication_listing_urls(
+    center: &str,
+    family: &str,
+    year: i32,
+    month: u8,
+    day: u8,
+) -> Result<Vec<String>, JsValue> {
+    let date = ProductDate::new(year, month, day).map_err(engine_error)?;
+    core_data::publication_listing_urls(analysis_center(center)?, product_type(family)?, date)
+        .map_err(engine_error)
+}
+
+/// Whole minutes from a published issue's nominal epoch to a caller-supplied
+/// UTC instant - the "N hours behind nominal" lag number. The verbatim
+/// `observedAt` text carries the archive's own modification claim where one
+/// exists.
+#[wasm_bindgen(js_name = publishedIssueAgeMinutes)]
+#[allow(clippy::too_many_arguments)]
+pub fn published_issue_age_minutes(
+    year: i32,
+    month: u8,
+    day: u8,
+    issue: &str,
+    filename: &str,
+    now_year: i32,
+    now_month: u8,
+    now_day: u8,
+    now_hour: u8,
+    now_minute: u8,
+    now_second: u8,
+) -> Result<i64, JsValue> {
+    let published = core_data::PublishedProduct {
+        date: ProductDate::new(year, month, day).map_err(engine_error)?,
+        issue: issue.to_owned(),
+        filename: filename.to_owned(),
+        observed_at: None,
+    };
+    let now = core_data::ProductDateTime::new(
+        ProductDate::new(now_year, now_month, now_day).map_err(engine_error)?,
+        now_hour,
+        now_minute,
+        now_second,
+    )
+    .map_err(engine_error)?;
+    core_data::published_issue_age_minutes(&published, now).map_err(engine_error)
+}
+
+/// Index of the first cross-line predicted-IONEX candidate whose exact
+/// archive object appears in a listing body, or `null` when neither line is
+/// published. Candidates stay in preference order and keep their own
+/// identities, so the resolved index preserves the line actually served in
+/// provenance.
+#[wasm_bindgen(js_name = resolveFirstPublishedPredictedIonex)]
+pub fn resolve_first_published_predicted_ionex(
+    year: i32,
+    month: u8,
+    day: u8,
+    sample: Option<String>,
+    listing_body: &str,
+) -> Result<Option<usize>, JsValue> {
+    let date = ProductDate::new(year, month, day).map_err(engine_error)?;
+    let candidates =
+        core_data::predicted_ionex_line_candidates(date, sample.as_deref()).map_err(engine_error)?;
+    let objects = core_data::parse_archive_listing(listing_body).map_err(engine_error)?;
+    core_data::resolve_first_published(&candidates, &objects).map_err(engine_error)
 }
 
 /// Return the catalog solution class for one center/product family.

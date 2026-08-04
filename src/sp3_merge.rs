@@ -134,6 +134,7 @@ fn product_identity_output(identity: &ProductIdentity) -> ProductIdentityOutput<
             ProductPublisher::Code => "COD",
             ProductPublisher::Esa => "ESA",
             ProductPublisher::Gfz => "GFZ",
+            ProductPublisher::Whu => "WUM",
         },
         solution_class: match identity.solution {
             SolutionClass::Final => "final",
@@ -141,6 +142,7 @@ fn product_identity_output(identity: &ProductIdentity) -> ProductIdentityOutput<
             SolutionClass::UltraRapid => "ultra_rapid",
             SolutionClass::Predicted => "predicted",
             SolutionClass::Broadcast => "broadcast",
+            SolutionClass::NearRealTime => "near_real_time",
         },
         campaign: match identity.campaign {
             ProductCampaign::Operational => "OPS",

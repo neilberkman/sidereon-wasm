@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.36.0 - 2026-08-04
+
+- Adds the publication-lag resilience surface over core 0.36.0:
+  `predictedIonexLineCandidates` (the opt-in CODE `P1`/`P2` cross-line walk
+  for one map date - never a neighboring day's map, each candidate keeping
+  its own line identity), `parseArchiveListing` (closed dialect detection:
+  an unrecognizable listing body throws, never a best-effort empty result;
+  `observedAt` is the archive-reported modification text, verbatim),
+  `newestPublishedProduct`, `publicationListingUrls` (bounded, at most two
+  URLs, newest directory first), `publishedIssueAgeMinutes`, and
+  `resolveFirstPublishedPredictedIonex`. Browser and Node callers own the
+  fetch itself.
+- The Wuhan MGEX near-real-time orbit line (`wum_nrt`, hourly `WUM0MGXNRT`
+  02D/05M over anonymous FTP, archive-verified from 2024-07-03) flows
+  through the catalog surface, including the `near_real_time` solution
+  class and the `WUM` publisher token in merge provenance.
+- Builds against `sidereon` and `sidereon-core` 0.36.0. The positioning and
+  orbit numerical kernels are unchanged.
+
 ## 0.35.0 - 2026-07-24
 
 - RINEX observation QC now treats a source `INTERVAL` of zero as
