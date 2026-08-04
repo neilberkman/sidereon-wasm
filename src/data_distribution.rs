@@ -294,8 +294,8 @@ pub fn predicted_ionex_line_candidates(
     sample: Option<String>,
 ) -> Result<JsValue, JsValue> {
     let date = ProductDate::new(year, month, day).map_err(engine_error)?;
-    let candidates =
-        core_data::predicted_ionex_line_candidates(date, sample.as_deref()).map_err(engine_error)?;
+    let candidates = core_data::predicted_ionex_line_candidates(date, sample.as_deref())
+        .map_err(engine_error)?;
     let mut rows = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         rows.push(PredictedLineCandidate {
@@ -453,8 +453,8 @@ pub fn resolve_first_published_predicted_ionex(
     listing_body: &str,
 ) -> Result<Option<usize>, JsValue> {
     let date = ProductDate::new(year, month, day).map_err(engine_error)?;
-    let candidates =
-        core_data::predicted_ionex_line_candidates(date, sample.as_deref()).map_err(engine_error)?;
+    let candidates = core_data::predicted_ionex_line_candidates(date, sample.as_deref())
+        .map_err(engine_error)?;
     let objects = core_data::parse_archive_listing(listing_body).map_err(engine_error)?;
     core_data::resolve_first_published(&candidates, &objects).map_err(engine_error)
 }

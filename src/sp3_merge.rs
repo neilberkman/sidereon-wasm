@@ -203,6 +203,7 @@ impl ProductIdentityInput {
             "COD" => ProductPublisher::Code,
             "ESA" => ProductPublisher::Esa,
             "GFZ" => ProductPublisher::Gfz,
+            "WUM" => ProductPublisher::Whu,
             _ => {
                 return Err(type_error(
                     "identity.publisher must be IGS, COD, ESA, or GFZ",
@@ -215,6 +216,7 @@ impl ProductIdentityInput {
             "ultra_rapid" => SolutionClass::UltraRapid,
             "predicted" => SolutionClass::Predicted,
             "broadcast" => SolutionClass::Broadcast,
+            "near_real_time" => SolutionClass::NearRealTime,
             _ => return Err(type_error("identity.solutionClass is unknown")),
         };
         let campaign = match self.campaign.as_str() {

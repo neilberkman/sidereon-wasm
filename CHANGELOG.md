@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.36.1 - 2026-08-04
+
+- Merge-provenance identity inputs now accept the `WUM` publisher token and
+  the `near_real_time` solution class introduced by core 0.36.0, so
+  `wum_nrt` artifacts round-trip through `sp3MergeInputIdentity`. 0.36.0
+  rejected them at identity parsing.
+
 ## 0.36.0 - 2026-08-04
 
 - Adds the publication-lag resilience surface over core 0.36.0:
