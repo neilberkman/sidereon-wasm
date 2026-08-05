@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.36.2 - 2026-08-04
+
+- Builds against `sidereon` and `sidereon-core` 0.36.3: `parseArchiveListing`
+  accepts AIUB whole-tree CSV rows with spaces in unrelated object paths
+  instead of rejecting the entire live 426k-row listing over one such row.
+  Found by downstream 0.36.1 verification. Vendored tides source relabeled
+  to the matching engine version (bytes unchanged).
+
 ## 0.36.1 - 2026-08-04
 
 - Builds against `sidereon` and `sidereon-core` 0.36.1 (version-alignment

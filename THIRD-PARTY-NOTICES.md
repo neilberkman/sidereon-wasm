@@ -78,7 +78,7 @@ official IERS notice is reproduced in
 
 The exact public non-test tide sources distributed in `sidereon-core` 0.35.0
 are included under
-`third_party_source/sidereon-core-0.36.1/tides/`. These copies provide the
+`third_party_source/sidereon-core-0.36.3/tides/`. These copies provide the
 source for every tide routine in the compiled WebAssembly artifact; they are
 not represented as original IERS software or as endorsed by the IERS
 Conventions Center.
