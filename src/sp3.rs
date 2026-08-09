@@ -9,6 +9,9 @@ use sidereon_core::astro::time::{Instant, InstantRepr};
 use sidereon_core::constants::{J2000_JD, SECONDS_PER_DAY};
 use sidereon_core::data::ProductDate;
 use sidereon_core::ephemeris::{
+    check_continuity, ContinuityDefect, ContinuityOptions, OrbitClass, SpeedBound,
+};
+use sidereon_core::ephemeris::{
     align_clock_reference as core_align_clock_reference,
     clock_reference_offset as core_clock_reference_offset, parse_exact_sp3 as core_parse_exact_sp3,
     precise_interpolant_store_checksum64 as core_precise_interpolant_store_checksum64,
@@ -442,6 +445,117 @@ impl Sp3 {
     #[wasm_bindgen(js_name = epochsJ2000Seconds)]
     pub fn epochs_j2000_seconds(&self) -> Vec<f64> {
         self.inner.epochs_j2000_seconds()
+    }
+
+    /// Attest that this product is physically continuous, or report each
+    /// violation.
+    ///
+    /// A merged product is assembled per satellite and epoch from several
+    /// analysis centers, which is exactly the operation that can splice two
+    /// physically inconsistent arcs together while every input stays
+    /// individually well-formed. Two checks run, with different jobs: a
+    /// physical earth-fixed speed gate whose bound is a true upper bound for
+    /// the orbit class, so it cannot false-positive and catches gross
+    /// corruption; and a hold-out interpolation residual, which supplies the
+    /// sensitivity a speed gate structurally cannot - adjacent GNSS MEO epochs
+    /// are hundreds of kilometres apart, so a metre-scale splice moves the
+    /// implied speed by a fraction of a percent.
+    ///
+    /// `orbitClass` is `"meo_gnss"` (default), `"geosynchronous"`, `"leo"`, or
+    /// `null` to disable the speed gate. `residualToleranceM` enables the
+    /// residual check; `null` disables it.
+    ///
+    /// Returns `{ attested, defects, pairsChecked, residualsChecked,
+    /// residualsSkipped }`. Reports rather than refuses: whether a product with
+    /// defects is acceptable is the caller's decision.
+    #[wasm_bindgen(js_name = checkContinuity)]
+    pub fn check_continuity(
+        &self,
+        orbit_class: Option<String>,
+        residual_tolerance_m: Option<f64>,
+    ) -> Result<JsValue, JsValue> {
+        let speed_bound = match orbit_class.as_deref() {
+            None => None,
+            Some("meo_gnss") => Some(SpeedBound::OrbitClass(OrbitClass::MeoGnss)),
+            Some("geosynchronous") => Some(SpeedBound::OrbitClass(OrbitClass::Geosynchronous)),
+            Some("leo") => Some(SpeedBound::OrbitClass(OrbitClass::Leo)),
+            Some(other) => {
+                return Err(JsValue::from_str(&format!("unknown orbit class: {other}")));
+            }
+        };
+        let report = check_continuity(
+            &self.inner.precise_ephemeris_samples(),
+            &ContinuityOptions {
+                speed_bound,
+                residual_tolerance_m,
+            },
+        );
+
+        let defects: Vec<ContinuityDefectJs> = report
+            .defects
+            .iter()
+            .map(|defect| {
+                let (kind, from_s, to_s, magnitude, bound) = match defect {
+                    ContinuityDefect::DuplicateEpoch {
+                        epoch_j2000_s,
+                        occurrences,
+                        ..
+                    } => (
+                        "duplicate_epoch",
+                        Some(*epoch_j2000_s),
+                        Some(*epoch_j2000_s),
+                        Some(*occurrences as f64),
+                        None,
+                    ),
+                    ContinuityDefect::SingleSampleSeries { .. } => {
+                        ("single_sample_series", None, None, None, None)
+                    }
+                    ContinuityDefect::SpeedBound {
+                        from_j2000_s,
+                        to_j2000_s,
+                        implied_speed_m_s,
+                        bound_m_s,
+                        ..
+                    } => (
+                        "speed_bound",
+                        Some(*from_j2000_s),
+                        Some(*to_j2000_s),
+                        Some(*implied_speed_m_s),
+                        Some(*bound_m_s),
+                    ),
+                    ContinuityDefect::HoldOutResidual {
+                        preceding_j2000_s,
+                        epoch_j2000_s,
+                        residual_m,
+                        tolerance_m,
+                        ..
+                    } => (
+                        "hold_out_residual",
+                        Some(*preceding_j2000_s),
+                        Some(*epoch_j2000_s),
+                        Some(*residual_m),
+                        Some(*tolerance_m),
+                    ),
+                };
+                ContinuityDefectJs {
+                    kind: kind.to_string(),
+                    satellite: defect.satellite().to_string(),
+                    from_j2000_s: from_s,
+                    to_j2000_s: to_s,
+                    magnitude,
+                    bound,
+                }
+            })
+            .collect();
+
+        let out = ContinuityReportJs {
+            attested: report.attested(),
+            defects,
+            pairs_checked: report.pairs_checked,
+            residuals_checked: report.residuals_checked,
+            residuals_skipped: report.residuals_skipped,
+        };
+        serde_wasm_bindgen::to_value(&out).map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
     /// Interpolate `satellite`'s position and clock at each query epoch.
@@ -924,4 +1038,28 @@ impl Sp3State {
     pub fn orbit_predicted(&self) -> bool {
         self.orbit_predicted
     }
+}
+
+
+/// One continuity defect, as returned by [`Sp3.checkContinuity`].
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContinuityDefectJs {
+    kind: String,
+    satellite: String,
+    from_j2000_s: Option<f64>,
+    to_j2000_s: Option<f64>,
+    magnitude: Option<f64>,
+    bound: Option<f64>,
+}
+
+/// Continuity verdict for one product.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContinuityReportJs {
+    attested: bool,
+    defects: Vec<ContinuityDefectJs>,
+    pairs_checked: usize,
+    residuals_checked: usize,
+    residuals_skipped: usize,
 }
