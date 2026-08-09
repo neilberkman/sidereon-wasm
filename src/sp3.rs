@@ -9,9 +9,6 @@ use sidereon_core::astro::time::{Instant, InstantRepr};
 use sidereon_core::constants::{J2000_JD, SECONDS_PER_DAY};
 use sidereon_core::data::ProductDate;
 use sidereon_core::ephemeris::{
-    check_continuity, ContinuityDefect, ContinuityOptions, OrbitClass, SpeedBound,
-};
-use sidereon_core::ephemeris::{
     align_clock_reference as core_align_clock_reference,
     clock_reference_offset as core_clock_reference_offset, parse_exact_sp3 as core_parse_exact_sp3,
     precise_interpolant_store_checksum64 as core_precise_interpolant_store_checksum64,
@@ -20,6 +17,9 @@ use sidereon_core::ephemeris::{
     ExactSp3Request as CoreExactSp3Request,
     MmapPreciseEphemerisInterpolant as CorePreciseInterpolantArtifact,
     PreciseInterpolantStoreError as CorePreciseInterpolantStoreError, Sp3 as CoreSp3,
+};
+use sidereon_core::ephemeris::{
+    check_continuity, ContinuityDefect, ContinuityOptions, OrbitClass, SpeedBound,
 };
 use sidereon_core::Error as CoreError;
 use sidereon_core::GnssSatelliteId;
@@ -1039,7 +1039,6 @@ impl Sp3State {
         self.orbit_predicted
     }
 }
-
 
 /// One continuity defect, as returned by [`Sp3.checkContinuity`].
 #[derive(serde::Serialize)]
