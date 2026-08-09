@@ -13,7 +13,15 @@ permissions:
   id-token: write   # required for OIDC trusted publishing + provenance
 
 jobs:
+  # The full CI bar, run against the tagged commit. The release workflow used
+  # to run only a subset (no lint, no cargo fmt), so a tag could publish from
+  # a commit that never passed the gates on main - which is exactly what
+  # happened for 0.37.0.
+  gate:
+    uses: ./.github/workflows/ci.yml
+
   publish:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
