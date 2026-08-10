@@ -24,6 +24,22 @@ pub fn range_error(message: &str) -> JsValue {
     js_sys::RangeError::new(message).into()
 }
 
+/// Read an exact unsigned 64-bit integer from a JavaScript `bigint`.
+///
+/// Keeping the public parameter as `JsValue` lets the binding reject negative
+/// and overflowing values instead of applying the wrapping conversion used by
+/// wasm-bindgen's direct `u64` ABI.
+pub fn u64_bigint(value: JsValue, field: &str) -> Result<u64, JsValue> {
+    if !value.is_bigint() {
+        return Err(type_error(&format!("{field} must be a bigint")));
+    }
+    serde_wasm_bindgen::from_value(value).map_err(|_| {
+        range_error(&format!(
+            "{field} must be between 0n and 18446744073709551615n"
+        ))
+    })
+}
+
 /// Decode a caller byte buffer as UTF-8 text, or a `TypeError`. Every RINEX
 /// surface parses text, so the bytes the JS side hands in (a file read as a
 /// `Uint8Array`) must be valid UTF-8.

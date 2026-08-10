@@ -419,7 +419,10 @@ signal-analysis, and terrain protocols.
 A few conventions to know: positions and state arrays cross as
 `Float64Array` (multi-epoch arrays are flat row-major, `3 * epochCount`); SGP4
 epoch grids are `BigInt64Array` of unix microseconds; SP3 query epochs are plain
-numbers in seconds since J2000.
+numbers in seconds since J2000. Terrain-store and precise-interpolant 64-bit
+checksums cross as JavaScript `bigint` values. Their attested Node path-open
+methods require a `bigint` in the unsigned 64-bit range; `digestProvenance`
+reports `"attested"` until `verify()` succeeds, then reports `"verified"`.
 
 ## Live demo
 

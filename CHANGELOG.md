@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.39.0 - 2026-08-10
+
+### Added
+
+- `MmapTerrain.fromPathAttested` / `PreciseInterpolantArtifact` attested
+  opens (Node), `digestProvenance` getters, and `verify()` escalation,
+  mirroring the engine's attested-open contract. Claims are u64 BigInt;
+  malformed claims throw, never silently fall back to hashing.
+
+### Changed
+
+- Engine pinned to `sidereon-core` 0.39.0.
+
 ## 0.38.0 - 2026-08-09
 
 ### Changed

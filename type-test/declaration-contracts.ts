@@ -45,6 +45,27 @@ void nodeContentStartOffset;
 void webSupportedSamples;
 void nodeSupportedSamples;
 
+const webTerrainAttested: WebBindings.MmapTerrain = WebBindings.MmapTerrain.fromPathAttested(
+  "terrain.tmm",
+  0xffff_ffff_ffff_ffffn,
+);
+const nodeTerrainAttested: NodeBindings.MmapTerrain = NodeBindings.MmapTerrain.fromPathAttested(
+  "terrain.tmm",
+  0xffff_ffff_ffff_ffffn,
+);
+const webPreciseAttested: WebBindings.PreciseInterpolantArtifact =
+  WebBindings.PreciseInterpolantArtifact.fromPathAttested("precise.spi", 1n);
+const nodePreciseAttested: NodeBindings.PreciseInterpolantArtifact =
+  NodeBindings.PreciseInterpolantArtifact.fromPathAttested("precise.spi", 1n);
+const webTerrainDigestProvenance: "verified" | "attested" = webTerrainAttested.digestProvenance;
+const nodeTerrainDigestProvenance: "verified" | "attested" = nodeTerrainAttested.digestProvenance;
+const webPreciseDigestProvenance: "verified" | "attested" = webPreciseAttested.digestProvenance;
+const nodePreciseDigestProvenance: "verified" | "attested" = nodePreciseAttested.digestProvenance;
+void webTerrainDigestProvenance;
+void nodeTerrainDigestProvenance;
+void webPreciseDigestProvenance;
+void nodePreciseDigestProvenance;
+
 type _WebNmeaEpochsAreNotFusionEpochs = Assert<IsAny<WebBindings.NmeaParseResult["epochs"]>>;
 type _NodeNmeaEpochsAreNotFusionEpochs = Assert<IsAny<NodeBindings.NmeaParseResult["epochs"]>>;
 type _WebTrackEpochsAreNotFusionEpochs = Assert<IsAny<WebBindings.TrackRtsHistory["epochs"]>>;

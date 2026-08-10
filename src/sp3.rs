@@ -21,11 +21,12 @@ use sidereon_core::ephemeris::{
 use sidereon_core::ephemeris::{
     check_continuity, ContinuityDefect, ContinuityOptions, OrbitClass, SpeedBound,
 };
+use sidereon_core::DigestProvenance as CoreDigestProvenance;
 use sidereon_core::Error as CoreError;
 use sidereon_core::GnssSatelliteId;
 
 use crate::data_distribution::GnssProductIdentity;
-use crate::error::{engine_error, range_error, type_error};
+use crate::error::{engine_error, range_error, type_error, u64_bigint};
 use crate::spp::{self, SppSolution};
 
 /// Parse a satellite token (e.g. `"G01"`) into a typed id, or a `TypeError`.
@@ -94,6 +95,10 @@ struct PreciseInterpolantArtifactErrorDetail {
     expected: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     found: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claimed: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    declared: Option<String>,
 }
 
 impl PreciseInterpolantArtifactErrorDetail {
@@ -108,6 +113,8 @@ impl PreciseInterpolantArtifactErrorDetail {
             satellite_id: None,
             expected: None,
             found: None,
+            claimed: None,
+            declared: None,
         }
     }
 }
@@ -126,6 +133,7 @@ fn precise_artifact_error_name(error: PreciseInterpolantArtifactError) -> &'stat
         PreciseInterpolantArtifactError::DuplicateSatellite => "DuplicateSatellite",
         PreciseInterpolantArtifactError::Checksum => "Checksum",
         PreciseInterpolantArtifactError::SatelliteChecksum => "SatelliteChecksum",
+        PreciseInterpolantArtifactError::AttestedChecksumMismatch => "AttestedChecksumMismatch",
     }
 }
 
@@ -163,6 +171,10 @@ fn precise_artifact_error(error: CorePreciseInterpolantStoreError) -> JsValue {
             detail.expected = Some(hex_u64(*expected));
             detail.found = Some(hex_u64(*found));
         }
+        CorePreciseInterpolantStoreError::AttestedChecksumMismatch { claimed, declared } => {
+            detail.claimed = Some(hex_u64(*claimed));
+            detail.declared = Some(hex_u64(*declared));
+        }
     }
     typed_artifact_error(name, detail.message.clone(), &detail)
 }
@@ -187,6 +199,8 @@ pub enum PreciseInterpolantArtifactError {
     Checksum,
     /// A satellite payload checksum did not match its index record.
     SatelliteChecksum,
+    /// A caller claim did not match the checksum declared by the header.
+    AttestedChecksumMismatch,
 }
 
 impl From<&CorePreciseInterpolantStoreError> for PreciseInterpolantArtifactError {
@@ -204,6 +218,9 @@ impl From<&CorePreciseInterpolantStoreError> for PreciseInterpolantArtifactError
             CorePreciseInterpolantStoreError::DuplicateSatellite { .. } => Self::DuplicateSatellite,
             CorePreciseInterpolantStoreError::Checksum { .. } => Self::Checksum,
             CorePreciseInterpolantStoreError::SatelliteChecksum { .. } => Self::SatelliteChecksum,
+            CorePreciseInterpolantStoreError::AttestedChecksumMismatch { .. } => {
+                Self::AttestedChecksumMismatch
+            }
         }
     }
 }
@@ -865,16 +882,76 @@ pub struct PreciseInterpolantArtifact {
 
 #[wasm_bindgen]
 impl PreciseInterpolantArtifact {
+    /// Read a precise-interpolant artifact from host I/O and open it in memory.
+    ///
+    /// Browser runtimes should use [`openPreciseInterpolantArtifact`] with
+    /// fetched bytes.
+    #[wasm_bindgen(js_name = fromPath)]
+    pub fn from_path(path: &str) -> Result<PreciseInterpolantArtifact, JsValue> {
+        let inner =
+            CorePreciseInterpolantArtifact::from_path(path).map_err(precise_artifact_error)?;
+        Ok(Self { inner })
+    }
+
+    /// Read a precise-interpolant artifact using a caller-attested checksum.
+    ///
+    /// `claimedChecksum64` is an exact JavaScript `bigint` in the unsigned
+    /// 64-bit range. It must equal the checksum declared by the artifact
+    /// header; a mismatch fails immediately without hashing the payload.
+    #[wasm_bindgen(js_name = fromPathAttested)]
+    pub fn from_path_attested(
+        path: &str,
+        claimed_checksum64: JsValue,
+    ) -> Result<PreciseInterpolantArtifact, JsValue> {
+        let claimed_checksum64 = u64_bigint(claimed_checksum64, "claimedChecksum64")?;
+        let inner = CorePreciseInterpolantArtifact::from_path_attested(path, claimed_checksum64)
+            .map_err(precise_artifact_error)?;
+        Ok(Self { inner })
+    }
+
+    /// Internal byte bridge used by the generated Node path adapter.
+    #[doc(hidden)]
+    #[wasm_bindgen(js_name = __fromBytesAttested)]
+    pub fn from_bytes_attested(
+        bytes: &[u8],
+        claimed_checksum64: JsValue,
+    ) -> Result<PreciseInterpolantArtifact, JsValue> {
+        let claimed_checksum64 = u64_bigint(claimed_checksum64, "claimedChecksum64")?;
+        let inner =
+            CorePreciseInterpolantArtifact::from_vec_attested(bytes.to_vec(), claimed_checksum64)
+                .map_err(precise_artifact_error)?;
+        Ok(Self { inner })
+    }
+
     /// Number of bytes retained by this artifact handle.
     #[wasm_bindgen(getter, js_name = byteLength)]
     pub fn byte_length(&self) -> usize {
         self.inner.as_bytes().len()
     }
 
-    /// File-level artifact checksum.
+    /// File-level artifact checksum as a JavaScript `bigint`. An attested
+    /// handle returns its caller-supplied claim without hashing.
     #[wasm_bindgen(getter)]
     pub fn checksum64(&self) -> u64 {
         self.inner.checksum64()
+    }
+
+    /// Checksum provenance: `"verified"` or `"attested"`.
+    #[wasm_bindgen(getter, js_name = digestProvenance)]
+    pub fn digest_provenance(&self) -> String {
+        match self.inner.digest_provenance() {
+            CoreDigestProvenance::Verified => "verified",
+            CoreDigestProvenance::Attested => "attested",
+        }
+        .to_string()
+    }
+
+    /// Recompute and verify the file-level and per-satellite checksums.
+    ///
+    /// Success changes [`PreciseInterpolantArtifact.digestProvenance`] to
+    /// `"verified"`.
+    pub fn verify(&mut self) -> Result<(), JsValue> {
+        self.inner.verify().map_err(precise_artifact_error)
     }
 
     /// Artifact time scale label from the stored epoch axis.

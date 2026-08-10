@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
 const OVERLAY_MARKER = "/* sidereon typed JsValue overlay */";
+const NODE_PATH_ADAPTER_MARKER = "/* sidereon Node path-open adapters */";
 
 const overlay = `${OVERLAY_MARKER}
 export type Vec3 = [number, number, number] | Float64Array;
@@ -768,6 +769,15 @@ const classMemberReplacements = [
     "MmapTerrain",
     [
       [
+        "static __fromBytesAttested(bytes: Uint8Array, claimed_checksum64: any): MmapTerrain;",
+        "private static fromBytesAttestedInternal(bytes: Uint8Array, claimed_checksum64: any): MmapTerrain;",
+      ],
+      [
+        "static fromPathAttested(path: string, claimed_checksum64: any): MmapTerrain;",
+        "static fromPathAttested(path: string, claimed_checksum64: bigint): MmapTerrain;",
+      ],
+      ["readonly digestProvenance: string;", 'readonly digestProvenance: "verified" | "attested";'],
+      [
         "heightBatch(points: any, options: any): any;",
         "heightBatch(points: TerrainPoint[], options?: TerrainLookupOptions | null): TerrainHeightBatchResult[];",
       ],
@@ -791,6 +801,20 @@ const classMemberReplacements = [
         "orthometricHeightMWithOptions(longitude_deg: number, latitude_deg: number, options: any): OrthometricHeightM;",
         "orthometricHeightMWithOptions(longitude_deg: number, latitude_deg: number, options?: TerrainLookupOptions | null): OrthometricHeightM;",
       ],
+    ],
+  ],
+  [
+    "PreciseInterpolantArtifact",
+    [
+      [
+        "static __fromBytesAttested(bytes: Uint8Array, claimed_checksum64: any): PreciseInterpolantArtifact;",
+        "private static fromBytesAttestedInternal(bytes: Uint8Array, claimed_checksum64: any): PreciseInterpolantArtifact;",
+      ],
+      [
+        "static fromPathAttested(path: string, claimed_checksum64: any): PreciseInterpolantArtifact;",
+        "static fromPathAttested(path: string, claimed_checksum64: bigint): PreciseInterpolantArtifact;",
+      ],
+      ["readonly digestProvenance: string;", 'readonly digestProvenance: "verified" | "attested";'],
     ],
   ],
 ];
@@ -862,10 +886,77 @@ function patchDeclarations(path) {
   return text;
 }
 
+function patchNodePathAdapters(path) {
+  const text = readFileSync(path, "utf8");
+  const markerCount = occurrenceCount(text, NODE_PATH_ADAPTER_MARKER);
+  if (markerCount === 1) {
+    return text;
+  }
+  if (markerCount !== 0) {
+    throw new Error(
+      `${path}: expected zero or one Node path adapter markers, found ${markerCount}`,
+    );
+  }
+  for (const className of ["MmapTerrain", "PreciseInterpolantArtifact"]) {
+    if (!text.includes(`class ${className} {`)) {
+      throw new Error(`${path}: missing ${className} for Node path adapters`);
+    }
+  }
+  return `${text}
+${NODE_PATH_ADAPTER_MARKER}
+const __sidereonMaxU64 = 0xffff_ffff_ffff_ffffn;
+const __mmapTerrainFromBytesAttested = MmapTerrain.__fromBytesAttested;
+const __preciseInterpolantFromBytesAttested = PreciseInterpolantArtifact.__fromBytesAttested;
+
+function __sidereonClaimedChecksum64(value) {
+    if (typeof value !== 'bigint') {
+        throw new TypeError('claimedChecksum64 must be a bigint');
+    }
+    if (value < 0n || value > __sidereonMaxU64) {
+        throw new RangeError('claimedChecksum64 must be between 0n and 18446744073709551615n');
+    }
+    return value;
+}
+
+function __sidereonReadArtifactPath(path) {
+    try {
+        return require('fs').readFileSync(path);
+    } catch (cause) {
+        const reason = cause instanceof Error ? cause.message : String(cause);
+        const message = \`\${path} failed: \${reason}\`;
+        const error = new Error(message);
+        error.name = 'Io';
+        error.kind = 'Io';
+        error.detail = { name: 'Io', message, path: String(path) };
+        throw error;
+    }
+}
+
+MmapTerrain.fromPath = function(path) {
+    return MmapTerrain.fromBytes(__sidereonReadArtifactPath(path));
+};
+MmapTerrain.fromPathAttested = function(path, claimedChecksum64) {
+    const claim = __sidereonClaimedChecksum64(claimedChecksum64);
+    return __mmapTerrainFromBytesAttested(__sidereonReadArtifactPath(path), claim);
+};
+PreciseInterpolantArtifact.fromPath = function(path) {
+    return openPreciseInterpolantArtifact(__sidereonReadArtifactPath(path));
+};
+PreciseInterpolantArtifact.fromPathAttested = function(path, claimedChecksum64) {
+    const claim = __sidereonClaimedChecksum64(claimedChecksum64);
+    return __preciseInterpolantFromBytesAttested(__sidereonReadArtifactPath(path), claim);
+};
+delete MmapTerrain.__fromBytesAttested;
+delete PreciseInterpolantArtifact.__fromBytesAttested;
+`;
+}
+
 const declarationPaths = ["pkg/sidereon.d.ts", "pkg-node/sidereon.d.ts"];
 const patchedDeclarations = declarationPaths.map((path) => [path, patchDeclarations(path)]);
+const patchedNodeJs = patchNodePathAdapters("pkg-node/sidereon.js");
 
 writeFileSync("pkg-node/package.json", JSON.stringify({ type: "commonjs" }, null, 2) + "\n");
 for (const [path, text] of patchedDeclarations) {
   writeFileSync(path, text);
 }
+writeFileSync("pkg-node/sidereon.js", patchedNodeJs);

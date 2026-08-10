@@ -21,8 +21,9 @@ use sidereon_core::terrain_store::{
     TerrainGeoidModel as CoreTerrainGeoidModel, TerrainStoreError as CoreTerrainStoreError,
     TerrainStoreTileIndex as CoreTerrainStoreTileIndex, VerticalDatum as CoreVerticalDatum,
 };
+use sidereon_core::DigestProvenance as CoreDigestProvenance;
 
-use crate::error::{engine_error, type_error};
+use crate::error::{engine_error, type_error, u64_bigint};
 
 const MISSING_EGM96_DAC_REMEDIATION: &str =
     "load WW15MGH.DAC with Egm96FifteenMinuteGeoid.fromWw15mghDacBytes or use fromWw15mghDacPath where host I/O is available";
@@ -96,9 +97,9 @@ struct TerrainStoreErrorDetail {
     #[serde(skip_serializing_if = "Option::is_none")]
     lon_index: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    expected: Option<u64>,
+    expected: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    found: Option<u64>,
+    found: Option<String>,
 }
 
 impl TerrainStoreErrorDetail {
@@ -253,8 +254,15 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
             let mut detail = TerrainStoreErrorDetail::new("Checksum", message.clone());
             detail.lat_index = Some(lat_index);
             detail.lon_index = Some(lon_index);
-            detail.expected = Some(expected);
-            detail.found = Some(found);
+            detail.expected = Some(format!("{expected:#x}"));
+            detail.found = Some(format!("{found:#x}"));
+            detail
+        }
+        CoreTerrainStoreError::AttestedChecksumMismatch { expected, found } => {
+            let mut detail =
+                TerrainStoreErrorDetail::new("AttestedChecksumMismatch", message.clone());
+            detail.expected = Some(format!("{expected:#x}"));
+            detail.found = Some(format!("{found:#x}"));
             detail
         }
     };
@@ -330,6 +338,8 @@ pub enum TerrainStoreError {
     DuplicateTile,
     /// A tile payload checksum did not match its index record.
     Checksum,
+    /// A caller-attested full-store checksum did not match the bytes opened.
+    AttestedChecksumMismatch,
 }
 
 /// Terrain datum conversion and optional geoid-grid loading error variants.
@@ -654,6 +664,36 @@ impl MmapTerrain {
         Ok(Self { inner })
     }
 
+    /// Read a terrain store file using a caller-attested full-store checksum.
+    ///
+    /// `claimedChecksum64` is an exact JavaScript `bigint` in the unsigned
+    /// 64-bit range. The claim is returned by [`MmapTerrain.checksum64`] until
+    /// [`MmapTerrain.verify`] succeeds. Browser runtimes should use an
+    /// application-provided host-I/O bridge.
+    #[wasm_bindgen(js_name = fromPathAttested)]
+    pub fn from_path_attested(
+        path: &str,
+        claimed_checksum64: JsValue,
+    ) -> Result<MmapTerrain, JsValue> {
+        let claimed_checksum64 = u64_bigint(claimed_checksum64, "claimedChecksum64")?;
+        let inner = CoreMmapTerrain::from_path_attested(path, claimed_checksum64)
+            .map_err(terrain_store_error)?;
+        Ok(Self { inner })
+    }
+
+    /// Internal byte bridge used by the generated Node path adapter.
+    #[doc(hidden)]
+    #[wasm_bindgen(js_name = __fromBytesAttested)]
+    pub fn from_bytes_attested(
+        bytes: &[u8],
+        claimed_checksum64: JsValue,
+    ) -> Result<MmapTerrain, JsValue> {
+        let claimed_checksum64 = u64_bigint(claimed_checksum64, "claimedChecksum64")?;
+        let inner = CoreMmapTerrain::from_vec_attested(bytes.to_vec(), claimed_checksum64)
+            .map_err(terrain_store_error)?;
+        Ok(Self { inner })
+    }
+
     /// Terrain height in ORTHOMETRIC metres at `(longitudeDeg, latitudeDeg)`.
     ///
     /// Longitude and latitude are degrees. The lookup uses bilinear
@@ -846,10 +886,29 @@ impl MmapTerrain {
         datum_from_core(self.inner.vertical_datum())
     }
 
-    /// FNV-1a checksum of the full terrain store byte span.
+    /// FNV-1a checksum of the full terrain store byte span as a JavaScript
+    /// `bigint`. An attested handle returns its caller-supplied claim without
+    /// hashing.
     #[wasm_bindgen]
     pub fn checksum64(&self) -> u64 {
         self.inner.checksum64()
+    }
+
+    /// Checksum provenance: `"verified"` or `"attested"`.
+    #[wasm_bindgen(getter, js_name = digestProvenance)]
+    pub fn digest_provenance(&self) -> String {
+        match self.inner.digest_provenance() {
+            CoreDigestProvenance::Verified => "verified",
+            CoreDigestProvenance::Attested => "attested",
+        }
+        .to_string()
+    }
+
+    /// Recompute and verify the store checksums.
+    ///
+    /// Success changes [`MmapTerrain.digestProvenance`] to `"verified"`.
+    pub fn verify(&mut self) -> Result<(), JsValue> {
+        self.inner.verify().map_err(terrain_store_error)
     }
 
     /// Canonical store bytes for this parsed terrain store.
