@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.38.0 - 2026-08-09
+
+### Changed
+
+- Engine pinned to `sidereon-core` 0.38.0.
+
+  The engine's new `mmap` feature is deliberately **not** enabled here:
+  memory mapping has no meaning in a WebAssembly sandbox, which has no
+  filesystem to map. The wasm interface is unaffected by the change.
+
 ## 0.37.0 - 2026-08-09
 
 ### Added
