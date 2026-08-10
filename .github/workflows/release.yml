@@ -30,6 +30,10 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+
       - uses: jetli/wasm-pack-action@v0.4.0
         with:
           version: latest

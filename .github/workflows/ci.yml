@@ -45,7 +45,10 @@ jobs:
           targets: wasm32-unknown-unknown
           components: clippy, rustfmt
 
+      # shared-key so the tag-triggered release gate reuses push CI's cache.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
 
       - uses: jetli/wasm-pack-action@v0.4.0
         with:
