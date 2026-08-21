@@ -98,7 +98,9 @@ fn vertices_2d_from_flat(vertices: &[f64]) -> Result<Vec<Wgs84Geodetic>, JsValue
         return Err(type_error("vertices must contain at least one row"));
     }
     vertices
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|row| geodetic(row[0], row[1], 0.0))
         .collect()
 }
@@ -113,7 +115,9 @@ fn vertices_3d_from_flat(vertices: &[f64]) -> Result<Vec<Wgs84Geodetic>, JsValue
         return Err(type_error("vertices must contain at least one row"));
     }
     vertices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|row| geodetic(row[0], row[1], row[2]))
         .collect()
 }

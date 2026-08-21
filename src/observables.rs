@@ -1490,7 +1490,9 @@ fn iq_samples(name: &str, iq: &[f64]) -> Result<Vec<IqSample>, JsValue> {
         )));
     }
     Ok(iq
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| IqSample::new(c[0], c[1]))
         .collect())
 }

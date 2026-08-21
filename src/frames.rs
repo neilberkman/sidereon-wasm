@@ -847,7 +847,9 @@ pub fn leap_seconds_batch(dates: &[i32]) -> Result<Vec<f64>, JsValue> {
         ));
     }
     Ok(dates
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|d| leap_seconds(d[0], d[1], d[2]))
         .collect())
 }

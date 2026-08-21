@@ -55,7 +55,7 @@ pub fn rows3(name: &str, values: &[f64], require_finite: bool) -> Result<Vec<[f6
         )));
     }
     let mut rows = Vec::with_capacity(values.len() / 3);
-    for chunk in values.chunks_exact(3) {
+    for chunk in values.as_chunks::<3>().0 {
         if require_finite && chunk.iter().any(|x| !x.is_finite()) {
             return Err(range_error(&format!(
                 "{name} must contain only finite values"

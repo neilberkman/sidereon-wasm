@@ -34,7 +34,9 @@ fn points_from_flat(name: &str, values: &[f64]) -> Result<Vec<(f64, f64)>, JsVal
         )));
     }
     Ok(values
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (pair[0], pair[1]))
         .collect())
 }
