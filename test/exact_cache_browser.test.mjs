@@ -5,7 +5,11 @@ import test from "node:test";
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 
 import { initSync, productIdentity } from "../pkg/sidereon.js";
-import { BrowserExactProductCache } from "../exact-cache.js";
+import {
+  BrowserExactProductCache,
+  ExactCacheSingleFlightOptionsError,
+  ExactCacheSingleFlightTimeoutError,
+} from "../exact-cache.js";
 
 initSync({
   module: readFileSync(new URL("../pkg/sidereon_bg.wasm", import.meta.url)),
@@ -63,6 +67,23 @@ Object.defineProperty(globalThis.navigator, "locks", {
   configurable: true,
   value: new TestLockManager(),
 });
+
+let databaseSequence = 0;
+
+function databaseName(label) {
+  databaseSequence += 1;
+  return `sidereon-exact-cache-${label}-${process.pid}-${Date.now()}-${databaseSequence}`;
+}
+
+function exactCacheFixture() {
+  return {
+    identity: productIdentity("cod_prd1", "ionex", 2026, 7, 16),
+    source: "direct",
+    product: new TextEncoder().encode("validated IONEX"),
+    archive: new TextEncoder().encode("distributor archive"),
+    provenance: new TextEncoder().encode('{"source":"direct"}'),
+  };
+}
 
 test("browser cache coordinates one acquisition and rejects stored-byte corruption", async () => {
   const name = `sidereon-exact-cache-test-${process.pid}-${Date.now()}`;
@@ -155,5 +176,99 @@ test("browser cache coordinates one acquisition and rejects stored-byte corrupti
   await assert.rejects(first.read(identity, source), /identity, source, or bytes/);
   first.close();
   second.close();
+  await idbRequest(indexedDB.deleteDatabase(name));
+});
+
+test("single-flight returns a pre-committed hit without entering acquisition", async () => {
+  const name = databaseName("single-flight-hit");
+  const cache = await BrowserExactProductCache.open({ name });
+  const { identity, source, product, archive, provenance } = exactCacheFixture();
+  const published = await cache.withLock(identity, source, (locked) =>
+    locked.publish(product, archive, provenance),
+  );
+  let fetchInvoked = false;
+
+  const opened = await cache.openSingleFlight(identity, source);
+  if (opened.kind === "owner") {
+    fetchInvoked = true;
+    await opened.owner.abandon();
+  }
+
+  assert.equal(opened.kind, "hit");
+  assert.equal(fetchInvoked, false);
+  assert.equal(opened.entry.entryId, published.entryId);
+  assert.deepEqual(opened.entry.product, product);
+  assert.deepEqual(opened.entry.archive, archive);
+  assert.deepEqual(opened.entry.provenance, provenance);
+
+  cache.close();
+  await idbRequest(indexedDB.deleteDatabase(name));
+});
+
+test("single-flight owner publishes and the next open returns a hit", async () => {
+  const name = databaseName("single-flight-owner");
+  const first = await BrowserExactProductCache.open({ name });
+  const second = await BrowserExactProductCache.open({ name });
+  const { identity, source, product, archive, provenance } = exactCacheFixture();
+
+  const opened = await first.openSingleFlight(identity, source);
+  assert.equal(opened.kind, "owner");
+  await opened.owner.heartbeat();
+  const published = await opened.owner.publish(product, archive, provenance);
+
+  const reused = await second.openSingleFlight(identity, source);
+  assert.equal(reused.kind, "hit");
+  assert.equal(reused.entry.entryId, published.entryId);
+  assert.deepEqual(reused.entry.product, product);
+
+  first.close();
+  second.close();
+  await idbRequest(indexedDB.deleteDatabase(name));
+});
+
+test("single-flight maps a bounded wait on a held owner to its timeout error", async () => {
+  const name = databaseName("single-flight-timeout");
+  const first = await BrowserExactProductCache.open({ name });
+  const second = await BrowserExactProductCache.open({ name });
+  const { identity, source } = exactCacheFixture();
+  const options = {
+    pollIntervalMs: 1,
+    heartbeatIntervalMs: 20,
+    livenessTimeoutMs: 50,
+    waitTimeoutMs: 5,
+  };
+
+  const held = await first.openSingleFlight(identity, source, options);
+  assert.equal(held.kind, "owner");
+  await assert.rejects(
+    second.openSingleFlight(identity, source, options),
+    ExactCacheSingleFlightTimeoutError,
+  );
+  await held.owner.abandon();
+
+  first.close();
+  second.close();
+  await idbRequest(indexedDB.deleteDatabase(name));
+});
+
+test("single-flight rejects invalid duration options with its typed error", async () => {
+  const name = databaseName("single-flight-options");
+  const cache = await BrowserExactProductCache.open({ name });
+  const { identity, source, product, archive, provenance } = exactCacheFixture();
+  await cache.withLock(identity, source, (locked) => locked.publish(product, archive, provenance));
+
+  for (const options of [
+    { pollIntervalMs: 0 },
+    { heartbeatIntervalMs: 10, livenessTimeoutMs: 10 },
+    { waitTimeoutMs: Number.NaN },
+    { pollIntervalMs: "soon" },
+  ]) {
+    await assert.rejects(
+      cache.openSingleFlight(identity, source, options),
+      ExactCacheSingleFlightOptionsError,
+    );
+  }
+
+  cache.close();
   await idbRequest(indexedDB.deleteDatabase(name));
 });

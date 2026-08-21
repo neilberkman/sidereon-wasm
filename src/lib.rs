@@ -40,6 +40,7 @@ mod error;
 mod error_metrics;
 mod estimation;
 mod events;
+mod exact_cache;
 mod force_model_input;
 mod forces;
 mod frame_catalog;
@@ -185,6 +186,7 @@ pub use events::{
     earth_angular_radius, eclipse_status, moon_angle, phase_angle, position_angle, shadow_fraction,
     shadow_fraction_with_model, sun_angle, sun_elevation, EarthShadowModel,
 };
+pub use exact_cache::ExactCacheSingleFlightWait;
 pub use forces::{
     estimate_decay, force_j2_acceleration, force_twobody_acceleration, DragForce, SpaceWeather,
 };

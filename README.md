@@ -243,19 +243,30 @@ commit builder/verifier as the other interfaces:
 import { BrowserExactProductCache } from "@neilberkman/sidereon/exact-cache";
 
 const cache = await BrowserExactProductCache.open();
-const entry = await cache.withLock(identity, "nasa_cddis", async (locked) => {
-  const hit = await locked.read();
-  if (hit) return hit;
-  // Fetch and validate first; these are the resulting immutable bytes.
-  return locked.publish(productBytes, archiveBytes, provenanceBytes);
-});
+const opened = await cache.openSingleFlight(identity, "nasa_cddis");
+let entry;
+if (opened.kind === "hit") {
+  entry = opened.entry;
+} else {
+  const owner = opened.owner;
+  try {
+    // Only the owner fetches and validates. These are the resulting immutable bytes.
+    entry = await owner.publish(productBytes, archiveBytes, provenanceBytes);
+  } catch (error) {
+    await owner.abandon().catch(() => {});
+    throw error;
+  }
+}
 ```
 
-Web Locks coordinate same-origin tabs and workers with a bounded wait.
-IndexedDB publishes the immutable entry and marker in one strict-durability
-transaction; reads return bytes only after shared schema-v3 verification. Node
-hosts can call `buildExactCacheCommit` and `verifyExactCacheCommit` with their
-own storage transaction.
+IndexedDB transactions elect one owner across same-origin tabs and workers.
+The owner heartbeat and every takeover decision use the engine's bounded
+single-flight policy. Publication writes the immutable entry and marker in one
+strict-durability transaction; reads return bytes only after shared schema-v3
+verification. Call `owner.abandon()` when acquisition stops before publication.
+The legacy `withLock` method remains available for Web Locks callers. Node hosts
+can call `buildExactCacheCommit` and `verifyExactCacheCommit` with their own
+storage transaction.
 
 Send credentials only to NASA's documented hosts;
 remove URL queries from diagnostics; reject HTML success bodies; validate

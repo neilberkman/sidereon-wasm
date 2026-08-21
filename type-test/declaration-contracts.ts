@@ -1,5 +1,13 @@
 import * as NodeBindings from "../pkg-node/sidereon.js";
 import * as WebBindings from "../pkg/sidereon.js";
+import {
+  type BrowserExactProductCache,
+  type ExactCacheSingleFlightOpen,
+  type ExactCacheSingleFlightOptions,
+  ExactCacheSingleFlightOptionsError,
+  ExactCacheSingleFlightOwnershipLostError,
+  ExactCacheSingleFlightTimeoutError,
+} from "../types/exact-cache.js";
 
 type Equal<Left, Right> =
   (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
@@ -7,6 +15,26 @@ type Equal<Left, Right> =
     : false;
 type Assert<Condition extends true> = Condition;
 type IsAny<Value> = 0 extends 1 & Value ? true : false;
+
+type _ExactCacheOpenReturn = Assert<
+  Equal<
+    Awaited<ReturnType<BrowserExactProductCache["openSingleFlight"]>>,
+    ExactCacheSingleFlightOpen
+  >
+>;
+const exactCacheSingleFlightOptions: ExactCacheSingleFlightOptions = {
+  pollIntervalMs: 50,
+  heartbeatIntervalMs: 5_000,
+  livenessTimeoutMs: 30_000,
+  waitTimeoutMs: 1_800_000,
+};
+const exactCacheOptionsError: TypeError = new ExactCacheSingleFlightOptionsError();
+const exactCacheTimeoutError: Error = new ExactCacheSingleFlightTimeoutError();
+const exactCacheOwnershipError: Error = new ExactCacheSingleFlightOwnershipLostError();
+void exactCacheSingleFlightOptions;
+void exactCacheOptionsError;
+void exactCacheTimeoutError;
+void exactCacheOwnershipError;
 
 type WebNtripConfig = ConstructorParameters<typeof WebBindings.NtripClientMachine>[0];
 type NodeNtripConfig = ConstructorParameters<typeof NodeBindings.NtripClientMachine>[0];

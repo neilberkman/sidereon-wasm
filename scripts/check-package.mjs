@@ -207,7 +207,12 @@ try {
     "node-esm.mjs",
     `import assert from "node:assert/strict";
 import * as Sidereon from "@neilberkman/sidereon";
-import { BrowserExactProductCache } from "@neilberkman/sidereon/exact-cache";
+import {
+  BrowserExactProductCache,
+  ExactCacheSingleFlightOptionsError,
+  ExactCacheSingleFlightOwnershipLostError,
+  ExactCacheSingleFlightTimeoutError,
+} from "@neilberkman/sidereon/exact-cache";
 import * as LegacyTypes from "@neilberkman/sidereon/types";
 
 assert.equal(typeof Sidereon.default, "object", "Node ESM loaded the web initializer");
@@ -220,6 +225,9 @@ assert.equal(contentStart, Sidereon.Sp3ContentStartConvention.FilenameEpochMinus
 assert.equal(Sidereon.sp3ContentStartOffsetSeconds(contentStart), -86400n);
 assert.deepEqual(Sidereon.supportedSamples("gfz_ult", "sp3", 2021, 5, 15, "0000"), ["15M", "05M"]);
 assert.equal(typeof BrowserExactProductCache, "function");
+assert.equal(typeof ExactCacheSingleFlightOptionsError, "function");
+assert.equal(typeof ExactCacheSingleFlightOwnershipLostError, "function");
+assert.equal(typeof ExactCacheSingleFlightTimeoutError, "function");
 assert.deepEqual(Object.keys(LegacyTypes), []);
 `,
   );
