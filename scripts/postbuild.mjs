@@ -67,6 +67,57 @@ export interface Sp3MergeIdentityOptions {
     systems?: string[];
     assertedFrameLabelSets?: string[][];
     helmert?: boolean;
+    verifyContinuity?: Sp3ContinuityOptions | null;
+}
+
+export type Sp3MergeOptions = Sp3MergeIdentityOptions;
+
+export interface Sp3ContinuityOptions {
+    orbitClass?: "meo_gnss" | "geosynchronous" | "leo" | null;
+    residualToleranceM?: number | null;
+}
+
+export interface ContinuityDefect {
+    kind: "duplicate_epoch" | "single_sample_series" | "speed_bound" | "hold_out_residual";
+    satellite: string;
+    fromJ2000S: number | undefined;
+    toJ2000S: number | undefined;
+    magnitude: number | undefined;
+    bound: number | undefined;
+}
+
+export interface ContinuityReport {
+    attested: boolean;
+    defects: ContinuityDefect[];
+    pairsChecked: number;
+    residualsChecked: number;
+    residualsSkipped: number;
+}
+
+export interface MergeContinuityViolation {
+    defect: ContinuityDefect;
+    fromSources: number[];
+    toSources: number[];
+    crossesContributors: boolean;
+}
+
+export interface WindowContinuityVerdict {
+    decision: "accept" | "refuse";
+    accepted: boolean;
+    influencingDefects: ContinuityDefect[];
+    influencingSplices: MergeContinuityViolation[];
+    allDefects: ContinuityDefect[];
+    allSplices: MergeContinuityViolation[];
+}
+
+export interface NominalCoverageInterval {
+    from: Date;
+    until: Date;
+}
+
+export interface NominalCoverage {
+    observed: NominalCoverageInterval | null;
+    predicted: NominalCoverageInterval | null;
 }
 
 export interface SurfaceMetInput {
@@ -592,6 +643,10 @@ export type TerrainOrthometricBatchResult = { ok: true; orthometricHeightM: Orth
 
 const topLevelReplacements = [
   [
+    "export function mergeSp3(sources: Sp3[], options: any): Sp3MergeResult;",
+    "export function mergeSp3(sources: Sp3[], options?: Sp3MergeOptions | null): Sp3MergeResult;",
+  ],
+  [
     "export function sp3MergeInputIdentity(contributors: any, options: any): Sp3MergeInputIdentity;",
     "export function sp3MergeInputIdentity(contributors: Sp3ArtifactIdentityInput[], options?: Sp3MergeIdentityOptions | null): Sp3MergeInputIdentity;",
   ],
@@ -693,6 +748,15 @@ const classMemberReplacements = [
   [
     "Sp3",
     [
+      [
+        "checkContinuity(orbit_class?: string | null, residual_tolerance_m?: number | null): any;",
+        "checkContinuity(orbitClass?: string | null, residualToleranceM?: number | null): ContinuityReport;",
+      ],
+      [
+        "continuityVerdict(from_j2000_s: number, through_j2000_s: number, orbit_class: any, residual_tolerance_m: any): any;",
+        "continuityVerdict(fromJ2000S: number, throughJ2000S: number, orbitClass?: string | null, residualToleranceM?: number | null): WindowContinuityVerdict;",
+      ],
+      ["stencilExtent(): any;", "stencilExtent(): { beforeS: number; afterS: number };"],
       ["fde(request: any): FdeSolution;", "fde(request: FdeRequest): FdeSolution;"],
       ["solveSpp(request: any): SppSolution;", "solveSpp(request: SppRequest): SppSolution;"],
       [
@@ -705,6 +769,16 @@ const classMemberReplacements = [
       ],
     ],
   ],
+  [
+    "Sp3MergeReport",
+    [
+      [
+        "continuityVerdict(merged: Sp3, from_j2000_s: number, through_j2000_s: number): any;",
+        "continuityVerdict(merged: Sp3, fromJ2000S: number, throughJ2000S: number): WindowContinuityVerdict | null;",
+      ],
+    ],
+  ],
+  ["NominalIssue", [["readonly covers: any;", "readonly covers: NominalCoverage;"]]],
   [
     "PppFixedSolution",
     [

@@ -15,14 +15,15 @@ use sidereon_core::data::{
     ProductFormat, ProductIdentity, ProductPublisher, ProductType, SolutionClass,
 };
 use sidereon_core::ephemeris::{
-    merge, AgreementMetric, MergeCombine, MergeFlag, MergeOptions, MergePrecedenceScope,
-    MergeReport, OutlierRejectOptions, Sp3ArtifactIdentity, Sp3FrameLabelSet,
-    Sp3FrameReconciliation, Sp3MergeInputIdentity as CoreSp3MergeInputIdentity,
+    merge, AgreementMetric, EpochWindow, MergeCombine, MergeContinuityReport, MergeFlag,
+    MergeOptions, MergePrecedenceScope, MergeReport, OutlierRejectOptions, Sp3ArtifactIdentity,
+    Sp3FrameLabelSet, Sp3FrameReconciliation, Sp3MergeInputIdentity as CoreSp3MergeInputIdentity,
+    StencilExtent,
 };
 use sidereon_core::GnssSystem;
 
 use crate::error::{engine_error, range_error, type_error};
-use crate::sp3::Sp3;
+use crate::sp3::{continuity_options, continuity_verdict_to_js, Sp3};
 
 /// Merge controls. All fields optional; defaults match the core `MergeOptions`
 /// (2-of-3 majority agreement, mean combine).
@@ -40,6 +41,7 @@ struct MergeOptionsInput {
     systems: Option<Vec<String>>,
     asserted_frame_label_sets: Option<Vec<Vec<String>>>,
     helmert: Option<bool>,
+    verify_continuity: Option<ContinuityOptionsInput>,
 }
 
 #[derive(Deserialize)]
@@ -47,6 +49,23 @@ struct MergeOptionsInput {
 struct OutlierRejectInput {
     position_tolerance_m: f64,
     clock_tolerance_s: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ContinuityOptionsInput {
+    #[serde(default = "default_continuity_orbit_class")]
+    orbit_class: Option<String>,
+    #[serde(default = "default_residual_tolerance_m")]
+    residual_tolerance_m: Option<f64>,
+}
+
+fn default_continuity_orbit_class() -> Option<String> {
+    Some("meo_gnss".to_string())
+}
+
+fn default_residual_tolerance_m() -> Option<f64> {
+    Some(1.0)
 }
 
 /// Complete exact product identity accepted from a plain JavaScript object.
@@ -334,6 +353,7 @@ const MERGE_OPTION_FIELDS: &[&str] = &[
     "systems",
     "assertedFrameLabelSets",
     "helmert",
+    "verifyContinuity",
 ];
 
 const JS_MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
@@ -410,6 +430,15 @@ fn validate_merge_option_fields(options: &JsValue) -> Result<(), JsValue> {
             &outlier,
             &["positionToleranceM", "clockToleranceS"],
             "options.outlierReject",
+        )?;
+    }
+    let continuity = js_sys::Reflect::get(options, &JsValue::from_str("verifyContinuity"))
+        .map_err(|_| type_error("options.verifyContinuity is unreadable"))?;
+    if !continuity.is_null() && !continuity.is_undefined() {
+        reject_unknown_object_fields(
+            &continuity,
+            &["orbitClass", "residualToleranceM"],
+            "options.verifyContinuity",
         )?;
     }
     Ok(())
@@ -532,6 +561,12 @@ impl MergeOptionsInput {
                 parse_asserted_frame_label_sets(label_sets)?;
         }
         opts.frame_reconciliation.helmert = self.helmert.unwrap_or(false);
+        if let Some(continuity) = &self.verify_continuity {
+            opts.verify_continuity = Some(continuity_options(
+                continuity.orbit_class.as_deref(),
+                continuity.residual_tolerance_m,
+            )?);
+        }
         Ok(opts)
     }
 }
@@ -1070,6 +1105,7 @@ pub struct Sp3MergeReport {
     position_outliers: Vec<Sp3MergeFlag>,
     clock_outliers: Vec<Sp3MergeFlag>,
     agreement: Vec<Sp3AgreementMetric>,
+    continuity: Option<MergeContinuityReport>,
 }
 
 #[wasm_bindgen]
@@ -1141,6 +1177,26 @@ impl Sp3MergeReport {
     pub fn agreement_count(&self) -> usize {
         self.agreement.len()
     }
+
+    /// Decide whether this merge's optional continuity post-condition can
+    /// influence an inclusive evaluation window through `merged`'s derived
+    /// interpolation stencil.
+    ///
+    /// Returns `null` when `verifyContinuity` was not requested for the merge.
+    #[wasm_bindgen(js_name = continuityVerdict)]
+    pub fn continuity_verdict(
+        &self,
+        merged: &Sp3,
+        from_j2000_s: f64,
+        through_j2000_s: f64,
+    ) -> Result<JsValue, JsValue> {
+        let window = EpochWindow::new(from_j2000_s, through_j2000_s).map_err(engine_error)?;
+        let stencil = StencilExtent::for_sp3(&merged.inner).map_err(engine_error)?;
+        match self.continuity.as_ref() {
+            Some(report) => continuity_verdict_to_js(report.verdict_for_window(window, stencil)),
+            None => Ok(JsValue::NULL),
+        }
+    }
 }
 
 impl From<MergeReport> for Sp3MergeReport {
@@ -1160,6 +1216,7 @@ impl From<MergeReport> for Sp3MergeReport {
                 .collect(),
             clock_outliers: value.clock_outliers.into_iter().map(Into::into).collect(),
             agreement: value.agreement.into_iter().map(Into::into).collect(),
+            continuity: value.continuity,
         }
     }
 }

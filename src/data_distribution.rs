@@ -5,8 +5,8 @@
 
 use serde::Serialize;
 use sidereon_core::data::{
-    self as core_data, AnalysisCenter, DistributionSource, ProductDate, ProductIdentity,
-    ProductType, Sp3ContentStartConvention as CoreSp3ContentStartConvention,
+    self as core_data, AnalysisCenter, DistributionSource, ProductDate, ProductDateTime,
+    ProductIdentity, ProductType, Sp3ContentStartConvention as CoreSp3ContentStartConvention,
 };
 use sidereon_core::exact_cache::{build_commit_record, verify_commit_record};
 use wasm_bindgen::prelude::*;
@@ -248,6 +248,76 @@ fn distribution_source(value: &str) -> Result<DistributionSource, JsValue> {
     }
 }
 
+fn product_datetime_from_js(value: &js_sys::Date) -> Result<ProductDateTime, JsValue> {
+    let milliseconds = value.get_time();
+    if !milliseconds.is_finite() {
+        return Err(type_error("now must be a valid Date"));
+    }
+    let rounded = js_sys::Date::new(&JsValue::from_f64(
+        (milliseconds / 1_000.0).ceil() * 1_000.0,
+    ));
+    let year = i32::try_from(rounded.get_utc_full_year())
+        .map_err(|_| type_error("now has an unsupported UTC year"))?;
+    let month = u8::try_from(rounded.get_utc_month() + 1)
+        .map_err(|_| type_error("now has an unsupported UTC month"))?;
+    let day = u8::try_from(rounded.get_utc_date())
+        .map_err(|_| type_error("now has an unsupported UTC day"))?;
+    let hour = u8::try_from(rounded.get_utc_hours())
+        .map_err(|_| type_error("now has an unsupported UTC hour"))?;
+    let minute = u8::try_from(rounded.get_utc_minutes())
+        .map_err(|_| type_error("now has an unsupported UTC minute"))?;
+    let second = u8::try_from(rounded.get_utc_seconds())
+        .map_err(|_| type_error("now has an unsupported UTC second"))?;
+    let date = ProductDate::new(year, month, day).map_err(engine_error)?;
+    ProductDateTime::new(date, hour, minute, second).map_err(engine_error)
+}
+
+fn product_datetime_to_js(value: ProductDateTime) -> js_sys::Date {
+    js_sys::Date::new(&JsValue::from_str(&value.to_string()))
+}
+
+fn set_object_field(object: &js_sys::Object, field: &str, value: &JsValue) -> Result<(), JsValue> {
+    let set = js_sys::Reflect::set(object.as_ref(), &JsValue::from_str(field), value)?;
+    if set {
+        Ok(())
+    } else {
+        Err(engine_error(format!(
+            "failed to construct nextIssueDue result field {field}"
+        )))
+    }
+}
+
+fn nominal_coverage_interval_to_js(
+    interval: Option<core_data::NominalCoverageInterval>,
+) -> Result<JsValue, JsValue> {
+    let Some(interval) = interval else {
+        return Ok(JsValue::NULL);
+    };
+    let out = js_sys::Object::new();
+    set_object_field(&out, "from", product_datetime_to_js(interval.from).as_ref())?;
+    set_object_field(
+        &out,
+        "until",
+        product_datetime_to_js(interval.until).as_ref(),
+    )?;
+    Ok(out.into())
+}
+
+fn nominal_coverage_to_js(coverage: core_data::NominalCoverage) -> Result<JsValue, JsValue> {
+    let out = js_sys::Object::new();
+    set_object_field(
+        &out,
+        "observed",
+        &nominal_coverage_interval_to_js(coverage.observed)?,
+    )?;
+    set_object_field(
+        &out,
+        "predicted",
+        &nominal_coverage_interval_to_js(coverage.predicted)?,
+    )?;
+    Ok(out.into())
+}
+
 fn product_spec(
     center: &str,
     family: &str,
@@ -437,6 +507,64 @@ pub fn published_issue_age_minutes(
     )
     .map_err(engine_error)?;
     core_data::published_issue_age_minutes(&published, now).map_err(engine_error)
+}
+
+/// The next catalog issue nominally due at or after a UTC instant.
+///
+/// This is a network-free schedule query. It does not claim the archive has
+/// published the issue. Coverage intervals are half-open and all returned
+/// `Date` values are UTC instants.
+#[wasm_bindgen]
+pub struct NominalIssue {
+    identity: ProductIdentity,
+    due_at: js_sys::Date,
+    covers: JsValue,
+}
+
+#[wasm_bindgen]
+impl NominalIssue {
+    /// Exact product identity expected at the due time.
+    #[wasm_bindgen(getter)]
+    pub fn identity(&self) -> GnssProductIdentity {
+        GnssProductIdentity {
+            inner: self.identity.clone(),
+        }
+    }
+
+    /// Nominal publication deadline as a UTC JavaScript `Date`.
+    #[wasm_bindgen(getter, js_name = dueAt)]
+    pub fn due_at(&self) -> js_sys::Date {
+        self.due_at.clone()
+    }
+
+    /// Nominal observed and predicted half-open coverage intervals.
+    #[wasm_bindgen(getter)]
+    pub fn covers(&self) -> JsValue {
+        self.covers.clone()
+    }
+}
+
+/// Return the next catalog issue nominally due at or after `now`.
+///
+/// Fractional milliseconds advance to the next whole second, matching the
+/// core catalog's whole-second resolution.
+#[wasm_bindgen(js_name = nextIssueDue)]
+pub fn next_issue_due(
+    center: &str,
+    content: &str,
+    now: &js_sys::Date,
+) -> Result<NominalIssue, JsValue> {
+    let issue = core_data::next_issue_due(
+        analysis_center(center)?,
+        product_type(content)?,
+        product_datetime_from_js(now)?,
+    )
+    .map_err(engine_error)?;
+    Ok(NominalIssue {
+        identity: issue.identity,
+        due_at: product_datetime_to_js(issue.due_at),
+        covers: nominal_coverage_to_js(issue.covers)?,
+    })
 }
 
 /// Index of the first cross-line predicted-IONEX candidate whose exact

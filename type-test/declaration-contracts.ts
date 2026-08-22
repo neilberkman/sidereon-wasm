@@ -73,6 +73,83 @@ void nodeContentStartOffset;
 void webSupportedSamples;
 void nodeSupportedSamples;
 
+type ExpectedStencilExtent = { beforeS: number; afterS: number };
+type ExpectedContinuityVerdict = (
+  fromJ2000S: number,
+  throughJ2000S: number,
+  orbitClass?: string | null,
+  residualToleranceM?: number | null,
+) => WebBindings.WindowContinuityVerdict;
+type ExpectedMergeContinuityVerdict = (
+  merged: WebBindings.Sp3,
+  fromJ2000S: number,
+  throughJ2000S: number,
+) => WebBindings.WindowContinuityVerdict | null;
+type ExpectedNodeMergeContinuityVerdict = (
+  merged: NodeBindings.Sp3,
+  fromJ2000S: number,
+  throughJ2000S: number,
+) => NodeBindings.WindowContinuityVerdict | null;
+type ExpectedNextIssueDue = (
+  center: string,
+  content: string,
+  now: Date,
+) => WebBindings.NominalIssue;
+type ExpectedNodeNextIssueDue = (
+  center: string,
+  content: string,
+  now: Date,
+) => NodeBindings.NominalIssue;
+
+type _WebStencilExtent = Assert<
+  Equal<ReturnType<WebBindings.Sp3["stencilExtent"]>, ExpectedStencilExtent>
+>;
+type _NodeStencilExtent = Assert<
+  Equal<ReturnType<NodeBindings.Sp3["stencilExtent"]>, ExpectedStencilExtent>
+>;
+type _WebContinuityVerdict = Assert<
+  Equal<WebBindings.Sp3["continuityVerdict"], ExpectedContinuityVerdict>
+>;
+type _NodeContinuityVerdict = Assert<
+  Equal<NodeBindings.Sp3["continuityVerdict"], ExpectedContinuityVerdict>
+>;
+type _WebMergeContinuityVerdict = Assert<
+  Equal<WebBindings.Sp3MergeReport["continuityVerdict"], ExpectedMergeContinuityVerdict>
+>;
+type _NodeMergeContinuityVerdict = Assert<
+  Equal<NodeBindings.Sp3MergeReport["continuityVerdict"], ExpectedNodeMergeContinuityVerdict>
+>;
+type _WebNextIssueDue = Assert<Equal<typeof WebBindings.nextIssueDue, ExpectedNextIssueDue>>;
+type _NodeNextIssueDue = Assert<Equal<typeof NodeBindings.nextIssueDue, ExpectedNodeNextIssueDue>>;
+
+const webNominalIssue: WebBindings.NominalIssue = WebBindings.nextIssueDue(
+  "igs_ult",
+  "sp3",
+  new Date("2026-08-04T02:59:59Z"),
+);
+const nodeNominalIssue: NodeBindings.NominalIssue = NodeBindings.nextIssueDue(
+  "igs_ult",
+  "sp3",
+  new Date("2026-08-04T02:59:59Z"),
+);
+const webDueAt: Date = webNominalIssue.dueAt;
+const nodeDueAt: Date = nodeNominalIssue.dueAt;
+const webIdentity: WebBindings.GnssProductIdentity = webNominalIssue.identity;
+const nodeIdentity: NodeBindings.GnssProductIdentity = nodeNominalIssue.identity;
+const webObserved: WebBindings.NominalCoverageInterval | null = webNominalIssue.covers.observed;
+const nodePredicted: NodeBindings.NominalCoverageInterval | null =
+  nodeNominalIssue.covers.predicted;
+const mergeOptions: WebBindings.Sp3MergeOptions = {
+  verifyContinuity: { orbitClass: null, residualToleranceM: 0.5 },
+};
+void webDueAt;
+void nodeDueAt;
+void webIdentity;
+void nodeIdentity;
+void webObserved;
+void nodePredicted;
+void mergeOptions;
+
 const webTerrainAttested: WebBindings.MmapTerrain = WebBindings.MmapTerrain.fromPathAttested(
   "terrain.tmm",
   0xffff_ffff_ffff_ffffn,

@@ -110,8 +110,10 @@ try {
     "ExactSp3Coverage",
     "ExactSp3ParseResult",
     "ExactSp3Request",
+    "NominalIssue",
     "Sp3ContentStartConvention",
     "defaultSampleForDate",
+    "nextIssueDue",
     "parseExactSp3",
     "productSolutionClass",
     "sp3ContentStartConvention",
@@ -125,13 +127,20 @@ try {
     "export enum Sp3ContentStartConvention",
     "export class ExactSp3ParseResult",
     "export class ExactSp3Request",
+    "export class NominalIssue",
+    "export interface WindowContinuityVerdict",
     "export function defaultSampleForDate(",
+    "export function nextIssueDue(",
     "export function parseExactSp3(",
     "export function productSolutionClass(",
     "export function sp3ContentStartConvention(",
     "export function sp3ContentStartOffsetSeconds(",
     "export function supportedSamples(",
     "export function validateExactSp3(",
+    "continuityVerdict(fromJ2000S: number, throughJ2000S: number, orbitClass?: string | null, residualToleranceM?: number | null): WindowContinuityVerdict;",
+    "continuityVerdict(merged: Sp3, fromJ2000S: number, throughJ2000S: number): WindowContinuityVerdict | null;",
+    "stencilExtent(): { beforeS: number; afterS: number };",
+    "readonly covers: NominalCoverage;",
     'compression: "none" | "gzip" | "unix_compress";',
   ];
   for (const path of ["pkg/sidereon.d.ts", "pkg-node/sidereon.d.ts"]) {
@@ -224,6 +233,10 @@ const contentStart = Sidereon.sp3ContentStartConvention("gfz_ult", 2022, 9, 7, "
 assert.equal(contentStart, Sidereon.Sp3ContentStartConvention.FilenameEpochMinusOneDay);
 assert.equal(Sidereon.sp3ContentStartOffsetSeconds(contentStart), -86400n);
 assert.deepEqual(Sidereon.supportedSamples("gfz_ult", "sp3", 2021, 5, 15, "0000"), ["15M", "05M"]);
+const nextIssue = Sidereon.nextIssueDue("igs_ult", "sp3", new Date("2026-08-04T02:59:59Z"));
+assert.equal(nextIssue.identity.issue, "0000");
+assert.equal(nextIssue.dueAt.toISOString(), "2026-08-04T03:00:00.000Z");
+assert.equal(nextIssue.covers.observed.from.toISOString(), "2026-08-03T00:00:00.000Z");
 assert.equal(typeof BrowserExactProductCache, "function");
 assert.equal(typeof ExactCacheSingleFlightOptionsError, "function");
 assert.equal(typeof ExactCacheSingleFlightOwnershipLostError, "function");
@@ -247,6 +260,10 @@ const contentStart = Sidereon.sp3ContentStartConvention("gfz_ult", 2022, 9, 7, "
 assert.equal(contentStart, Sidereon.Sp3ContentStartConvention.FilenameEpochMinusOneDay);
 assert.equal(Sidereon.sp3ContentStartOffsetSeconds(contentStart), -86400n);
 assert.deepEqual(Sidereon.supportedSamples("gfz_ult", "sp3", 2021, 5, 15, "0000"), ["15M", "05M"]);
+const nextIssue = Sidereon.nextIssueDue("igs_ult", "sp3", new Date("2026-08-04T02:59:59Z"));
+assert.equal(nextIssue.identity.issue, "0000");
+assert.equal(nextIssue.dueAt.toISOString(), "2026-08-04T03:00:00.000Z");
+assert.equal(nextIssue.covers.observed.from.toISOString(), "2026-08-03T00:00:00.000Z");
 `,
   );
   writeConsumer(

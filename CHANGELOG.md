@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 1.0.0 - 2026-08-21
+
+Sidereon 1.0.0 across every interface; additions arrive without breaking
+existing callers from here.
+
+### Added
+
+- Exact-cache single-flight opens in the browser cache (IndexedDB
+  transaction election; liveness rules stay in Rust).
+- Window-scoped continuity verdicts (`Sp3.stencilExtent`,
+  `continuityVerdict`, merge-report equivalent) and `nextIssueDue`.
+
+### Changed
+
+- Engine pinned to `sidereon-core` 1.0.0.
+
 ## 0.39.1 - 2026-08-11
 
 ### Fixed

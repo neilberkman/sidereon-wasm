@@ -19,7 +19,8 @@ use sidereon_core::ephemeris::{
     PreciseInterpolantStoreError as CorePreciseInterpolantStoreError, Sp3 as CoreSp3,
 };
 use sidereon_core::ephemeris::{
-    check_continuity, ContinuityDefect, ContinuityOptions, OrbitClass, SpeedBound,
+    check_continuity, ContinuityDefect, ContinuityOptions, EpochWindow, MergeContinuityViolation,
+    OrbitClass, SpeedBound, StencilExtent, WindowContinuityDecision, WindowContinuityVerdict,
 };
 use sidereon_core::DigestProvenance as CoreDigestProvenance;
 use sidereon_core::Error as CoreError;
@@ -41,6 +42,56 @@ fn instant_to_j2000_seconds(epoch: &Instant) -> f64 {
         InstantRepr::JulianDate(jd) => ((jd.jd_whole - J2000_JD) + jd.fraction) * SECONDS_PER_DAY,
         InstantRepr::Nanos(_) => f64::NAN,
     }
+}
+
+pub(crate) fn continuity_options(
+    orbit_class: Option<&str>,
+    residual_tolerance_m: Option<f64>,
+) -> Result<ContinuityOptions, JsValue> {
+    let speed_bound = match orbit_class {
+        None => None,
+        Some("meo_gnss") => Some(SpeedBound::OrbitClass(OrbitClass::MeoGnss)),
+        Some("geosynchronous") => Some(SpeedBound::OrbitClass(OrbitClass::Geosynchronous)),
+        Some("leo") => Some(SpeedBound::OrbitClass(OrbitClass::Leo)),
+        Some(other) => {
+            return Err(type_error(&format!(
+                "unknown orbit class {other:?}: expected \"meo_gnss\", \"geosynchronous\", or \"leo\""
+            )));
+        }
+    };
+    Ok(ContinuityOptions {
+        speed_bound,
+        residual_tolerance_m,
+    })
+}
+
+fn continuity_verdict_options(
+    orbit_class: JsValue,
+    residual_tolerance_m: JsValue,
+) -> Result<ContinuityOptions, JsValue> {
+    let orbit_class = if orbit_class.is_undefined() {
+        Some("meo_gnss".to_string())
+    } else if orbit_class.is_null() {
+        None
+    } else {
+        Some(
+            orbit_class
+                .as_string()
+                .ok_or_else(|| type_error("orbitClass must be a string or null"))?,
+        )
+    };
+    let residual_tolerance_m = if residual_tolerance_m.is_undefined() {
+        Some(1.0)
+    } else if residual_tolerance_m.is_null() {
+        None
+    } else {
+        Some(
+            residual_tolerance_m
+                .as_f64()
+                .ok_or_else(|| type_error("residualToleranceM must be a number or null"))?,
+        )
+    };
+    continuity_options(orbit_class.as_deref(), residual_tolerance_m)
 }
 
 fn attach_detail<T: Serialize>(value: &JsValue, detail: &T) {
@@ -464,6 +515,20 @@ impl Sp3 {
         self.inner.epochs_j2000_seconds()
     }
 
+    /// Time reach of the SP3 position interpolator before and after a query.
+    ///
+    /// The core derives both values from this product's declared epoch interval
+    /// and interpolation-node count. Callers never supply a stencil duration.
+    #[wasm_bindgen(js_name = stencilExtent)]
+    pub fn stencil_extent(&self) -> Result<JsValue, JsValue> {
+        let stencil = StencilExtent::for_sp3(&self.inner).map_err(engine_error)?;
+        serde_wasm_bindgen::to_value(&StencilExtentJs {
+            before_s: stencil.before_s(),
+            after_s: stencil.after_s(),
+        })
+        .map_err(|error| engine_error(error.to_string()))
+    }
+
     /// Attest that this product is physically continuous, or report each
     /// violation.
     ///
@@ -491,78 +556,15 @@ impl Sp3 {
         orbit_class: Option<String>,
         residual_tolerance_m: Option<f64>,
     ) -> Result<JsValue, JsValue> {
-        let speed_bound = match orbit_class.as_deref() {
-            None => None,
-            Some("meo_gnss") => Some(SpeedBound::OrbitClass(OrbitClass::MeoGnss)),
-            Some("geosynchronous") => Some(SpeedBound::OrbitClass(OrbitClass::Geosynchronous)),
-            Some("leo") => Some(SpeedBound::OrbitClass(OrbitClass::Leo)),
-            Some(other) => {
-                return Err(JsValue::from_str(&format!("unknown orbit class: {other}")));
-            }
-        };
         let report = check_continuity(
             &self.inner.precise_ephemeris_samples(),
-            &ContinuityOptions {
-                speed_bound,
-                residual_tolerance_m,
-            },
+            &continuity_options(orbit_class.as_deref(), residual_tolerance_m)?,
         );
 
         let defects: Vec<ContinuityDefectJs> = report
             .defects
             .iter()
-            .map(|defect| {
-                let (kind, from_s, to_s, magnitude, bound) = match defect {
-                    ContinuityDefect::DuplicateEpoch {
-                        epoch_j2000_s,
-                        occurrences,
-                        ..
-                    } => (
-                        "duplicate_epoch",
-                        Some(*epoch_j2000_s),
-                        Some(*epoch_j2000_s),
-                        Some(*occurrences as f64),
-                        None,
-                    ),
-                    ContinuityDefect::SingleSampleSeries { .. } => {
-                        ("single_sample_series", None, None, None, None)
-                    }
-                    ContinuityDefect::SpeedBound {
-                        from_j2000_s,
-                        to_j2000_s,
-                        implied_speed_m_s,
-                        bound_m_s,
-                        ..
-                    } => (
-                        "speed_bound",
-                        Some(*from_j2000_s),
-                        Some(*to_j2000_s),
-                        Some(*implied_speed_m_s),
-                        Some(*bound_m_s),
-                    ),
-                    ContinuityDefect::HoldOutResidual {
-                        preceding_j2000_s,
-                        epoch_j2000_s,
-                        residual_m,
-                        tolerance_m,
-                        ..
-                    } => (
-                        "hold_out_residual",
-                        Some(*preceding_j2000_s),
-                        Some(*epoch_j2000_s),
-                        Some(*residual_m),
-                        Some(*tolerance_m),
-                    ),
-                };
-                ContinuityDefectJs {
-                    kind: kind.to_string(),
-                    satellite: defect.satellite().to_string(),
-                    from_j2000_s: from_s,
-                    to_j2000_s: to_s,
-                    magnitude,
-                    bound,
-                }
-            })
+            .map(ContinuityDefectJs::from)
             .collect();
 
         let out = ContinuityReportJs {
@@ -573,6 +575,30 @@ impl Sp3 {
             residuals_skipped: report.residuals_skipped,
         };
         serde_wasm_bindgen::to_value(&out).map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
+    /// Decide whether product-wide continuity findings can influence an
+    /// inclusive evaluation window through this product's interpolation
+    /// stencil.
+    ///
+    /// Omitted options use the existing defaults (`"meo_gnss"` and 1 metre).
+    /// Passing `null` disables the corresponding check. The returned object
+    /// retains both the influencing findings and the complete report.
+    #[wasm_bindgen(js_name = continuityVerdict)]
+    pub fn continuity_verdict(
+        &self,
+        from_j2000_s: f64,
+        through_j2000_s: f64,
+        orbit_class: JsValue,
+        residual_tolerance_m: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let window = EpochWindow::new(from_j2000_s, through_j2000_s).map_err(engine_error)?;
+        let stencil = StencilExtent::for_sp3(&self.inner).map_err(engine_error)?;
+        let report = check_continuity(
+            &self.inner.precise_ephemeris_samples(),
+            &continuity_verdict_options(orbit_class, residual_tolerance_m)?,
+        );
+        continuity_verdict_to_js(report.verdict_for_window(window, stencil))
     }
 
     /// Interpolate `satellite`'s position and clock at each query epoch.
@@ -1127,6 +1153,132 @@ struct ContinuityDefectJs {
     to_j2000_s: Option<f64>,
     magnitude: Option<f64>,
     bound: Option<f64>,
+}
+
+impl From<&ContinuityDefect> for ContinuityDefectJs {
+    fn from(defect: &ContinuityDefect) -> Self {
+        let (kind, from_s, to_s, magnitude, bound) = match defect {
+            ContinuityDefect::DuplicateEpoch {
+                epoch_j2000_s,
+                occurrences,
+                ..
+            } => (
+                "duplicate_epoch",
+                Some(*epoch_j2000_s),
+                Some(*epoch_j2000_s),
+                Some(*occurrences as f64),
+                None,
+            ),
+            ContinuityDefect::SingleSampleSeries { .. } => {
+                ("single_sample_series", None, None, None, None)
+            }
+            ContinuityDefect::SpeedBound {
+                from_j2000_s,
+                to_j2000_s,
+                implied_speed_m_s,
+                bound_m_s,
+                ..
+            } => (
+                "speed_bound",
+                Some(*from_j2000_s),
+                Some(*to_j2000_s),
+                Some(*implied_speed_m_s),
+                Some(*bound_m_s),
+            ),
+            ContinuityDefect::HoldOutResidual {
+                preceding_j2000_s,
+                epoch_j2000_s,
+                residual_m,
+                tolerance_m,
+                ..
+            } => (
+                "hold_out_residual",
+                Some(*preceding_j2000_s),
+                Some(*epoch_j2000_s),
+                Some(*residual_m),
+                Some(*tolerance_m),
+            ),
+        };
+        Self {
+            kind: kind.to_string(),
+            satellite: defect.satellite().to_string(),
+            from_j2000_s: from_s,
+            to_j2000_s: to_s,
+            magnitude,
+            bound,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MergeContinuityViolationJs {
+    defect: ContinuityDefectJs,
+    from_sources: Vec<usize>,
+    to_sources: Vec<usize>,
+    crosses_contributors: bool,
+}
+
+impl From<&MergeContinuityViolation> for MergeContinuityViolationJs {
+    fn from(violation: &MergeContinuityViolation) -> Self {
+        Self {
+            defect: (&violation.defect).into(),
+            from_sources: violation.from_sources.clone(),
+            to_sources: violation.to_sources.clone(),
+            crosses_contributors: violation.crosses_contributors,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowContinuityVerdictJs {
+    decision: &'static str,
+    accepted: bool,
+    influencing_defects: Vec<ContinuityDefectJs>,
+    influencing_splices: Vec<MergeContinuityViolationJs>,
+    all_defects: Vec<ContinuityDefectJs>,
+    all_splices: Vec<MergeContinuityViolationJs>,
+}
+
+pub(crate) fn continuity_verdict_to_js(
+    verdict: WindowContinuityVerdict<'_>,
+) -> Result<JsValue, JsValue> {
+    let out = WindowContinuityVerdictJs {
+        decision: match verdict.decision {
+            WindowContinuityDecision::Accept => "accept",
+            WindowContinuityDecision::Refuse => "refuse",
+        },
+        accepted: verdict.accepted(),
+        influencing_defects: verdict
+            .influencing_defects
+            .into_iter()
+            .map(ContinuityDefectJs::from)
+            .collect(),
+        influencing_splices: verdict
+            .influencing_splices
+            .into_iter()
+            .map(MergeContinuityViolationJs::from)
+            .collect(),
+        all_defects: verdict
+            .all_defects
+            .iter()
+            .map(ContinuityDefectJs::from)
+            .collect(),
+        all_splices: verdict
+            .all_splices
+            .into_iter()
+            .map(MergeContinuityViolationJs::from)
+            .collect(),
+    };
+    serde_wasm_bindgen::to_value(&out).map_err(|error| engine_error(error.to_string()))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StencilExtentJs {
+    before_s: f64,
+    after_s: f64,
 }
 
 /// Continuity verdict for one product.
