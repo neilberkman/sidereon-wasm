@@ -47,7 +47,7 @@ fn trf_err(err: TrfError) -> JsValue {
         | TrfError::NonFiniteInitialResidual
         | TrfError::InvalidFScale { .. }
         | TrfError::InvalidXScaleValue { .. } => range_error(&err.to_string()),
-        TrfError::InvalidSvdOutput(_) | TrfError::Svd(_) => engine_error(err),
+        TrfError::InvalidSvdOutput(_) | TrfError::Backend(_) => engine_error(err),
     }
 }
 
