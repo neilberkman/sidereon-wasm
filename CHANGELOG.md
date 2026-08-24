@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- `locateSource` accepts `includeInfluence` (default `true`). Setting it to
+  `false` skips the per-sensor leave-one-out re-solves and returns an empty
+  `perSensorInfluence` array while keeping every other output bit-identical.
+- `closedFormInitialGuess` exposes the Schau-Robinson spherical-intersection
+  seed. `chanHoInitialGuess` remains available as a deprecated alias.
+
+### Changed
+
+- Source-sensor influence `score` is now
+  `max(abs(residualS), abs(leaveOneOutResidualS)) / timingSigmaS`, falling back
+  to the full residual when a leave-one-out solve is unavailable. Robust-loss
+  downweighting is reported separately in `lossWeight`.
+
 ## 1.0.1 - 2026-08-22
 
 ### Changed

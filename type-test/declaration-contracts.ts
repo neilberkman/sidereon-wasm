@@ -73,6 +73,48 @@ void nodeContentStartOffset;
 void webSupportedSamples;
 void nodeSupportedSamples;
 
+const sourceSensors: WebBindings.SourceSensor[] = [
+  { positionM: [0, 0] },
+  { positionM: new Float64Array([1, 0]), propagationSpeedMS: 343 },
+  { positionM: [0, 1] },
+];
+const sourceArrivalTimes = new Float64Array([1, 2, 3]);
+const sourceOptions: WebBindings.SourceLocateOptions = {
+  mode: "toa",
+  timingSigmaS: 0.001,
+  includeInfluence: false,
+};
+const webSourceSolution: WebBindings.SourceSolution = WebBindings.locateSource(
+  sourceSensors,
+  sourceArrivalTimes,
+  343,
+  sourceOptions,
+);
+const nodeSourceSolution: NodeBindings.SourceSolution = NodeBindings.locateSource(
+  sourceSensors,
+  sourceArrivalTimes,
+  343,
+  { includeInfluence: true },
+);
+const webSourceSeed: WebBindings.SourceInitialGuess = WebBindings.closedFormInitialGuess(
+  sourceSensors,
+  sourceArrivalTimes,
+  343,
+  WebBindings.sourceSolveModeToa(),
+);
+const nodeLegacySourceSeed: NodeBindings.SourceInitialGuess = NodeBindings.chanHoInitialGuess(
+  sourceSensors,
+  sourceArrivalTimes,
+  343,
+  NodeBindings.sourceSolveModeTdoa(0),
+);
+const influenceScore: number = webSourceSolution.perSensorInfluence[0].score;
+void webSourceSolution;
+void nodeSourceSolution;
+void webSourceSeed;
+void nodeLegacySourceSeed;
+void influenceScore;
+
 type ExpectedStencilExtent = { beforeS: number; afterS: number };
 type ExpectedContinuityVerdict = (
   fromJ2000S: number,

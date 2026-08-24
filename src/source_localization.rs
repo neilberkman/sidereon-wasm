@@ -13,13 +13,14 @@ use wasm_bindgen::prelude::*;
 
 use sidereon_core::dop::{Dop as CoreDop, DopError};
 use sidereon_core::source_localization::{
-    chan_ho_initial_guess as core_chan_ho_initial_guess, locate_source as core_locate_source,
-    source_crlb as core_source_crlb, source_dop as core_source_dop, Loss, Sensor as CoreSensor,
+    closed_form_initial_guess as core_closed_form_initial_guess,
+    locate_source_with as core_locate_source_with, source_crlb as core_source_crlb,
+    source_dop as core_source_dop, Loss, Sensor as CoreSensor,
     SourceCovariance as CoreSourceCovariance, SourceCrlb as CoreSourceCrlb,
     SourceInitialGuess as CoreSourceInitialGuess, SourceLocalizationError,
-    SourceLocateOptions as CoreSourceLocateOptions, SourceResidual as CoreSourceResidual,
-    SourceSensorInfluence as CoreSourceSensorInfluence, SourceSolution as CoreSourceSolution,
-    SourceSolveMode as CoreSourceSolveMode,
+    SourceLocateConfig as CoreSourceLocateConfig, SourceLocateOptions as CoreSourceLocateOptions,
+    SourceResidual as CoreSourceResidual, SourceSensorInfluence as CoreSourceSensorInfluence,
+    SourceSolution as CoreSourceSolution, SourceSolveMode as CoreSourceSolveMode,
 };
 
 use crate::error::{engine_error, range_error, type_error};
@@ -75,6 +76,7 @@ struct SourceLocateOptionsJs {
     mode: Option<String>,
     reference_sensor: Option<usize>,
     timing_sigma_s: Option<f64>,
+    include_influence: Option<bool>,
     loss: Option<String>,
     f_scale_s: Option<f64>,
     ftol: Option<f64>,
@@ -321,7 +323,7 @@ fn parse_mode_value(value: JsValue) -> Result<CoreSourceSolveMode, JsValue> {
     parse_mode_parts(mode.mode.as_deref(), mode.reference_sensor)
 }
 
-fn parse_options(value: JsValue) -> Result<CoreSourceLocateOptions, JsValue> {
+fn parse_options(value: JsValue) -> Result<(CoreSourceLocateOptions, bool), JsValue> {
     let input = if value.is_undefined() || value.is_null() {
         SourceLocateOptionsJs::default()
     } else {
@@ -342,7 +344,7 @@ fn parse_options(value: JsValue) -> Result<CoreSourceLocateOptions, JsValue> {
     if let Some(f_scale_s) = input.f_scale_s {
         options.f_scale_s = f_scale_s;
     }
-    Ok(options)
+    Ok((options, input.include_influence.unwrap_or(true)))
 }
 
 /// Return the plain mode value for absolute time-of-arrival solves.
@@ -367,7 +369,10 @@ pub fn source_solve_mode_tdoa(reference_sensor: usize) -> Result<JsValue, JsValu
 /// the same dimension. `arrivalTimesS` is an aligned seconds array,
 /// `propagationSpeedMS` is the call-level speed in metres per second, and
 /// `options` may include `mode`, `referenceSensor`, `timingSigmaS`, `loss`,
-/// `fScaleS`, `ftol`, `xtol`, `gtol`, and `maxNfev`.
+/// `fScaleS`, `ftol`, `xtol`, `gtol`, `maxNfev`, and `includeInfluence`.
+/// `includeInfluence` defaults to `true`; set it to `false` to skip the
+/// per-sensor leave-one-out re-solves and return an empty `perSensorInfluence`
+/// array without changing any other output.
 #[wasm_bindgen(js_name = locateSource)]
 pub fn locate_source(
     sensors: JsValue,
@@ -377,19 +382,17 @@ pub fn locate_source(
 ) -> Result<JsValue, JsValue> {
     let sensors = parse_sensors(sensors)?;
     let arrival_times_s = parse_f64_array(arrival_times_s, "arrivalTimesS")?;
-    let options = parse_options(options)?;
-    let solution = core_locate_source(&sensors, &arrival_times_s, propagation_speed_m_s, &options)
-        .map_err(source_error)?;
+    let (options, include_influence) = parse_options(options)?;
+    let mut config = CoreSourceLocateConfig::default();
+    config.options = options;
+    config.include_influence = include_influence;
+    let solution =
+        core_locate_source_with(&sensors, &arrival_times_s, propagation_speed_m_s, &config)
+            .map_err(source_error)?;
     to_js(&SourceSolutionJs::from(solution))
 }
 
-/// Compute the closed-form Chan-Ho seed used by [`locateSource`].
-///
-/// `mode` is `"toa"`, `"tdoa"`, or `{ mode: "tdoa", referenceSensor }`.
-/// Per-sensor speed overrides are not used by the closed-form equations, but
-/// they are used by [`locateSource`] during iterative refinement.
-#[wasm_bindgen(js_name = chanHoInitialGuess)]
-pub fn chan_ho_initial_guess(
+fn closed_form_initial_guess_impl(
     sensors: JsValue,
     arrival_times_s: JsValue,
     propagation_speed_m_s: f64,
@@ -398,9 +401,38 @@ pub fn chan_ho_initial_guess(
     let sensors = parse_sensors(sensors)?;
     let arrival_times_s = parse_f64_array(arrival_times_s, "arrivalTimesS")?;
     let mode = parse_mode_value(mode)?;
-    let guess = core_chan_ho_initial_guess(&sensors, &arrival_times_s, propagation_speed_m_s, mode)
-        .map_err(source_error)?;
+    let guess =
+        core_closed_form_initial_guess(&sensors, &arrival_times_s, propagation_speed_m_s, mode)
+            .map_err(source_error)?;
     to_js(&SourceInitialGuessJs::from(guess))
+}
+
+/// Compute the closed-form spherical-intersection seed used by [`locateSource`].
+///
+/// `mode` is `"toa"`, `"tdoa"`, or `{ mode: "tdoa", referenceSensor }`.
+/// Per-sensor speed overrides are not used by the closed-form equations, but
+/// they are used by [`locateSource`] during iterative refinement.
+#[wasm_bindgen(js_name = closedFormInitialGuess)]
+pub fn closed_form_initial_guess(
+    sensors: JsValue,
+    arrival_times_s: JsValue,
+    propagation_speed_m_s: f64,
+    mode: JsValue,
+) -> Result<JsValue, JsValue> {
+    closed_form_initial_guess_impl(sensors, arrival_times_s, propagation_speed_m_s, mode)
+}
+
+/// Deprecated alias for [`closed_form_initial_guess`].
+///
+/// @deprecated Use `closedFormInitialGuess` instead.
+#[wasm_bindgen(js_name = chanHoInitialGuess)]
+pub fn chan_ho_initial_guess(
+    sensors: JsValue,
+    arrival_times_s: JsValue,
+    propagation_speed_m_s: f64,
+    mode: JsValue,
+) -> Result<JsValue, JsValue> {
+    closed_form_initial_guess_impl(sensors, arrival_times_s, propagation_speed_m_s, mode)
 }
 
 /// Compute timing DOP for a proposed source position.

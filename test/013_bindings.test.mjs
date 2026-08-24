@@ -15,6 +15,7 @@ import {
   cfarCaMultiplierFromPfa,
   cfarCaThreshold,
   chanHoInitialGuess,
+  closedFormInitialGuess,
   ewmaUpdate,
   ewmaUpdatePowerOfTwo,
   kalmanCvSteadyStateGains,
@@ -183,7 +184,7 @@ test("0.13 source-localization primitives recover reference vectors", () => {
   const speed = 343.0;
   const times3d = arrivals(sensors3d, source3d, origin, speed);
 
-  const seed = chanHoInitialGuess(sensors3d, times3d, speed, sourceSolveModeToa());
+  const seed = closedFormInitialGuess(sensors3d, times3d, speed, sourceSolveModeToa());
   assertPositionClose(seed.positionM, source3d, 1e-8, "seed position");
   close(seed.originTimeS, origin, 1e-10, "seed origin");
   assert.ok(seed.residualRmsS < 1e-11);
@@ -199,6 +200,23 @@ test("0.13 source-localization primitives recover reference vectors", () => {
   assert.ok(solution.covariance);
   assert.equal(solution.residuals.length, sensors3d.length);
   assert.ok(solution.residuals.every((row) => Math.abs(row.residualS) < 1e-10));
+  assert.equal(solution.perSensorInfluence.length, sensors3d.length);
+
+  const withoutInfluence = locateSource(sensors3d, times3d, speed, {
+    timingSigmaS: 0.001,
+    includeInfluence: false,
+  });
+  assert.deepEqual(withoutInfluence.perSensorInfluence, []);
+  assertVectorBitsEqual(
+    withoutInfluence.positionM,
+    solution.positionM,
+    "influence-disabled position",
+  );
+  assertMaybeNumberEqual(
+    withoutInfluence.originTimeS,
+    solution.originTimeS,
+    "influence-disabled origin time",
+  );
 
   const sensors2d = [
     { positionM: [0.0, 0.0] },
@@ -208,6 +226,12 @@ test("0.13 source-localization primitives recover reference vectors", () => {
   ];
   const source2d = [300.0, 260.0];
   const times2d = arrivals(sensors2d, source2d, 4.0, 340.0);
+  const seed2d = closedFormInitialGuess(sensors2d, times2d, 340.0, sourceSolveModeToa());
+  assertPositionClose(seed2d.positionM, source2d, 1e-8, "2D seed position");
+  close(seed2d.originTimeS, 4.0, 1e-10, "2D seed origin");
+  assert.ok(seed2d.residualRmsS < 1e-11);
+  assert.deepEqual(chanHoInitialGuess(sensors2d, times2d, 340.0, sourceSolveModeToa()), seed2d);
+
   const tdoa = locateSource(sensors2d, times2d, 340.0, {
     ...sourceSolveModeTdoa(0),
     timingSigmaS: 0.001,

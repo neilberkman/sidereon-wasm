@@ -112,7 +112,10 @@ try {
     "ExactSp3Request",
     "NominalIssue",
     "Sp3ContentStartConvention",
+    "chanHoInitialGuess",
+    "closedFormInitialGuess",
     "defaultSampleForDate",
+    "locateSource",
     "nextIssueDue",
     "parseExactSp3",
     "productSolutionClass",
@@ -128,7 +131,10 @@ try {
     "export class ExactSp3ParseResult",
     "export class ExactSp3Request",
     "export class NominalIssue",
+    "export interface SourceLocateOptions",
     "export interface WindowContinuityVerdict",
+    "export function chanHoInitialGuess(",
+    "export function closedFormInitialGuess(",
     "export function defaultSampleForDate(",
     "export function nextIssueDue(",
     "export function parseExactSp3(",
@@ -142,6 +148,8 @@ try {
     "stencilExtent(): { beforeS: number; afterS: number };",
     "readonly covers: NominalCoverage;",
     'compression: "none" | "gzip" | "unix_compress";',
+    "includeInfluence?: boolean;",
+    "* @deprecated Use `closedFormInitialGuess` instead.",
   ];
   for (const path of ["pkg/sidereon.d.ts", "pkg-node/sidereon.d.ts"]) {
     const declarations = readFileSync(join(packageRoot, path), "utf8");

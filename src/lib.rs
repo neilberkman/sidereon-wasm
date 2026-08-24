@@ -359,8 +359,8 @@ pub use sky::{
     moon_illumination, sun_az_el, MoonElevationCrossing, MoonTransit,
 };
 pub use source_localization::{
-    chan_ho_initial_guess, locate_source, source_crlb, source_dop, source_solve_mode_tdoa,
-    source_solve_mode_toa,
+    chan_ho_initial_guess, closed_form_initial_guess, locate_source, source_crlb, source_dop,
+    source_solve_mode_tdoa, source_solve_mode_toa,
 };
 pub use sp3::{
     load_sp3, open_precise_interpolant_artifact, parse_exact_sp3,

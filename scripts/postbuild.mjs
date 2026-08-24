@@ -17,6 +17,102 @@ export type Vec3 = [number, number, number] | Float64Array;
 export type Vec4 = [number, number, number, number] | Float64Array;
 export type Matrix3 = number[] | Float64Array;
 
+export interface SourceSensor {
+    /** Sensor position in a caller-chosen 2D or 3D Cartesian frame, in metres. */
+    positionM: number[] | Float64Array;
+    /** Optional propagation-speed override for this sensor, in metres per second. */
+    propagationSpeedMS?: number;
+}
+
+export type SourceLocateMode = "toa" | "ToA" | "TOA" | "tdoa" | "TDOA";
+
+export interface SourceSolveModeObject {
+    mode?: SourceLocateMode;
+    referenceSensor?: number;
+}
+
+export type SourceSolveMode = SourceLocateMode | SourceSolveModeObject;
+
+export interface SourceLocateOptions {
+    mode?: SourceLocateMode;
+    /** Reference sensor index for TDOA mode; defaults to zero. */
+    referenceSensor?: number;
+    /** Timing standard deviation used for covariance, CRLB, and influence scores. */
+    timingSigmaS?: number;
+    /**
+     * Whether to compute per-sensor leave-one-out influence diagnostics.
+     * Defaults to true. Set to false to skip one nonlinear re-solve per sensor;
+     * perSensorInfluence is then empty and every other output is bit-identical.
+     */
+    includeInfluence?: boolean;
+    loss?: "linear" | "softL1" | "soft_l1" | "huber" | "cauchy" | "arctan";
+    fScaleS?: number;
+    ftol?: number;
+    xtol?: number;
+    gtol?: number;
+    maxNfev?: number;
+}
+
+export interface SourceInitialGuess {
+    positionM: number[];
+    originTimeS: number | null;
+    residualRmsS: number;
+}
+
+export interface SourceResidual {
+    sensorIndex: number;
+    referenceSensorIndex: number | null;
+    residualS: number;
+}
+
+export interface SourceSensorInfluence {
+    sensorIndex: number;
+    residualS: number;
+    leaveOneOutResidualS: number | null;
+    positionDeltaM: number | null;
+    originTimeDeltaS: number | null;
+    /** First-derivative robust-loss weight for the full-solution residual. */
+    lossWeight: number;
+    /**
+     * max(abs(residualS), abs(leaveOneOutResidualS)) / timingSigmaS, or
+     * abs(residualS) / timingSigmaS when the leave-one-out solve is unavailable.
+     * Robust-loss downweighting is reported separately in lossWeight.
+     */
+    score: number;
+}
+
+export interface SourceCovariance {
+    state: number[][];
+    positionM2: number[][];
+    originTimeS2: number | null;
+    timingSigmaS: number;
+}
+
+export interface SourceGeometryQuality {
+    tier: "RankDeficient" | "ZeroRedundancy" | "Weak" | "Nominal";
+    redundancy: number;
+    rank: number;
+    conditionNumber: number;
+    gdop: number;
+    raimCheckable: boolean;
+    covarianceValidated: boolean;
+}
+
+export interface SourceSolution {
+    positionM: number[];
+    originTimeS: number | null;
+    covariance: SourceCovariance | null;
+    residuals: SourceResidual[];
+    perSensorInfluence: SourceSensorInfluence[];
+    geometryQuality: SourceGeometryQuality;
+    initialGuess: SourceInitialGuess;
+    status: number;
+    nfev: number;
+    njev: number;
+    cost: number;
+    optimality: number;
+}
+
 export interface ExactProductIdentityInput {
     family: "sp3" | "ionex" | "clk" | "nav";
     analysisCenter: string;
@@ -642,6 +738,23 @@ export type TerrainOrthometricBatchResult = { ok: true; orthometricHeightM: Orth
 `;
 
 const topLevelReplacements = [
+  ["export function sourceSolveModeToa(): string;", 'export function sourceSolveModeToa(): "toa";'],
+  [
+    "export function sourceSolveModeTdoa(reference_sensor: number): any;",
+    'export function sourceSolveModeTdoa(referenceSensor: number): { mode: "tdoa"; referenceSensor: number };',
+  ],
+  [
+    "export function locateSource(sensors: any, arrival_times_s: any, propagation_speed_m_s: number, options: any): any;",
+    "export function locateSource(sensors: SourceSensor[], arrivalTimesS: number[] | Float64Array, propagationSpeedMS: number, options?: SourceLocateOptions | null): SourceSolution;",
+  ],
+  [
+    "export function closedFormInitialGuess(sensors: any, arrival_times_s: any, propagation_speed_m_s: number, mode: any): any;",
+    "export function closedFormInitialGuess(sensors: SourceSensor[], arrivalTimesS: number[] | Float64Array, propagationSpeedMS: number, mode: SourceSolveMode): SourceInitialGuess;",
+  ],
+  [
+    "export function chanHoInitialGuess(sensors: any, arrival_times_s: any, propagation_speed_m_s: number, mode: any): any;",
+    "export function chanHoInitialGuess(sensors: SourceSensor[], arrivalTimesS: number[] | Float64Array, propagationSpeedMS: number, mode: SourceSolveMode): SourceInitialGuess;",
+  ],
   [
     "export function mergeSp3(sources: Sp3[], options: any): Sp3MergeResult;",
     "export function mergeSp3(sources: Sp3[], options?: Sp3MergeOptions | null): Sp3MergeResult;",
