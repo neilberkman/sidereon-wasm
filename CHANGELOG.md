@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `THIRD-PARTY-NOTICES.md` names the vendored tide-source snapshot
+  consistently (sidereon-core 0.36.3, byte-identical to the 0.35.0 sources).
+  No API changes.
+
 ## 1.1.0 - 2026-08-24
 
 ### Added
