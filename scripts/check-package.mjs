@@ -7,6 +7,17 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const packageJson = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
+
+// The npm package and the wasm crate must state the same release number; the
+// 1.1.1 lockstep restoration made this a hard gate.
+const crateVersion = readFileSync(join(packageRoot, "Cargo.toml"), "utf8").match(
+  /^version = "([^"]+)"$/m,
+)[1];
+if (crateVersion !== packageJson.version) {
+  throw new Error(
+    `Cargo.toml version ${crateVersion} does not match package.json version ${packageJson.version}`,
+  );
+}
 const scratch = mkdtempSync(join(tmpdir(), "sidereon-wasm-package-"));
 const packDirectory = join(scratch, "pack");
 const consumerDirectory = join(scratch, "consumer");
