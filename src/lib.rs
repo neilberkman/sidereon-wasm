@@ -143,8 +143,9 @@ pub use constellation::{
     parse_navcen_at, to_csv_js, validate_against_sp3_ids_js, validate_js,
 };
 pub use covariance::{
-    propagate_covariance, transport_covariance_js, CovarianceEphemeris, CovarianceFrame,
-    CovarianceTransportResult,
+    covariance6_km_to_m, covariance6_m_to_km, eci_to_rtn_covariance6, interpolate_covariance6,
+    propagate_covariance, rtn_to_eci_covariance6, transport_covariance_js, CovarianceEphemeris,
+    CovarianceFrame, CovarianceTransportResult,
 };
 pub use coverage::{coverage_look_angles, CoverageGrid};
 pub use crinex::{decode_crinex, decode_crinex_lines, encode_crinex, load_crinex};
@@ -197,8 +198,9 @@ pub use frame_catalog::{
     HelmertTransform, TerrestrialFrame,
 };
 pub use frames::{
-    civil_to_j2000_seconds, ecef_to_geodetic, gcrs_to_itrs, geodetic_to_ecef, gps_utc_offset_s,
-    itrs_to_gcrs, j2000_seconds_to_civil, leap_second_table_info, leap_seconds, leap_seconds_batch,
+    civil_to_j2000_seconds, data_day_of_year, day_of_year, ecef_to_geodetic, gcrs_to_itrs,
+    geodetic_to_ecef, gps_utc_offset_s, itrs_to_gcrs, j2000_seconds_to_civil,
+    leap_second_table_info, leap_seconds, leap_seconds_batch, second_of_day,
     split_jd_to_j2000_seconds, tai_utc_offset_s, teme_to_gcrs, time_scale_abbrev,
     timescale_offset_at_s_js, timescale_offset_s_js, ut1_coverage_info, CivilDateTime, FrameStates,
     GnssWeekTow, Instant, JulianDate, LeapSecondTable, TimeScale, Ut1Coverage,
@@ -249,12 +251,14 @@ pub use observables::{
     ionosphere_free_phase_m, ionosphere_free_pseudoranges, melbourne_wubbena, narrow_lane_code,
     noise_amplification, observables_broadcast, observables_sp3, phase_meters,
     predict_batch_broadcast, predict_batch_sp3, pseudorange_variance, range_rate_to_doppler,
-    replica, rinex_band_frequency_hz_js, rinex_band_wavelength_m_js, sigmas, slip_reason_label,
-    smooth_code, smooth_iono_free_code, snr_post_db, solve_velocity, solve_velocity_broadcast,
-    wavelength_m_js, weight_vector, wide_lane_cycles, wide_lane_wavelength, AcquisitionGrid,
-    AcquisitionResult, CarrierPair, CorrelationResult, IonoFreePseudorangeResult,
-    IonoFreeSmoothResult, PredictBatch, PredictedObservables, PseudorangeDropReason, RaimWeights,
-    SatelliteVector, SlipReason, SlipResult, SmoothCodeResult, VelocitySolution,
+    replica, rinex_band_frequency_hz_js, rinex_band_wavelength_m_js,
+    rinex_observation_frequency_hz_js, rinex_observation_wavelength_m_js, sigmas,
+    slip_reason_label, smooth_code, smooth_iono_free_code, snr_post_db, solve_velocity,
+    solve_velocity_broadcast, wavelength_m_js, weight_vector, wide_lane_cycles,
+    wide_lane_wavelength, AcquisitionGrid, AcquisitionResult, CarrierPair, CorrelationResult,
+    IonoFreePseudorangeResult, IonoFreeSmoothResult, PredictBatch, PredictedObservables,
+    PseudorangeDropReason, RaimWeights, SatelliteVector, SlipReason, SlipResult, SmoothCodeResult,
+    VelocitySolution,
 };
 pub use observation::{
     observe, observe_barycentric_state, observe_spk_body, parallactic_angle_deg,
@@ -303,11 +307,12 @@ pub use rinex_clock::{
     ClockEpoch, ClockSeries, RinexClock,
 };
 pub use rinex_nav::{
-    cnav_ura_nominal_m, load_rinex_nav, parse_rinex_glonass_records, parse_rinex_iono_corrections,
-    parse_rinex_leap_seconds, parse_rinex_nav, parse_rinex_nav_records, BroadcastDelayTerm,
-    BroadcastEphemeris, BroadcastEvaluation, BroadcastGroupDelaysJs, BroadcastRecordJs,
-    BroadcastStoreEvaluation, ClockPolynomialJs, CnavParametersJs, CnavSignal, GlonassRecordJs,
-    IonoCorrectionsJs, KeplerianElementsJs, KlobucharAlphaBetaJs, NavMessage,
+    cnav_ura_nominal_m, encode_rinex_nav, load_rinex_nav, parse_rinex_glonass_records,
+    parse_rinex_iono_corrections, parse_rinex_leap_seconds, parse_rinex_nav,
+    parse_rinex_nav_lenient, parse_rinex_nav_records, BroadcastDelayTerm, BroadcastEphemeris,
+    BroadcastEvaluation, BroadcastGroupDelaysJs, BroadcastRecordJs, BroadcastStoreEvaluation,
+    ClockPolynomialJs, CnavParametersJs, CnavSignal, GlonassRecordJs, IonoCorrectionsJs,
+    KeplerianElementsJs, KlobucharAlphaBetaJs, NavMessage, RinexNavParse, SkippedNavBlock,
 };
 pub use rinex_obs::{
     load_rinex_obs, observation_kind_label, parse_rinex_obs, CarrierPhaseSeries, ObsEpoch,
@@ -332,8 +337,8 @@ pub use rtk_arc::{
     solve_wide_lane_fixed_rinex_rtk_baseline_js,
 };
 pub use sbas::{
-    decode_sbas_message, sat_to_sbas_prn, sbas_corrected_state, sbas_prn_to_sat, solve_spp_sbas,
-    SbasCorrectionStore,
+    decode_sbas_message, parse_sbas_ems_lines, parse_sbas_rtklib_lines, sat_to_sbas_prn,
+    sbas_corrected_state, sbas_prn_to_sat, solve_spp_sbas, SbasCorrectionStore, SbasLogBlock,
 };
 pub use sbas_pl::{
     sbas_pl_error_label, sbas_protection_levels, AirborneModel, DegradationParams, SbasErrorModel,

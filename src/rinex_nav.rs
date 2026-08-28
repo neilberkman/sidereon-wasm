@@ -14,6 +14,7 @@ use sidereon_core::ephemeris::{
 use sidereon_core::prelude::EphemerisSource;
 use sidereon_core::rinex::nav::{
     encode_nav, parse_glonass, parse_iono_corrections, parse_leap_seconds, parse_nav,
+    parse_nav_lenient, NavParse as CoreNavParse, SkippedNavBlock as CoreSkippedNavBlock,
 };
 use sidereon_core::{astro::time::GnssWeekTow, GnssSatelliteId};
 use std::str::FromStr;
@@ -640,6 +641,76 @@ pub struct BroadcastEphemeris {
     leap_seconds: Option<f64>,
 }
 
+/// One supported RINEX NAV block that the core parser could not represent.
+///
+/// The diagnostic is retained by [`parseRinexNavLenient`] instead of turning a
+/// malformed supported block into a fatal whole-file error.
+#[wasm_bindgen]
+pub struct SkippedNavBlock {
+    inner: CoreSkippedNavBlock,
+}
+
+#[wasm_bindgen]
+impl SkippedNavBlock {
+    /// Satellite token from the skipped block, such as `"G01"`.
+    #[wasm_bindgen(getter)]
+    pub fn satellite(&self) -> String {
+        self.inner.satellite.clone()
+    }
+
+    /// Core parser diagnostic explaining why the block was skipped.
+    #[wasm_bindgen(getter)]
+    pub fn message(&self) -> String {
+        self.inner.message.clone()
+    }
+}
+
+/// Result of lenient RINEX NAV parsing.
+///
+/// `records` contains the supported records in file order and `skipped`
+/// contains malformed supported blocks reported by the core parser.
+#[wasm_bindgen]
+pub struct RinexNavParse {
+    inner: CoreNavParse,
+}
+
+#[wasm_bindgen]
+impl RinexNavParse {
+    /// Supported broadcast records in file order.
+    #[wasm_bindgen(getter)]
+    pub fn records(&self) -> Vec<BroadcastRecordJs> {
+        self.inner
+            .records
+            .iter()
+            .copied()
+            .map(BroadcastRecordJs::from_core)
+            .collect()
+    }
+
+    /// Supported blocks skipped by the lenient core parser, in file order.
+    #[wasm_bindgen(getter)]
+    pub fn skipped(&self) -> Vec<SkippedNavBlock> {
+        self.inner
+            .skipped
+            .iter()
+            .cloned()
+            .map(|inner| SkippedNavBlock { inner })
+            .collect()
+    }
+
+    /// Number of supported records returned by the parser.
+    #[wasm_bindgen(getter, js_name = recordCount)]
+    pub fn record_count(&self) -> usize {
+        self.inner.records.len()
+    }
+
+    /// Number of supported blocks skipped by the parser.
+    #[wasm_bindgen(getter, js_name = skippedCount)]
+    pub fn skipped_count(&self) -> usize {
+        self.inner.skipped.len()
+    }
+}
+
 /// Store-level broadcast ephemeris evaluation at a J2000 query epoch.
 #[wasm_bindgen]
 pub struct BroadcastStoreEvaluation {
@@ -787,6 +858,29 @@ pub fn parse_rinex_nav_records(bytes: &[u8]) -> Result<Vec<BroadcastRecordJs>, J
         .into_iter()
         .map(BroadcastRecordJs::from_core)
         .collect())
+}
+
+/// Parse RINEX NAV bytes leniently through the core parser.
+///
+/// Header failures remain fatal. Malformed supported record blocks are
+/// returned in `skipped` with their satellite token and core diagnostic;
+/// unsupported systems and message rosters retain the core parser's skip
+/// policy. Non-UTF-8 input throws a `TypeError`.
+#[wasm_bindgen(js_name = parseRinexNavLenient)]
+pub fn parse_rinex_nav_lenient(bytes: &[u8]) -> Result<RinexNavParse, JsValue> {
+    let text = utf8_text(bytes, "RINEX NAV source")?;
+    Ok(RinexNavParse {
+        inner: parse_nav_lenient(&text).map_err(engine_error)?,
+    })
+}
+
+/// Encode an arbitrary caller-supplied list of broadcast records as RINEX NAV
+/// text. The list is consumed by the WASM boundary and the bytes are produced
+/// by the core's deterministic encoder.
+#[wasm_bindgen(js_name = encodeRinexNav)]
+pub fn encode_rinex_nav(records: Vec<BroadcastRecordJs>) -> String {
+    let records: Vec<BroadcastRecord> = records.into_iter().map(|record| record.inner).collect();
+    encode_nav(&records)
 }
 
 /// Parse all GLONASS state-vector records from RINEX NAV bytes.

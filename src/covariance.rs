@@ -7,6 +7,13 @@
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
+use sidereon_core::astro::covariance::{
+    covariance6_km_to_m as core_covariance6_km_to_m,
+    covariance6_m_to_km as core_covariance6_m_to_km,
+    eci_to_rtn_covariance6 as core_eci_to_rtn_covariance6,
+    interpolate_covariance_psd as core_interpolate_covariance_psd,
+    rtn_to_eci_covariance6 as core_rtn_to_eci_covariance6, RtnFrameError,
+};
 use sidereon_core::astro::forces::{DragForce, DragParameters, SpaceWeather};
 use sidereon_core::astro::propagator::{
     transport_covariance, CovarianceFrame as CoreCovarianceFrame, CovariancePropagationOptions,
@@ -16,7 +23,92 @@ use sidereon_core::astro::propagator::{
 use sidereon_core::astro::state::CartesianState;
 
 use crate::error::{engine_error, range_error, type_error};
-use crate::marshal::{covariance6_flat, covariance6_from_flat, vec3_finite};
+use crate::marshal::{covariance6_error, covariance6_flat, covariance6_from_flat, vec3_finite};
+
+fn rtn_frame_error(error: RtnFrameError) -> JsValue {
+    match error {
+        RtnFrameError::InvalidInput { field, reason } => {
+            range_error(&format!("invalid input for {field}: {reason}"))
+        }
+        other => engine_error(other.message()),
+    }
+}
+
+fn state_from_vectors(
+    position_km: &[f64],
+    velocity_km_s: &[f64],
+) -> Result<CartesianState, JsValue> {
+    Ok(CartesianState::new(
+        0.0,
+        vec3_finite("positionKm", position_km)?,
+        vec3_finite("velocityKmS", velocity_km_s)?,
+    ))
+}
+
+/// Convert a validated flat row-major 6x6 covariance from km²-based state
+/// units to m²-based state units.
+#[wasm_bindgen(js_name = covariance6KmToM)]
+pub fn covariance6_km_to_m(covariance: &[f64]) -> Result<Vec<f64>, JsValue> {
+    let covariance = covariance6_from_flat("covariance", covariance)?;
+    core_covariance6_km_to_m(&covariance)
+        .map(|covariance| covariance6_flat(&covariance))
+        .map_err(|error| covariance6_error("covariance", error))
+}
+
+/// Convert a validated flat row-major 6x6 covariance from m²-based state
+/// units to km²-based state units.
+#[wasm_bindgen(js_name = covariance6MToKm)]
+pub fn covariance6_m_to_km(covariance: &[f64]) -> Result<Vec<f64>, JsValue> {
+    let covariance = covariance6_from_flat("covariance", covariance)?;
+    core_covariance6_m_to_km(&covariance)
+        .map(|covariance| covariance6_flat(&covariance))
+        .map_err(|error| covariance6_error("covariance", error))
+}
+
+/// Interpolate two validated same-frame flat row-major 6x6 covariances with
+/// the core PSD-preserving interpolation.
+#[wasm_bindgen(js_name = interpolateCovariance6)]
+pub fn interpolate_covariance6(
+    covariance_a: &[f64],
+    covariance_b: &[f64],
+    u: f64,
+) -> Result<Vec<f64>, JsValue> {
+    let covariance_a = covariance6_from_flat("covarianceA", covariance_a)?;
+    let covariance_b = covariance6_from_flat("covarianceB", covariance_b)?;
+    core_interpolate_covariance_psd(&covariance_a, &covariance_b, u)
+        .map(|covariance| covariance6_flat(&covariance))
+        .map_err(|error| covariance6_error("covariance interpolation", error))
+}
+
+/// Transform a flat row-major 6x6 ECI state covariance into RTN coordinates.
+/// Position is in km and velocity is in km/s.
+#[wasm_bindgen(js_name = eciToRtnCovariance6)]
+pub fn eci_to_rtn_covariance6(
+    covariance: &[f64],
+    position_km: &[f64],
+    velocity_km_s: &[f64],
+) -> Result<Vec<f64>, JsValue> {
+    let covariance = covariance6_from_flat("covariance", covariance)?;
+    let state = state_from_vectors(position_km, velocity_km_s)?;
+    core_eci_to_rtn_covariance6(&covariance, &state)
+        .map(|covariance| covariance6_flat(&covariance))
+        .map_err(rtn_frame_error)
+}
+
+/// Transform a flat row-major 6x6 RTN state covariance into ECI coordinates.
+/// Position is in km and velocity is in km/s.
+#[wasm_bindgen(js_name = rtnToEciCovariance6)]
+pub fn rtn_to_eci_covariance6(
+    covariance: &[f64],
+    position_km: &[f64],
+    velocity_km_s: &[f64],
+) -> Result<Vec<f64>, JsValue> {
+    let covariance = covariance6_from_flat("covariance", covariance)?;
+    let state = state_from_vectors(position_km, velocity_km_s)?;
+    core_rtn_to_eci_covariance6(&covariance, &state)
+        .map(|covariance| covariance6_flat(&covariance))
+        .map_err(rtn_frame_error)
+}
 
 /// Frame a 6x6 state covariance is expressed in.
 #[wasm_bindgen]

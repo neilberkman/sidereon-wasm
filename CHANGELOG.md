@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Lenient RINEX NAV parsing with core skipped-block diagnostics and standalone
+  encoding for arbitrary caller-supplied record lists.
+- Direct, RINEX-version-aware observation-code frequency and wavelength
+  mappings.
+- EMS and RTKLIB SBAS text-log parsers returning timestamped raw message
+  blocks with structured decode access.
+- Added core-backed `secondOfDay`, `dayOfYear`, and `dataDayOfYear` calendar
+  helpers.
+- Added core-backed six-by-six covariance unit conversion, PSD interpolation,
+  and ECI/RTN transform helpers using flat row-major arrays.
+
 ## 1.1.1 - 2026-08-26
 
 ### Changed

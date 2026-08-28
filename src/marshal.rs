@@ -148,8 +148,12 @@ pub fn covariance6_from_flat(name: &str, values: &[f64]) -> Result<Covariance6, 
             *cell = values[i * 6 + j];
         }
     }
-    Covariance6::try_from_matrix(matrix)
-        .map_err(|e| range_error(&format!("{name} {}", covariance6_error_message(e))))
+    Covariance6::try_from_matrix(matrix).map_err(|e| covariance6_error(name, e))
+}
+
+/// Map a core 6x6 covariance failure to the binding's numeric-input error.
+pub fn covariance6_error(name: &str, error: Covariance6Error) -> JsValue {
+    range_error(&format!("{name} {}", covariance6_error_message(error)))
 }
 
 fn covariance6_error_message(error: Covariance6Error) -> &'static str {

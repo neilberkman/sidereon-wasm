@@ -22,7 +22,8 @@ use sidereon_core::astro::frames::transforms::{
     teme_to_gcrs_compute, TemeStateKm,
 };
 use sidereon_core::astro::time::civil::{
-    civil_from_j2000_seconds, j2000_seconds, j2000_seconds_from_split,
+    civil_from_j2000_seconds, day_of_year as core_day_of_year, j2000_seconds,
+    j2000_seconds_from_split, second_of_day as core_second_of_day,
 };
 use sidereon_core::astro::time::model::Instant as CoreInstant;
 use sidereon_core::astro::time::scales::{
@@ -33,6 +34,7 @@ use sidereon_core::astro::time::{
     timescale_offset_at_s, timescale_offset_s, GnssWeekTow as CoreGnssWeekTow,
     TimeScale as CoreTimeScale, TimeScales,
 };
+use sidereon_core::data::{day_of_year as core_data_day_of_year, ProductDate};
 
 use crate::error::{engine_error, range_error, type_error};
 use crate::marshal::{flat3, mat3_flat, rows3, same_len};
@@ -212,6 +214,32 @@ pub fn civil_to_j2000_seconds(
     second: f64,
 ) -> f64 {
     j2000_seconds(year, month, day, hour, minute, second)
+}
+
+/// Seconds elapsed since the beginning of a civil day.
+#[wasm_bindgen(js_name = secondOfDay)]
+pub fn second_of_day(hour: i32, minute: i32, second: f64) -> f64 {
+    core_second_of_day(hour, minute, second)
+}
+
+fn product_date(year: i32, month: i32, day: i32) -> Result<ProductDate, JsValue> {
+    let month = u8::try_from(month).map_err(|_| range_error("month must fit a calendar date"))?;
+    let day = u8::try_from(day).map_err(|_| range_error("day must fit a calendar date"))?;
+    ProductDate::new(year, month, day)
+        .map_err(|error| range_error(&format!("invalid calendar date: {error}")))
+}
+
+/// Fractional day-of-year from a civil calendar date and time.
+#[wasm_bindgen(js_name = dayOfYear)]
+pub fn day_of_year(year: i32, month: i32, day: i32, hour: i32, minute: i32, second: f64) -> f64 {
+    core_day_of_year(year, month, day, hour, minute, second)
+}
+
+/// Integer day-of-year from a validated product date.
+#[wasm_bindgen(js_name = dataDayOfYear)]
+pub fn data_day_of_year(year: i32, month: i32, day: i32) -> Result<u16, JsValue> {
+    let date = product_date(year, month, day)?;
+    Ok(core_data_day_of_year(date))
 }
 
 /// Continuous seconds since J2000 for a split Julian date.

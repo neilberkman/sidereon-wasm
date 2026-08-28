@@ -16,7 +16,8 @@ use sidereon_core::carrier_phase::{
 use sidereon_core::combinations::{self, PseudorangeDropReason as CoreDropReason};
 use sidereon_core::frequencies::{
     default_iono_free_pair, default_spp_frequency_hz, frequency_hz, glonass_g1_frequency_hz,
-    rinex_band_frequency_hz, rinex_band_wavelength_m, wavelength_m, CarrierPair as CoreCarrierPair,
+    rinex_band_frequency_hz, rinex_band_wavelength_m, rinex_observation_frequency_hz,
+    rinex_observation_wavelength_m, wavelength_m, CarrierPair as CoreCarrierPair,
 };
 use sidereon_core::observables::{
     predict as core_predict, predict_batch as core_predict_batch, ObservableEphemerisSource,
@@ -216,6 +217,37 @@ pub fn rinex_band_wavelength_m_js(
         band,
         glonass_channel,
     ))
+}
+
+/// RINEX observation-code frequency in hertz for a system and full code.
+///
+/// `rinex_version` is passed to the core policy because some constellation
+/// band meanings depend on the RINEX minor version. GLONASS G1/G2 codes also
+/// require the FDMA channel number. Returns `undefined` when the core has no
+/// mapping for the supplied system/code combination.
+#[wasm_bindgen(js_name = rinexObservationFrequencyHz)]
+pub fn rinex_observation_frequency_hz_js(
+    system: GnssSystem,
+    code: &str,
+    rinex_version: f64,
+    glonass_channel: Option<i8>,
+) -> Option<f64> {
+    rinex_observation_frequency_hz(system.into(), code, rinex_version, glonass_channel)
+}
+
+/// RINEX observation-code wavelength in metres for a system and full code.
+///
+/// This uses the same version-aware observation-code policy as
+/// [`rinexObservationFrequencyHz`]. Returns `undefined` when no core mapping
+/// exists.
+#[wasm_bindgen(js_name = rinexObservationWavelengthM)]
+pub fn rinex_observation_wavelength_m_js(
+    system: GnssSystem,
+    code: &str,
+    rinex_version: f64,
+    glonass_channel: Option<i8>,
+) -> Option<f64> {
+    rinex_observation_wavelength_m(system.into(), code, rinex_version, glonass_channel)
 }
 
 /// GLONASS G1 FDMA carrier frequency in hertz for channel `k`.
