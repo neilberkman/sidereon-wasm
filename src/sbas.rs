@@ -16,6 +16,10 @@ use sidereon_core::sbas::store::{
     SbasCorrectionStore as CoreSbasCorrectionStore, SbasFastCorrection, SbasGeoState, SbasIgp,
     SbasIonoGrid, SbasLongTermCorrection,
 };
+use sidereon_core::sbas::{
+    parse_ems_lines as core_parse_ems_lines, parse_rtklib_lines as core_parse_rtklib_lines,
+    SbasLogBlock as CoreSbasLogBlock,
+};
 use sidereon_core::staleness::StalenessPolicy;
 use sidereon_core::GnssSatelliteId;
 
@@ -412,6 +416,74 @@ fn nullable<T: Serialize>(value: Option<T>) -> Result<JsValue, JsValue> {
     }
 }
 
+/// One timestamped SBAS message row parsed from an EMS or RTKLIB text log.
+#[wasm_bindgen]
+pub struct SbasLogBlock {
+    inner: CoreSbasLogBlock,
+}
+
+impl From<CoreSbasLogBlock> for SbasLogBlock {
+    fn from(inner: CoreSbasLogBlock) -> Self {
+        Self { inner }
+    }
+}
+
+#[wasm_bindgen]
+impl SbasLogBlock {
+    /// SBAS satellite token, such as `"S20"`.
+    #[wasm_bindgen(getter)]
+    pub fn satellite(&self) -> String {
+        self.inner.satellite_id.to_string()
+    }
+
+    /// SBAS satellite token, such as `"S20"`.
+    #[wasm_bindgen(getter, js_name = satelliteId)]
+    pub fn satellite_id(&self) -> String {
+        self.inner.satellite_id.to_string()
+    }
+
+    /// GPS week of the parsed message epoch.
+    #[wasm_bindgen(getter)]
+    pub fn week(&self) -> u32 {
+        self.inner.epoch.week
+    }
+
+    /// Seconds of GPS week of the parsed message epoch.
+    #[wasm_bindgen(getter, js_name = towS)]
+    pub fn tow_s(&self) -> f64 {
+        self.inner.epoch.tow_s
+    }
+
+    /// Core-selected wire form: `"framed250"` or `"body226"`.
+    #[wasm_bindgen(getter)]
+    pub fn form(&self) -> String {
+        form_label(self.inner.form).to_string()
+    }
+
+    /// Raw SBAS bytes in the form selected by the core parser.
+    #[wasm_bindgen(getter)]
+    pub fn bytes(&self) -> Vec<u8> {
+        self.inner.bytes.clone()
+    }
+
+    /// Decode this raw message using its parsed wire form.
+    pub fn decode(&self) -> Result<JsValue, JsValue> {
+        let block =
+            CoreSbasBlock::decode(&self.inner.bytes, self.inner.form).map_err(engine_error)?;
+        decoded_sbas_block(block)
+    }
+}
+
+fn decoded_sbas_block(block: CoreSbasBlock) -> Result<JsValue, JsValue> {
+    let out = SbasMessageJs {
+        message_type: block.message.message_type(),
+        form: form_label(block.form),
+        kind: format!("{:?}", block.message),
+        message: message_payload(&block.message),
+    };
+    to_js(&out)
+}
+
 /// Decode a raw SBAS message.
 ///
 /// `form` is `"framed250"` for a 32-byte message with CRC or `"body226"` for a
@@ -421,13 +493,23 @@ fn nullable<T: Serialize>(value: Option<T>) -> Result<JsValue, JsValue> {
 #[wasm_bindgen(js_name = decodeSbasMessage)]
 pub fn decode_sbas_message(bytes: &[u8], form: Option<String>) -> Result<JsValue, JsValue> {
     let block = decode_block(bytes, form)?;
-    let out = SbasMessageJs {
-        message_type: block.message.message_type(),
-        form: form_label(block.form),
-        kind: format!("{:?}", block.message),
-        message: message_payload(&block.message),
-    };
-    to_js(&out)
+    decoded_sbas_block(block)
+}
+
+/// Parse timestamped SBAS EMS log lines into raw message blocks.
+#[wasm_bindgen(js_name = parseSbasEmsLines)]
+pub fn parse_sbas_ems_lines(text: &str) -> Result<Vec<SbasLogBlock>, JsValue> {
+    core_parse_ems_lines(text)
+        .map(|blocks| blocks.into_iter().map(Into::into).collect())
+        .map_err(engine_error)
+}
+
+/// Parse timestamped RTKLIB SBAS log lines into raw message blocks.
+#[wasm_bindgen(js_name = parseSbasRtklibLines)]
+pub fn parse_sbas_rtklib_lines(text: &str) -> Result<Vec<SbasLogBlock>, JsValue> {
+    core_parse_rtklib_lines(text)
+        .map(|blocks| blocks.into_iter().map(Into::into).collect())
+        .map_err(engine_error)
 }
 
 #[wasm_bindgen]

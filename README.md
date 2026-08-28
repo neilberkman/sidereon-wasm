@@ -334,6 +334,31 @@ Invalid coordinates throw a `RangeError` whose `kind` is
 is `"latitude"` or `"longitude"`, and `detail` carries the complete typed
 record.
 
+## RINEX NAV, observation codes, and SBAS text logs
+
+`parseRinexNavLenient(bytes)` delegates to the core lenient NAV parser. It
+returns a `RinexNavParse` with supported `records` in file order and `skipped`
+diagnostics for malformed supported blocks. `recordCount` and `skippedCount`
+are available as convenience getters. Header and UTF-8 failures throw; a
+skipped block exposes its `satellite` and core `message`.
+
+`encodeRinexNav(records)` accepts any caller-supplied JavaScript array of
+`BroadcastRecordJs` objects and delegates the deterministic RINEX NAV encoding
+to the core engine. The record wrapper list is consumed at the WASM boundary.
+
+`rinexObservationFrequencyHz(system, code, rinexVersion, glonassChannel)` and
+`rinexObservationWavelengthM(...)` use the core's direct full observation-code
+policy, including RINEX-version-dependent mappings and the optional GLONASS
+FDMA channel. Unknown combinations return `undefined`; the narrower
+`rinexBandFrequencyHz` and `rinexBandWavelengthM` helpers remain available for
+canonical band lookups.
+
+`parseSbasEmsLines(text)` and `parseSbasRtklibLines(text)` return full
+timestamped `SbasLogBlock` objects from the core engine. Each block exposes
+`satellite`/`satelliteId`, GPS `week` and `towS`, the selected wire `form`, raw
+`bytes`, and `decode()` for the structured SBAS message. Malformed recognized
+blocks throw an engine `Error`; unrelated lines are ignored.
+
 ## Capabilities
 
 The wasm surface mirrors the full breadth of the engine:
@@ -426,6 +451,25 @@ codes; `TypeError` for malformed input; `RangeError` for out-of-domain numbers).
 Full signatures live in the bundled TypeScript declarations (`sidereon.d.ts`),
 including the plain-object request types for ARAIM, RTK/PPP, fusion,
 signal-analysis, and terrain protocols.
+
+### Calendar and six-by-six covariance helpers
+
+`secondOfDay(hour, minute, second)` returns the civil seconds since midnight.
+`dayOfYear(year, month, day, hour, minute, second)` returns the fractional
+civil day-of-year. These two civil helpers forward their raw fields directly to
+the core civil implementations without `ProductDate` validation. In contrast,
+`dataDayOfYear(year, month, day)` constructs a validated `ProductDate` and
+returns its integer day-of-year; invalid product dates throw `RangeError` there.
+
+The six-by-six covariance helpers take and return flat row-major
+`Float64Array`s of length 36, with state order `[rX, rY, rZ, vX, vY, vZ]`:
+`covariance6KmToM`, `covariance6MToKm`, and `interpolateCovariance6(a, b, u)`.
+`eciToRtnCovariance6(covariance, positionKm, velocityKmS)` and
+`rtnToEciCovariance6(covariance, positionKm, velocityKmS)` use length-3 flat
+position and velocity arrays in km and km/s. Covariance validation,
+PSD-preserving interpolation, and RTN frame construction are supplied by
+`sidereon-core`; malformed shapes throw `TypeError`, invalid numeric inputs
+throw `RangeError`, and undefined RTN frames throw an engine `Error`.
 
 A few conventions to know: positions and state arrays cross as
 `Float64Array` (multi-epoch arrays are flat row-major, `3 * epochCount`); SGP4
