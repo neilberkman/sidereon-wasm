@@ -293,12 +293,15 @@ test("observationQc reports the core summary and selected signal statistics", ()
 
 test("lintRinexNav and repairRinexNav expose core NAV diagnostics", () => {
   const lint = lintRinexNav(fixture("nav/BRD400DLR_S_20261800000_01H_MN_trim.rnx"));
-  assert.equal(lint.clean, false);
-  assert.equal(lint.findingCount, 8);
-  assert.deepEqual(lint.counts, { fatal: 0, error: 4, warning: 0, info: 4 });
+  // The GPS/QZSS CNAV-family records in this fixture decode, so there are no
+  // dropped-block errors; the remaining findings are informational and include
+  // the ordering and health of those records.
+  assert.equal(lint.clean, true);
+  assert.equal(lint.findingCount, 6);
+  assert.deepEqual(lint.counts, { fatal: 0, error: 0, warning: 0, info: 6 });
   assert.deepEqual(
     lint.findings.map((f) => f.code),
-    ["NAV-B05", "NAV-B01", "NAV-B01", "NAV-B01", "NAV-B01", "NAV-B06", "NAV-B06", "NAV-B06"],
+    ["NAV-B03", "NAV-B05", "NAV-B05", "NAV-B06", "NAV-B06", "NAV-B06"],
   );
 
   const repaired = repairRinexNav(fixture("nav/BRD400DLR_S_20261800000_01H_MN_trim.rnx"), {

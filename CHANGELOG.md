@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0 - 2026-08-28
+
+### Added
+
+- Calendar second-of-day and fractional day-of-year helpers, the five
+  covariance-6 conversion/interpolation/ECI-RTN helpers, lenient NAV parsing
+  with skipped-block diagnostics and arbitrary record-list encoding, RINEX
+  observation-code and version-aware frequency/wavelength lookups, and the
+  SBAS EMS and RTKLIB text-log parsers.
+
+### Changed
+
+- Engine update: sidereon 1.2.0 / sidereon-core 1.2.0, which corrects lenient
+  RINEX 4 CNAV decoding and RTKLIB SBAS wire-form preservation.
+
 ## Unreleased
 
 ### Added
