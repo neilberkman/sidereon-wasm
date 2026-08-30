@@ -489,7 +489,7 @@ build.
 
 - **Engine and core repo:** https://github.com/neilberkman/sidereon
 - **Live demo:** https://sidereon.dev
-- **Sibling interfaces:** sidereon-python (PyPI), sidereon-c, sidereon-ex (Hex).
+- **Sibling interfaces:** sidereon-python (PyPI), sidereon-c, sidereon-go, sidereon-ex (Hex).
   One validated engine, the same numbers in every language.
 
 ## License
