@@ -39,26 +39,26 @@ test("static positioning solve exposes core result surfaces", () => {
   assert.equal(solution.stateParameterCount, 7);
   assert.equal(solution.stateCovarianceM2.length, 49);
   assert.deepEqual(Array.from(solution.positionCovarianceEcefM2, f64Bits), [
-    0x3ff55bd517465463n,
-    0x3fc766b35c17b0e5n,
-    0x3febbd29eb8c8c0cn,
-    0x3fc766b35c17b0e5n,
-    0x3fd7b6831a525d22n,
-    0x3fc72062921d7cdan,
-    0x3febbd29eb8c8c0cn,
-    0x3fc72062921d7cdan,
-    0x3ff56cf25e0ef234n,
+    0x3ff55bd52bdd8efdn,
+    0x3fc766b325a0b0b9n,
+    0x3febbd2a000f1967n,
+    0x3fc766b325a0b0b9n,
+    0x3fd7b68301542806n,
+    0x3fc72062e773124an,
+    0x3febbd2a000f1967n,
+    0x3fc72062e773124an,
+    0x3ff56cf262816bafn,
   ]);
   assert.deepEqual(Array.from(solution.positionCovarianceEnuM2, f64Bits), [
-    0x3fd593b621d4d4a2n,
-    0x3f90a8b39ecf521dn,
-    0x3f5793a733f563d8n,
-    0x3f90a8b39ecf5220n,
-    0x3fde61340e1f516an,
-    0xbfbb68b2b17f83fan,
-    0x3f5793a733f56400n,
-    0xbfbb68b2b17f8400n,
-    0x4001dc96d7f66a2en,
+    0x3fd593b616f2ccfan,
+    0x3f90a8b726bc41fbn,
+    0x3f5793a2295b7ac8n,
+    0x3f90a8b726bc41fcn,
+    0x3fde61340ba36127n,
+    0xbfbb68b32a1d0fc6n,
+    0x3f5793a2295b7c00n,
+    0xbfbb68b32a1d0fb0n,
+    0x4001dc96e3073c93n,
   ]);
 
   assert.deepEqual(

@@ -187,8 +187,8 @@ test("PPP float exposes covariance, residual, and temporal-correlation surfaces"
     ].map(f64Bits),
     [
       4607092346807469998n,
-      4636702048046853952n,
-      4658782444239332428n,
+      4636702048046853910n,
+      4658782444239332389n,
       4629618296680096500n,
       4635390590904316913n,
     ],

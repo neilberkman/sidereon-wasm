@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.3 - 2026-08-30
+
+### Changed
+
+- Engine update: sidereon 1.3.3 / sidereon-core 1.3.3. Archive-listing parsing
+  is no longer quadratic (154 s to 0.23 s on AIUB's ~426k-row listing), and
+  transcendental math is bit-identical across x86_64 and arm64. A large
+  listing still parses synchronously on the calling thread; run it in a Web
+  Worker when the caller must stay responsive. No interface API changes.
+
 ## 1.3.1 - 2026-08-29
 
 ### Changed
