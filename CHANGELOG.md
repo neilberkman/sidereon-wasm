@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.1 - 2026-08-30
+
+### Changed
+
+- Engine update: sidereon 1.4.1 / sidereon-core 1.4.1 with
+  trust-region-least-squares 0.11.0. Portable numerics now cover
+  transcendental math, nalgebra decompositions, dynamic products, and fused
+  multiply-add, keeping native results bit-identical; fit optimality and
+  evaluation counts retain the 1.3.3 results where the fit path is unchanged.
+
 ## 1.3.3 - 2026-08-30
 
 ### Changed
