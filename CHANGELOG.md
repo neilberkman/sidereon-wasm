@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.0 - 2026-09-03
+
+- **Breaking (upstream):** sidereon 2.0.0 / sidereon-core 2.0.0. Public input
+  structs are `#[non_exhaustive]`, so they are built through `Default`/`new`
+  plus field assignment, and `terrain`, `ionex::tec_grid` and
+  `astro::propagator::dense_output` return typed error enums. Error message
+  text is unchanged, so the strings this package surfaces to JavaScript are
+  the same.
+- The JavaScript API is unchanged.
+
 ## 1.4.1 - 2026-08-30
 
 ### Changed
