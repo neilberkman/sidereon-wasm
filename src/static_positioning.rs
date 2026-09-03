@@ -87,12 +87,12 @@ fn robust_config(input: &RobustInput) -> Result<CoreRobustConfig, JsValue> {
     if max_outer < 1 {
         return Err(range_error("robust.maxOuter must be at least 1"));
     }
-    Ok(CoreRobustConfig {
-        huber_k,
-        scale_floor_m,
-        max_outer,
-        outer_tol_m,
-    })
+    let mut cfg = CoreRobustConfig::default();
+    cfg.huber_k = huber_k;
+    cfg.scale_floor_m = scale_floor_m;
+    cfg.max_outer = max_outer;
+    cfg.outer_tol_m = outer_tol_m;
+    Ok(cfg)
 }
 
 fn decode_epoch_array(epochs: JsValue) -> Result<Vec<JsValue>, JsValue> {
@@ -122,11 +122,11 @@ fn static_options(
         Some(robust) => Some(robust_config(&robust)?),
         None => first_robust,
     };
-    Ok(CoreStaticSolveOptions {
-        initial_position_m,
-        with_geodetic: input.with_geodetic.unwrap_or(true),
-        robust,
-    })
+    let mut options = CoreStaticSolveOptions::default();
+    options.initial_position_m = initial_position_m;
+    options.with_geodetic = input.with_geodetic.unwrap_or(true);
+    options.robust = robust;
+    Ok(options)
 }
 
 fn solve_over<E>(eph: &E, epochs: JsValue, options: JsValue) -> Result<StaticSolution, JsValue>

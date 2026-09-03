@@ -106,14 +106,10 @@ impl DtedTerrain {
             serde_wasm_bindgen::from_value(options)
                 .map_err(|e| type_error(&format!("invalid terrain options: {e}")))?
         };
+        let mut lookup_opts = DtedLookupOptions::default();
+        lookup_opts.interpolation = interpolation(options.interpolation.as_deref())?;
         self.inner
-            .height_m_with_options(
-                longitude_deg,
-                latitude_deg,
-                DtedLookupOptions {
-                    interpolation: interpolation(options.interpolation.as_deref())?,
-                },
-            )
+            .height_m_with_options(longitude_deg, latitude_deg, lookup_opts)
             .map_err(engine_error)
     }
 
@@ -135,14 +131,11 @@ impl DtedTerrain {
                 .map_err(|e| type_error(&format!("invalid terrain options: {e}")))?
         };
         let core_points: Vec<(f64, f64)> = points.iter().map(TerrainPointInput::lon_lat).collect();
+        let mut lookup_opts = DtedLookupOptions::default();
+        lookup_opts.interpolation = interpolation(options.interpolation.as_deref())?;
         let out: Vec<TerrainBatchResult> = self
             .inner
-            .height_batch(
-                &core_points,
-                DtedLookupOptions {
-                    interpolation: interpolation(options.interpolation.as_deref())?,
-                },
-            )
+            .height_batch(&core_points, lookup_opts)
             .into_iter()
             .map(|result| match result {
                 Ok(height_m) => TerrainBatchResult {

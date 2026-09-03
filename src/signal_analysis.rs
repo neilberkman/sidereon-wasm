@@ -23,23 +23,23 @@ fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
 fn dll_options(options: JsValue) -> Result<core::DllTrackingOptions, JsValue> {
     let input: DllTrackingOptionsInput = serde_wasm_bindgen::from_value(options)
         .map_err(|e| type_error(&format!("invalid DLL tracking options: {e}")))?;
-    Ok(core::DllTrackingOptions {
-        cn0_db_hz: input.cn0_db_hz,
-        loop_bandwidth_hz: input.loop_bandwidth_hz,
-        integration_time_s: input.integration_time_s,
-        correlator_spacing_chips: input.correlator_spacing_chips,
-        receiver_bandwidth_hz: input.receiver_bandwidth_hz,
-    })
+    Ok(core::DllTrackingOptions::new(
+        input.cn0_db_hz,
+        input.loop_bandwidth_hz,
+        input.integration_time_s,
+        input.correlator_spacing_chips,
+        input.receiver_bandwidth_hz,
+    ))
 }
 
 fn multipath_options(options: JsValue) -> Result<core::MultipathOptions, JsValue> {
     let input: MultipathOptionsInput = serde_wasm_bindgen::from_value(options)
         .map_err(|e| type_error(&format!("invalid multipath options: {e}")))?;
-    Ok(core::MultipathOptions {
-        multipath_to_direct_ratio: input.multipath_to_direct_ratio,
-        correlator_spacing_chips: input.correlator_spacing_chips,
-        receiver_bandwidth_hz: input.receiver_bandwidth_hz,
-    })
+    Ok(core::MultipathOptions::new(
+        input.multipath_to_direct_ratio,
+        input.correlator_spacing_chips,
+        input.receiver_bandwidth_hz,
+    ))
 }
 
 /// Early-late DLL processing mode for thermal-noise jitter.

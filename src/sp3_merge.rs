@@ -528,10 +528,10 @@ impl MergeOptionsInput {
                     "outlierReject.clockToleranceS must be non-negative and finite",
                 ));
             }
-            opts.outlier_reject = Some(OutlierRejectOptions {
-                position_tolerance_m: guard.position_tolerance_m,
-                clock_tolerance_s: guard.clock_tolerance_s,
-            });
+            opts.outlier_reject = Some(OutlierRejectOptions::new(
+                guard.position_tolerance_m,
+                guard.clock_tolerance_s,
+            ));
         }
         if let Some(value) = self.target_epoch_interval_s {
             if !(value.is_finite() && value > 0.0) {

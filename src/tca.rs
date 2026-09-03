@@ -61,10 +61,10 @@ impl Default for FinderOptionsInput {
 
 impl FinderOptionsInput {
     fn to_core(&self) -> TcaFinderOptions {
-        TcaFinderOptions {
-            coarse_step_seconds: self.coarse_step_seconds,
-            time_tolerance_seconds: self.time_tolerance_seconds,
-        }
+        let mut options = TcaFinderOptions::default();
+        options.coarse_step_seconds = self.coarse_step_seconds;
+        options.time_tolerance_seconds = self.time_tolerance_seconds;
+        options
     }
 }
 

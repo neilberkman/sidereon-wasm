@@ -59,10 +59,7 @@ pub(crate) fn continuity_options(
             )));
         }
     };
-    Ok(ContinuityOptions {
-        speed_bound,
-        residual_tolerance_m,
-    })
+    Ok(ContinuityOptions::new(speed_bound, residual_tolerance_m))
 }
 
 fn continuity_verdict_options(

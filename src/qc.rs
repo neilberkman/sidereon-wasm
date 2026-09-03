@@ -145,12 +145,12 @@ impl RobustInput {
         if max_outer < 1 {
             return Err(range_error("robust.maxOuter must be at least 1"));
         }
-        Ok(RobustConfig {
-            huber_k,
-            scale_floor_m,
-            max_outer,
-            outer_tol_m,
-        })
+        let mut cfg = RobustConfig::default();
+        cfg.huber_k = huber_k;
+        cfg.scale_floor_m = scale_floor_m;
+        cfg.max_outer = max_outer;
+        cfg.outer_tol_m = outer_tol_m;
+        Ok(cfg)
     }
 }
 
@@ -258,11 +258,11 @@ fn raim_options(req: &FdeRequest) -> Result<RaimOptions, JsValue> {
                 .collect::<BTreeMap<_, _>>(),
         )
     };
-    Ok(RaimOptions {
-        p_fa: req.p_fa.unwrap_or(defaults.p_fa),
-        weights,
-        n_systems: req.n_systems.map(|n| n as isize),
-    })
+    let mut options = RaimOptions::default();
+    options.p_fa = req.p_fa.unwrap_or(defaults.p_fa);
+    options.weights = weights;
+    options.n_systems = req.n_systems.map(|n| n as isize);
+    Ok(options)
 }
 
 /// Run FDE against the given ephemeris under the core RAIM-gated exclusion loop.
@@ -314,18 +314,14 @@ pub fn fde(eph: &dyn EphemerisSource, request: JsValue) -> Result<FdeSolution, J
         robust: None,
     };
 
-    let options = FdeSppOptions {
-        fde: FdeOptions {
-            raim: raim_options(&req)?,
-            max_iterations: req
-                .max_iterations
-                .unwrap_or_else(|| observations.len().saturating_sub(4)),
-        },
-        validation: SolutionValidationOptions {
-            max_pdop: req.max_pdop,
-            ..Default::default()
-        },
-    };
+    let fde = FdeOptions::new(
+        raim_options(&req)?,
+        req.max_iterations
+            .unwrap_or_else(|| observations.len().saturating_sub(4)),
+    );
+    let mut validation = SolutionValidationOptions::default();
+    validation.max_pdop = req.max_pdop;
+    let options = FdeSppOptions::new(fde, validation);
 
     let result = if let Some(robust) = &req.robust {
         quality::spp_robust_fde_driver(

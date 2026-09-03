@@ -503,13 +503,13 @@ impl PseudorangeVarianceOptionsInput {
             }
         };
         let core_default = CoreVarOptions::default();
-        Ok(CoreVarOptions {
-            a_m: self.a_m.unwrap_or(core_default.a_m),
-            b_m: self.b_m.unwrap_or(core_default.b_m),
-            model,
-            cn0_dbhz: self.cn0_dbhz,
-            cn0_scale_m2: self.cn0_scale_m2.unwrap_or(core_default.cn0_scale_m2),
-        })
+        let mut options = CoreVarOptions::default();
+        options.a_m = self.a_m.unwrap_or(core_default.a_m);
+        options.b_m = self.b_m.unwrap_or(core_default.b_m);
+        options.model = model;
+        options.cn0_dbhz = self.cn0_dbhz;
+        options.cn0_scale_m2 = self.cn0_scale_m2.unwrap_or(core_default.cn0_scale_m2);
+        Ok(options)
     }
 }
 
@@ -720,13 +720,13 @@ fn cycle_slip_options(options: JsValue) -> Result<CoreCycleSlipOptions, JsValue>
             .map_err(|e| type_error(&format!("invalid cycle-slip options: {e}")))?
     };
     let core_default = CoreCycleSlipOptions::default();
-    Ok(CoreCycleSlipOptions {
-        gf_threshold_m: input.gf_threshold_m.unwrap_or(core_default.gf_threshold_m),
-        mw_threshold_cycles: input
-            .mw_threshold_cycles
-            .unwrap_or(core_default.mw_threshold_cycles),
-        min_arc_gap_s: input.min_arc_gap_s.unwrap_or(core_default.min_arc_gap_s),
-    })
+    let mut options = CoreCycleSlipOptions::default();
+    options.gf_threshold_m = input.gf_threshold_m.unwrap_or(core_default.gf_threshold_m);
+    options.mw_threshold_cycles = input
+        .mw_threshold_cycles
+        .unwrap_or(core_default.mw_threshold_cycles);
+    options.min_arc_gap_s = input.min_arc_gap_s.unwrap_or(core_default.min_arc_gap_s);
+    Ok(options)
 }
 
 /// Cycle-slip classification for one input epoch.
@@ -1002,11 +1002,11 @@ fn velocity_options(options: JsValue) -> Result<CoreVelOptions, JsValue> {
             )))
         }
     };
-    Ok(CoreVelOptions {
-        observable,
-        light_time: input.light_time.unwrap_or(core_default.light_time),
-        sagnac: input.sagnac.unwrap_or(core_default.sagnac),
-    })
+    let mut options = CoreVelOptions::default();
+    options.observable = observable;
+    options.light_time = input.light_time.unwrap_or(core_default.light_time);
+    options.sagnac = input.sagnac.unwrap_or(core_default.sagnac);
+    Ok(options)
 }
 
 /// Solve receiver ECEF velocity and clock drift from one epoch of observations.
@@ -1173,11 +1173,11 @@ pub(crate) fn predict_options(options: JsValue) -> Result<CorePredictOptions, Js
             .map_err(|e| type_error(&format!("invalid predict options: {e}")))?
     };
     let core_default = CorePredictOptions::default();
-    Ok(CorePredictOptions {
-        carrier_hz: input.carrier_hz.unwrap_or(core_default.carrier_hz),
-        light_time: input.light_time.unwrap_or(core_default.light_time),
-        sagnac: input.sagnac.unwrap_or(core_default.sagnac),
-    })
+    let mut options = CorePredictOptions::default();
+    options.carrier_hz = input.carrier_hz.unwrap_or(core_default.carrier_hz);
+    options.light_time = input.light_time.unwrap_or(core_default.light_time);
+    options.sagnac = input.sagnac.unwrap_or(core_default.sagnac);
+    Ok(options)
 }
 
 fn predict_from_source(
@@ -1441,16 +1441,16 @@ fn replica_options(options: JsValue) -> Result<CoreReplicaOptions, JsValue> {
     let input: ReplicaOptionsInput = serde_wasm_bindgen::from_value(options)
         .map_err(|e| type_error(&format!("invalid replica options: {e}")))?;
     let core_default = CoreReplicaOptions::one_code_period();
-    Ok(CoreReplicaOptions {
-        sample_rate_hz: input.sample_rate_hz.unwrap_or(core_default.sample_rate_hz),
-        num_samples: input.num_samples.unwrap_or(core_default.num_samples),
-        code_phase_chips: input
+    Ok(CoreReplicaOptions::new(
+        input.sample_rate_hz.unwrap_or(core_default.sample_rate_hz),
+        input.num_samples.unwrap_or(core_default.num_samples),
+        input
             .code_phase_chips
             .unwrap_or(core_default.code_phase_chips),
-        code_doppler_hz: input
+        input
             .code_doppler_hz
             .unwrap_or(core_default.code_doppler_hz),
-    })
+    ))
 }
 
 /// Build a sampled GPS C/A code replica, an `Int8Array`.
@@ -1476,16 +1476,16 @@ fn correlate_options(options: JsValue) -> Result<CoreCorrelateOptions, JsValue> 
     let input: CorrelateOptionsInput = serde_wasm_bindgen::from_value(options)
         .map_err(|e| type_error(&format!("invalid correlate options: {e}")))?;
     let core_default = CoreCorrelateOptions::default();
-    Ok(CoreCorrelateOptions {
-        sample_rate_hz: input.sample_rate_hz.unwrap_or(core_default.sample_rate_hz),
-        doppler_hz: input.doppler_hz.unwrap_or(core_default.doppler_hz),
-        code_phase_chips: input
-            .code_phase_chips
-            .unwrap_or(core_default.code_phase_chips),
-        code_doppler_hz: input
-            .code_doppler_hz
-            .unwrap_or(core_default.code_doppler_hz),
-    })
+    let mut options = CoreCorrelateOptions::default();
+    options.sample_rate_hz = input.sample_rate_hz.unwrap_or(core_default.sample_rate_hz);
+    options.doppler_hz = input.doppler_hz.unwrap_or(core_default.doppler_hz);
+    options.code_phase_chips = input
+        .code_phase_chips
+        .unwrap_or(core_default.code_phase_chips);
+    options.code_doppler_hz = input
+        .code_doppler_hz
+        .unwrap_or(core_default.code_doppler_hz);
+    Ok(options)
 }
 
 #[derive(Deserialize, Default)]
@@ -1504,14 +1504,14 @@ fn acquisition_options(options: JsValue) -> Result<CoreAcqOptions, JsValue> {
     let input: AcquisitionOptionsInput = serde_wasm_bindgen::from_value(options)
         .map_err(|e| type_error(&format!("invalid acquisition options: {e}")))?;
     let core_default = CoreAcqOptions::default();
-    Ok(CoreAcqOptions {
-        sample_rate_hz: input.sample_rate_hz.unwrap_or(core_default.sample_rate_hz),
-        doppler_min_hz: input.doppler_min_hz.unwrap_or(core_default.doppler_min_hz),
-        doppler_max_hz: input.doppler_max_hz.unwrap_or(core_default.doppler_max_hz),
-        doppler_step_hz: input
-            .doppler_step_hz
-            .unwrap_or(core_default.doppler_step_hz),
-    })
+    let mut options = CoreAcqOptions::default();
+    options.sample_rate_hz = input.sample_rate_hz.unwrap_or(core_default.sample_rate_hz);
+    options.doppler_min_hz = input.doppler_min_hz.unwrap_or(core_default.doppler_min_hz);
+    options.doppler_max_hz = input.doppler_max_hz.unwrap_or(core_default.doppler_max_hz);
+    options.doppler_step_hz = input
+        .doppler_step_hz
+        .unwrap_or(core_default.doppler_step_hz);
+    Ok(options)
 }
 
 /// Reshape an interleaved `[i0, q0, i1, q1, ...]` `Float64Array` into IQ samples.

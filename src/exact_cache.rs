@@ -45,12 +45,11 @@ impl ExactCacheSingleFlightWait {
         wait_timeout_ms: f64,
     ) -> Result<ExactCacheSingleFlightWait, JsValue> {
         let started = duration_ms(started_ms, "startedMs")?;
-        let options = CoreOptions {
-            poll_interval: duration_ms(poll_interval_ms, "pollIntervalMs")?,
-            heartbeat_interval: duration_ms(heartbeat_interval_ms, "heartbeatIntervalMs")?,
-            liveness_timeout: duration_ms(liveness_timeout_ms, "livenessTimeoutMs")?,
-            wait_timeout: duration_ms(wait_timeout_ms, "waitTimeoutMs")?,
-        };
+        let mut options = CoreOptions::default();
+        options.poll_interval = duration_ms(poll_interval_ms, "pollIntervalMs")?;
+        options.heartbeat_interval = duration_ms(heartbeat_interval_ms, "heartbeatIntervalMs")?;
+        options.liveness_timeout = duration_ms(liveness_timeout_ms, "livenessTimeoutMs")?;
+        options.wait_timeout = duration_ms(wait_timeout_ms, "waitTimeoutMs")?;
 
         // `observe` owns option validation in the core. Seeding with an empty
         // opaque revision is harmless: the first browser observation differs

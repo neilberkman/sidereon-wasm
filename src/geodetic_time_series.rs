@@ -128,15 +128,15 @@ struct MidasOptionsInput {
 
 fn midas_options(input: MidasOptionsInput) -> MidasOptions {
     let defaults = MidasOptions::default();
-    MidasOptions {
-        dominant_period_years: input
-            .dominant_period_years
-            .unwrap_or(defaults.dominant_period_years),
-        period_tolerance_years: input
-            .period_tolerance_years
-            .unwrap_or(defaults.period_tolerance_years),
-        min_pairs: input.min_pairs.unwrap_or(defaults.min_pairs),
-    }
+    let mut options = MidasOptions::default();
+    options.dominant_period_years = input
+        .dominant_period_years
+        .unwrap_or(defaults.dominant_period_years);
+    options.period_tolerance_years = input
+        .period_tolerance_years
+        .unwrap_or(defaults.period_tolerance_years);
+    options.min_pairs = input.min_pairs.unwrap_or(defaults.min_pairs);
+    options
 }
 
 #[derive(Deserialize, Default)]
@@ -183,11 +183,11 @@ fn loss(label: Option<String>) -> Result<Loss, JsValue> {
 
 fn trajectory_options(input: TrajectoryFitOptionsInput) -> Result<TrajectoryFitOptions, JsValue> {
     let defaults = TrajectoryFitOptions::default();
-    Ok(TrajectoryFitOptions {
-        loss: loss(input.loss)?,
-        f_scale_m: input.f_scale_m.unwrap_or(defaults.f_scale_m),
-        max_nfev: input.max_nfev,
-    })
+    let mut options = TrajectoryFitOptions::default();
+    options.loss = loss(input.loss)?;
+    options.f_scale_m = input.f_scale_m.unwrap_or(defaults.f_scale_m);
+    options.max_nfev = input.max_nfev;
+    Ok(options)
 }
 
 #[derive(Deserialize, Default)]
@@ -203,18 +203,18 @@ struct StepDetectionOptionsInput {
 
 fn step_options(input: StepDetectionOptionsInput) -> StepDetectionOptions {
     let defaults = StepDetectionOptions::default();
-    StepDetectionOptions {
-        window_years: input.window_years.unwrap_or(defaults.window_years),
-        score_threshold: input.score_threshold.unwrap_or(defaults.score_threshold),
-        min_offset_m: input.min_offset_m.unwrap_or(defaults.min_offset_m),
-        min_samples_each_side: input
-            .min_samples_each_side
-            .unwrap_or(defaults.min_samples_each_side),
-        min_separation_years: input
-            .min_separation_years
-            .unwrap_or(defaults.min_separation_years),
-        midas: input.midas.map(midas_options).unwrap_or(defaults.midas),
-    }
+    let mut options = StepDetectionOptions::default();
+    options.window_years = input.window_years.unwrap_or(defaults.window_years);
+    options.score_threshold = input.score_threshold.unwrap_or(defaults.score_threshold);
+    options.min_offset_m = input.min_offset_m.unwrap_or(defaults.min_offset_m);
+    options.min_samples_each_side = input
+        .min_samples_each_side
+        .unwrap_or(defaults.min_samples_each_side);
+    options.min_separation_years = input
+        .min_separation_years
+        .unwrap_or(defaults.min_separation_years);
+    options.midas = input.midas.map(midas_options).unwrap_or(defaults.midas);
+    options
 }
 
 #[derive(Deserialize)]

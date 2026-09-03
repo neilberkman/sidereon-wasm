@@ -88,12 +88,12 @@ impl ReliabilityOptionsInput {
             (Some(lambda0), None) | (None, Some(lambda0)) => Some(lambda0),
             (None, None) => None,
         };
-        Ok(CoreReliabilityOptions {
-            alpha: self.alpha.unwrap_or(defaults.alpha),
-            beta,
-            lambda0_override,
-            min_redundancy: self.min_redundancy.unwrap_or(defaults.min_redundancy),
-        })
+        let mut options = CoreReliabilityOptions::default();
+        options.alpha = self.alpha.unwrap_or(defaults.alpha);
+        options.beta = beta;
+        options.lambda0_override = lambda0_override;
+        options.min_redundancy = self.min_redundancy.unwrap_or(defaults.min_redundancy);
+        Ok(options)
     }
 }
 

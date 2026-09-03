@@ -118,16 +118,14 @@ impl RinexArcOptionsInput {
                 .collect::<Result<Vec<_>, _>>()?,
             None => defaults.signal_pairs,
         };
-        Ok(RtkRinexArcOptions {
+        Ok(RtkRinexArcOptions::new(
             signal_pairs,
-            max_epochs: self.max_epochs,
-            min_common_satellites: self
-                .min_common_satellites
+            self.max_epochs,
+            self.min_common_satellites
                 .unwrap_or(defaults.min_common_satellites),
-            include_prediction_time: self
-                .include_prediction_time
+            self.include_prediction_time
                 .unwrap_or(defaults.include_prediction_time),
-        })
+        ))
     }
 }
 
@@ -184,16 +182,14 @@ impl RinexDualArcOptionsInput {
                 .collect::<Result<Vec<_>, _>>()?,
             None => defaults.signal_pairs,
         };
-        Ok(RtkRinexDualArcOptions {
+        Ok(RtkRinexDualArcOptions::new(
             signal_pairs,
-            max_epochs: self.max_epochs,
-            min_common_satellites: self
-                .min_common_satellites
+            self.max_epochs,
+            self.min_common_satellites
                 .unwrap_or(defaults.min_common_satellites),
-            include_prediction_time: self
-                .include_prediction_time
+            self.include_prediction_time
                 .unwrap_or(defaults.include_prediction_time),
-        })
+        ))
     }
 }
 
@@ -244,24 +240,23 @@ impl RinexStaticBaselineConfigInput {
         wavelengths_m: BTreeMap<String, f64>,
         offsets_m: BTreeMap<String, f64>,
     ) -> Result<RtkStaticArcConfig, JsValue> {
-        Ok(RtkStaticArcConfig {
-            arc: RtkArcConfig {
-                base_m: self.base_m,
-                reference: self.reference.to_core()?,
-                model: match &self.model {
-                    Some(model) => model.to_core()?,
-                    None => default_measurement_model(),
-                },
-                baseline_prior_sigma_m: self.baseline_prior_sigma_m,
-                ambiguity_prior_sigma_m: self.ambiguity_prior_sigma_m,
-                initial_baseline_m: self.initial_baseline_m,
-                wavelengths_m,
-                offsets_m,
-                update_opts: self.update_opts.to_core()?,
-                preprocessing: self.preprocessing.to_core(),
-            },
-            opts: self.opts.to_core(),
-        })
+        let model = match &self.model {
+            Some(model) => model.to_core()?,
+            None => default_measurement_model(),
+        };
+        let arc = RtkArcConfig::new(
+            self.base_m,
+            self.reference.to_core()?,
+            model,
+            self.baseline_prior_sigma_m,
+            self.ambiguity_prior_sigma_m,
+            self.initial_baseline_m,
+            wavelengths_m,
+            offsets_m,
+            self.update_opts.to_core()?,
+            self.preprocessing.to_core(),
+        );
+        Ok(RtkStaticArcConfig::new(arc, self.opts.to_core()))
     }
 }
 
@@ -330,27 +325,27 @@ impl StaticReferenceCarrierConfigInput {
         &self,
         reference_position_m: [f64; 3],
     ) -> Result<StaticReferenceCarrierRinexOptions, JsValue> {
-        Ok(StaticReferenceCarrierRinexOptions {
-            arc_options: self.arc_options.to_core()?,
-            static_config: RtkStaticArcConfig {
-                arc: RtkArcConfig {
-                    base_m: reference_position_m,
-                    reference: self.reference.to_core()?,
-                    model: match &self.model {
-                        Some(model) => model.to_core()?,
-                        None => default_measurement_model(),
-                    },
-                    baseline_prior_sigma_m: self.baseline_prior_sigma_m,
-                    ambiguity_prior_sigma_m: self.ambiguity_prior_sigma_m,
-                    initial_baseline_m: self.initial_baseline_m,
-                    wavelengths_m: BTreeMap::new(),
-                    offsets_m: BTreeMap::new(),
-                    update_opts: self.update_opts.to_core()?,
-                    preprocessing: self.preprocessing.to_core(),
-                },
-                opts: self.opts.to_core(),
-            },
-        })
+        let model = match &self.model {
+            Some(model) => model.to_core()?,
+            None => default_measurement_model(),
+        };
+        let arc = RtkArcConfig::new(
+            reference_position_m,
+            self.reference.to_core()?,
+            model,
+            self.baseline_prior_sigma_m,
+            self.ambiguity_prior_sigma_m,
+            self.initial_baseline_m,
+            BTreeMap::new(),
+            BTreeMap::new(),
+            self.update_opts.to_core()?,
+            self.preprocessing.to_core(),
+        );
+        let static_config = RtkStaticArcConfig::new(arc, self.opts.to_core());
+        Ok(StaticReferenceCarrierRinexOptions::new(
+            self.arc_options.to_core()?,
+            static_config,
+        ))
     }
 }
 
@@ -385,51 +380,46 @@ impl RinexWideLaneFixedBaselineConfigInput {
     }
 
     fn static_core(&self) -> Result<RtkStaticArcConfig, JsValue> {
-        Ok(RtkStaticArcConfig {
-            arc: RtkArcConfig {
-                base_m: self.base_m,
-                reference: BaselineReferenceSelection::Auto,
-                model: match &self.model {
-                    Some(model) => model.to_core()?,
-                    None => default_measurement_model(),
-                },
-                baseline_prior_sigma_m: self.baseline_prior_sigma_m,
-                ambiguity_prior_sigma_m: self.ambiguity_prior_sigma_m,
-                initial_baseline_m: self.initial_baseline_m,
-                wavelengths_m: BTreeMap::new(),
-                offsets_m: BTreeMap::new(),
-                update_opts: self.update_opts.to_core()?,
-                preprocessing: RtkArcPreprocessing::default(),
-            },
-            opts: self.opts.to_core(),
-        })
+        let model = match &self.model {
+            Some(model) => model.to_core()?,
+            None => default_measurement_model(),
+        };
+        let arc = RtkArcConfig::new(
+            self.base_m,
+            BaselineReferenceSelection::Auto,
+            model,
+            self.baseline_prior_sigma_m,
+            self.ambiguity_prior_sigma_m,
+            self.initial_baseline_m,
+            BTreeMap::new(),
+            BTreeMap::new(),
+            self.update_opts.to_core()?,
+            RtkArcPreprocessing::default(),
+        );
+        Ok(RtkStaticArcConfig::new(arc, self.opts.to_core()))
     }
 
     fn combined_core(&self) -> Result<RtkWideLaneFixedArcConfig, JsValue> {
-        Ok(RtkWideLaneFixedArcConfig {
-            wide_lane: RtkWideLaneArcConfig {
-                base_m: self.base_m,
-                reference: self.reference.to_core()?,
-                options: WideLaneOptions {
-                    min_epochs: 2,
-                    tolerance_cycles: 0.5,
-                    skip_short_fragments: false,
-                },
-                cycle_slip: Some(RtkDualCycleSlipConfig {
-                    policy: CycleSlipPolicy::DropSatellite,
-                    options: CycleSlipOptions::default(),
-                }),
-            },
-            ionosphere_free: RtkIonosphereFreeArcConfig {
-                base_m: self.base_m,
-                initial_baseline_m: self.initial_baseline_m,
-                reference: self.reference.to_core()?,
-                apply_troposphere: self.apply_troposphere.unwrap_or(true),
-            },
-            solve: sidereon_core::rtk_filter::RtkWideLaneFixedArcSolveConfig::Static(
-                self.static_core()?,
-            ),
-        })
+        let options = WideLaneOptions::new(2, 0.5);
+        let cycle_slip = Some(RtkDualCycleSlipConfig::new(
+            CycleSlipPolicy::DropSatellite,
+            CycleSlipOptions::default(),
+        ));
+        let wide_lane =
+            RtkWideLaneArcConfig::new(self.base_m, self.reference.to_core()?, options, cycle_slip);
+        let ionosphere_free = RtkIonosphereFreeArcConfig::new(
+            self.base_m,
+            self.initial_baseline_m,
+            self.reference.to_core()?,
+            self.apply_troposphere.unwrap_or(true),
+        );
+        let solve =
+            sidereon_core::rtk_filter::RtkWideLaneFixedArcSolveConfig::Static(self.static_core()?);
+        Ok(RtkWideLaneFixedArcConfig::new(
+            wide_lane,
+            ionosphere_free,
+            solve,
+        ))
     }
 }
 
@@ -657,18 +647,18 @@ struct ArcConfigInput {
 
 impl ArcConfigInput {
     fn to_core(&self) -> Result<RtkArcConfig, JsValue> {
-        Ok(RtkArcConfig {
-            base_m: self.base_m,
-            reference: self.reference.to_core()?,
-            model: self.model.to_core()?,
-            baseline_prior_sigma_m: self.baseline_prior_sigma_m,
-            ambiguity_prior_sigma_m: self.ambiguity_prior_sigma_m,
-            initial_baseline_m: self.initial_baseline_m,
-            wavelengths_m: self.wavelengths_m.clone(),
-            offsets_m: self.offsets_m.clone(),
-            update_opts: self.update_opts.to_core()?,
-            preprocessing: self.preprocessing.to_core(),
-        })
+        Ok(RtkArcConfig::new(
+            self.base_m,
+            self.reference.to_core()?,
+            self.model.to_core()?,
+            self.baseline_prior_sigma_m,
+            self.ambiguity_prior_sigma_m,
+            self.initial_baseline_m,
+            self.wavelengths_m.clone(),
+            self.offsets_m.clone(),
+            self.update_opts.to_core()?,
+            self.preprocessing.to_core(),
+        ))
     }
 }
 
@@ -703,10 +693,10 @@ struct StaticArcConfigInput {
 
 impl StaticArcConfigInput {
     fn to_core(&self) -> Result<RtkStaticArcConfig, JsValue> {
-        Ok(RtkStaticArcConfig {
-            arc: self.arc.to_core()?,
-            opts: self.opts.to_core(),
-        })
+        Ok(RtkStaticArcConfig::new(
+            self.arc.to_core()?,
+            self.opts.to_core(),
+        ))
     }
 }
 
@@ -817,13 +807,13 @@ struct DualCycleSlipOptionsInput {
 impl DualCycleSlipOptionsInput {
     fn to_core(&self) -> CycleSlipOptions {
         let defaults = CycleSlipOptions::default();
-        CycleSlipOptions {
-            gf_threshold_m: self.gf_threshold_m.unwrap_or(defaults.gf_threshold_m),
-            mw_threshold_cycles: self
-                .mw_threshold_cycles
-                .unwrap_or(defaults.mw_threshold_cycles),
-            min_arc_gap_s: self.min_arc_gap_s.unwrap_or(defaults.min_arc_gap_s),
-        }
+        let mut options = CycleSlipOptions::default();
+        options.gf_threshold_m = self.gf_threshold_m.unwrap_or(defaults.gf_threshold_m);
+        options.mw_threshold_cycles = self
+            .mw_threshold_cycles
+            .unwrap_or(defaults.mw_threshold_cycles);
+        options.min_arc_gap_s = self.min_arc_gap_s.unwrap_or(defaults.min_arc_gap_s);
+        options
     }
 }
 
@@ -838,10 +828,7 @@ struct DualCycleSlipConfigInput {
 
 impl DualCycleSlipConfigInput {
     fn to_core(&self) -> RtkDualCycleSlipConfig {
-        RtkDualCycleSlipConfig {
-            policy: self.policy.to_core(),
-            options: self.options.to_core(),
-        }
+        RtkDualCycleSlipConfig::new(self.policy.to_core(), self.options.to_core())
     }
 }
 
@@ -856,11 +843,9 @@ struct WideLaneOptionsInput {
 
 impl WideLaneOptionsInput {
     fn to_core(&self) -> WideLaneOptions {
-        WideLaneOptions {
-            min_epochs: self.min_epochs,
-            tolerance_cycles: self.tolerance_cycles,
-            skip_short_fragments: self.skip_short_fragments,
-        }
+        let mut options = WideLaneOptions::new(self.min_epochs, self.tolerance_cycles);
+        options.skip_short_fragments = self.skip_short_fragments;
+        options
     }
 }
 
@@ -878,15 +863,14 @@ struct WideLaneArcConfigInput {
 
 impl WideLaneArcConfigInput {
     fn to_core(&self) -> Result<RtkWideLaneArcConfig, JsValue> {
-        Ok(RtkWideLaneArcConfig {
-            base_m: self.base_m,
-            reference: self.reference.to_core()?,
-            options: self.options.to_core(),
-            cycle_slip: self
-                .cycle_slip
+        Ok(RtkWideLaneArcConfig::new(
+            self.base_m,
+            self.reference.to_core()?,
+            self.options.to_core(),
+            self.cycle_slip
                 .as_ref()
                 .map(DualCycleSlipConfigInput::to_core),
-        })
+        ))
     }
 }
 
@@ -905,12 +889,12 @@ struct IonosphereFreeArcConfigInput {
 
 impl IonosphereFreeArcConfigInput {
     fn to_core(&self) -> Result<RtkIonosphereFreeArcConfig, JsValue> {
-        Ok(RtkIonosphereFreeArcConfig {
-            base_m: self.base_m,
-            initial_baseline_m: self.initial_baseline_m,
-            reference: self.reference.to_core()?,
-            apply_troposphere: self.apply_troposphere,
-        })
+        Ok(RtkIonosphereFreeArcConfig::new(
+            self.base_m,
+            self.initial_baseline_m,
+            self.reference.to_core()?,
+            self.apply_troposphere,
+        ))
     }
 }
 
@@ -2008,11 +1992,8 @@ pub fn solve_static_reference_station_rinex_js(
     } else {
         None
     };
-    let options = StaticReferenceStationRinexOptions {
-        code_options,
-        carrier_options,
-        with_geodetic: cfg.with_geodetic(),
-    };
+    let options =
+        StaticReferenceStationRinexOptions::new(code_options, carrier_options, cfg.with_geodetic());
     let solution = solve_static_reference_station_rinex(
         &ephemeris.inner,
         &reference_obs.inner,

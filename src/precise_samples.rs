@@ -646,11 +646,11 @@ pub(crate) fn predict_ranges_over(
                 "requests[{i}].tRxJ2000S must be a finite number"
             )));
         }
-        core_requests.push(RangePredictionRequest {
+        core_requests.push(RangePredictionRequest::new(
             sat,
-            receiver_ecef_m: request.receiver_ecef_m,
-            t_rx_j2000_s: request.t_rx_j2000_s,
-        });
+            request.receiver_ecef_m,
+            request.t_rx_j2000_s,
+        ));
     }
 
     let options = crate::observables::predict_options(options)?;

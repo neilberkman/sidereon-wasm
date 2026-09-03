@@ -106,21 +106,21 @@ fn core_options<'a>(
 ) -> CoreEmissionMediaBatchOptions<'a> {
     let defaults = CoreEmissionMediaBatchOptions::default();
     let ionosphere_default = ionex.is_some();
-    CoreEmissionMediaBatchOptions {
-        carrier_hz: input.carrier_hz.unwrap_or(defaults.carrier_hz),
-        media: ObservableMediaOptions {
-            troposphere: input
-                .troposphere
-                .unwrap_or(false)
-                .then_some(ObservableTroposphereCorrection::default()),
-            ionosphere: if input.ionosphere.unwrap_or(ionosphere_default) {
-                ionex.map(ObservableIonosphereCorrection::Ionex)
-            } else {
-                None
-            },
-        },
-        min_elevation_rad: input.min_elevation_rad,
-    }
+    let mut media = ObservableMediaOptions::default();
+    media.troposphere = input
+        .troposphere
+        .unwrap_or(false)
+        .then_some(ObservableTroposphereCorrection::default());
+    media.ionosphere = if input.ionosphere.unwrap_or(ionosphere_default) {
+        ionex.map(ObservableIonosphereCorrection::Ionex)
+    } else {
+        None
+    };
+    let mut options = CoreEmissionMediaBatchOptions::default();
+    options.carrier_hz = input.carrier_hz.unwrap_or(defaults.carrier_hz);
+    options.media = media;
+    options.min_elevation_rad = input.min_elevation_rad;
+    options
 }
 
 #[derive(Deserialize, Default)]

@@ -422,26 +422,26 @@ fn fit_config(value: JsValue) -> Result<FitConfig, JsValue> {
             .map_err(|e| type_error(&format!("invalid TLE fit config: {e}")))?
     };
     let defaults = FitConfig::default();
-    Ok(FitConfig {
-        epoch: fit_epoch(&input)?,
-        fit_bstar: input.fit_bstar.unwrap_or(defaults.fit_bstar),
-        bstar_seed: input.bstar_seed.unwrap_or(defaults.bstar_seed),
-        use_velocity: input.use_velocity.unwrap_or(defaults.use_velocity),
-        velocity_weight_s: input.velocity_weight_s,
-        weights: input.weights,
-        opsmode: ops_mode(input.ops_mode)?,
-        ftol: input.ftol,
-        xtol: input.xtol,
-        gtol: input.gtol,
-        max_nfev: input.max_nfev,
-        x_scale: x_scale(input.x_scale)?,
-        loss: loss(input.loss.as_deref())?,
-        f_scale: input.f_scale.unwrap_or(defaults.f_scale),
-        metadata: input
-            .metadata
-            .map(|metadata| metadata.to_core())
-            .unwrap_or(defaults.metadata),
-    })
+    let mut options = FitConfig::default();
+    options.epoch = fit_epoch(&input)?;
+    options.fit_bstar = input.fit_bstar.unwrap_or(defaults.fit_bstar);
+    options.bstar_seed = input.bstar_seed.unwrap_or(defaults.bstar_seed);
+    options.use_velocity = input.use_velocity.unwrap_or(defaults.use_velocity);
+    options.velocity_weight_s = input.velocity_weight_s;
+    options.weights = input.weights;
+    options.opsmode = ops_mode(input.ops_mode)?;
+    options.ftol = input.ftol;
+    options.xtol = input.xtol;
+    options.gtol = input.gtol;
+    options.max_nfev = input.max_nfev;
+    options.x_scale = x_scale(input.x_scale)?;
+    options.loss = loss(input.loss.as_deref())?;
+    options.f_scale = input.f_scale.unwrap_or(defaults.f_scale);
+    options.metadata = input
+        .metadata
+        .map(|metadata| metadata.to_core())
+        .unwrap_or(defaults.metadata);
+    Ok(options)
 }
 
 /// Result of fitting a TLE to TEME samples.
@@ -879,11 +879,11 @@ fn pass_options(
     if !time_tolerance_seconds.is_finite() || time_tolerance_seconds <= 0.0 {
         return Err(range_error("timeToleranceS must be positive"));
     }
-    Ok(PassFinderOptions {
-        elevation_mask_deg,
-        coarse_step_seconds: step_seconds,
-        time_tolerance_seconds,
-    })
+    let mut options = PassFinderOptions::default();
+    options.elevation_mask_deg = elevation_mask_deg;
+    options.coarse_step_seconds = step_seconds;
+    options.time_tolerance_seconds = time_tolerance_seconds;
+    Ok(options)
 }
 
 /// TEME states from a batched SGP4 propagation. Each array is flat row-major,

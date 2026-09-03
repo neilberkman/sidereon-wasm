@@ -94,11 +94,11 @@ impl RaimOptionsInput {
             (None, None, None) => defaults.weights,
             _ => unreachable!(),
         };
-        Ok(CoreRaimOptions {
-            p_fa: self.p_fa.unwrap_or(defaults.p_fa),
-            weights,
-            n_systems: self.n_systems,
-        })
+        let mut options = CoreRaimOptions::default();
+        options.p_fa = self.p_fa.unwrap_or(defaults.p_fa);
+        options.weights = weights;
+        options.n_systems = self.n_systems;
+        Ok(options)
     }
 }
 
@@ -262,13 +262,13 @@ impl PseudorangeVarianceOptionsInput {
             }
         };
         let defaults = PseudorangeVarianceOptions::default();
-        Ok(PseudorangeVarianceOptions {
-            a_m: self.a_m.unwrap_or(defaults.a_m),
-            b_m: self.b_m.unwrap_or(defaults.b_m),
-            model,
-            cn0_dbhz: self.cn0_dbhz,
-            cn0_scale_m2: self.cn0_scale_m2.unwrap_or(defaults.cn0_scale_m2),
-        })
+        let mut options = PseudorangeVarianceOptions::default();
+        options.a_m = self.a_m.unwrap_or(defaults.a_m);
+        options.b_m = self.b_m.unwrap_or(defaults.b_m);
+        options.model = model;
+        options.cn0_dbhz = self.cn0_dbhz;
+        options.cn0_scale_m2 = self.cn0_scale_m2.unwrap_or(defaults.cn0_scale_m2);
+        Ok(options)
     }
 }
 
@@ -399,11 +399,11 @@ struct RangeFdeOptionsInput {
 impl RangeFdeOptionsInput {
     fn to_core(&self) -> RangeFdeOptions {
         let defaults = RangeFdeOptions::default();
-        RangeFdeOptions {
-            p_fa: self.p_fa.unwrap_or(defaults.p_fa),
-            max_exclusions: self.max_exclusions.unwrap_or(defaults.max_exclusions),
-            min_redundancy: self.min_redundancy.unwrap_or(defaults.min_redundancy),
-        }
+        let mut options = RangeFdeOptions::default();
+        options.p_fa = self.p_fa.unwrap_or(defaults.p_fa);
+        options.max_exclusions = self.max_exclusions.unwrap_or(defaults.max_exclusions);
+        options.min_redundancy = self.min_redundancy.unwrap_or(defaults.min_redundancy);
+        options
     }
 }
 

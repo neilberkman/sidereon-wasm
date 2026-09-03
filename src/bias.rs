@@ -81,17 +81,18 @@ struct CodeDcbOptionsInput {
 
 impl CodeDcbOptionsInput {
     fn to_core(&self) -> Result<CodeDcbOptions, JsValue> {
-        Ok(CodeDcbOptions {
-            pair: (self.obs1.clone(), self.obs2.clone()),
-            year: self.year,
-            month: self.month,
-            time_scale: parse_time_scale(self.time_scale.as_deref())?,
-            receiver_system: self
-                .receiver_system
-                .as_deref()
-                .map(parse_system)
-                .transpose()?,
-        })
+        let mut options = CodeDcbOptions::new(
+            (self.obs1.clone(), self.obs2.clone()),
+            self.year,
+            self.month,
+            parse_time_scale(self.time_scale.as_deref())?,
+        );
+        options.receiver_system = self
+            .receiver_system
+            .as_deref()
+            .map(parse_system)
+            .transpose()?;
+        Ok(options)
     }
 }
 

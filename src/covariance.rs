@@ -287,15 +287,14 @@ fn integrator(label: Option<&str>) -> Result<IntegratorKind, JsValue> {
 
 fn integrator_options(req: &CovariancePropagationRequest) -> Result<IntegratorOptions, JsValue> {
     let defaults = IntegratorOptions::default();
-    let options = IntegratorOptions {
-        abs_tol: req.abs_tol.unwrap_or(defaults.abs_tol),
-        rel_tol: req.rel_tol.unwrap_or(defaults.rel_tol),
-        initial_step: req.initial_step_s.unwrap_or(defaults.initial_step),
-        min_step: req.min_step_s.unwrap_or(defaults.min_step),
-        max_step: req.max_step_s.unwrap_or(defaults.max_step),
-        max_steps: req.max_steps.unwrap_or(defaults.max_steps),
-        dense_output: false,
-    };
+    let mut options = IntegratorOptions::default();
+    options.abs_tol = req.abs_tol.unwrap_or(defaults.abs_tol);
+    options.rel_tol = req.rel_tol.unwrap_or(defaults.rel_tol);
+    options.initial_step = req.initial_step_s.unwrap_or(defaults.initial_step);
+    options.min_step = req.min_step_s.unwrap_or(defaults.min_step);
+    options.max_step = req.max_step_s.unwrap_or(defaults.max_step);
+    options.max_steps = req.max_steps.unwrap_or(defaults.max_steps);
+    options.dense_output = false;
     if options.initial_step <= 0.0 {
         return Err(range_error("initialStepS must be positive"));
     }
@@ -377,10 +376,9 @@ pub fn propagate_covariance(request: JsValue) -> Result<CovarianceEphemeris, JsV
         propagator = propagator.with_drag(drag_params);
     }
 
-    let options = CovariancePropagationOptions {
-        process_noise: process_noise(req.process_noise),
-        output_frame: parse_frame(req.output_frame.as_deref())?,
-    };
+    let mut options = CovariancePropagationOptions::default();
+    options.process_noise = process_noise(req.process_noise);
+    options.output_frame = parse_frame(req.output_frame.as_deref())?;
     let inner = propagator
         .propagate_covariance(
             LabeledCovariance6 {
