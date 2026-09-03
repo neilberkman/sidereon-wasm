@@ -186,17 +186,16 @@ struct SatelliteAntennaOptionsInput {
 
 impl SatelliteAntennaOptionsInput {
     fn to_core(&self) -> Result<SatelliteAntennaOptions, JsValue> {
-        Ok(SatelliteAntennaOptions {
-            freq1_label: self.freq1_label.clone(),
-            freq1_hz: self.freq1_hz,
-            freq2_label: self.freq2_label.clone(),
-            freq2_hz: self.freq2_hz,
-            antennas: self
-                .antennas
+        Ok(SatelliteAntennaOptions::new(
+            self.freq1_label.clone(),
+            self.freq1_hz,
+            self.freq2_label.clone(),
+            self.freq2_hz,
+            self.antennas
                 .iter()
                 .map(SatelliteAntennaInput::to_core)
                 .collect::<Result<_, _>>()?,
-        })
+        ))
     }
 }
 
@@ -216,10 +215,7 @@ impl PoleTideInput {
         if !self.yp_arcsec.is_finite() {
             return Err(range_error("poleTide.ypArcsec must be finite"));
         }
-        Ok(PoleTideOptions {
-            xp_arcsec: self.xp_arcsec,
-            yp_arcsec: self.yp_arcsec,
-        })
+        Ok(PoleTideOptions::new(self.xp_arcsec, self.yp_arcsec))
     }
 }
 
@@ -319,20 +315,30 @@ fn parse_system(value: &str) -> Result<GnssSystem, JsValue> {
 
 impl CodeBiasInput {
     fn to_core(&self, bias_set: &BiasSet) -> Result<CodeBiasOptions, JsValue> {
-        Ok(CodeBiasOptions {
-            bias_set: bias_set.core(),
-            used_observables_per_sat: self
-                .used_observables_per_sat
-                .iter()
-                .map(|entry| {
-                    Ok((
-                        parse_sat(&entry.sat)?,
-                        (entry.obs1.clone(), entry.obs2.clone()),
-                    ))
-                })
-                .collect::<Result<_, JsValue>>()?,
-            used_observables_default: self
-                .used_observables_default
+        let mut options = CodeBiasOptions::new(bias_set.core());
+        options.used_observables_per_sat = self
+            .used_observables_per_sat
+            .iter()
+            .map(|entry| {
+                Ok((
+                    parse_sat(&entry.sat)?,
+                    (entry.obs1.clone(), entry.obs2.clone()),
+                ))
+            })
+            .collect::<Result<_, JsValue>>()?;
+        options.used_observables_default = self
+            .used_observables_default
+            .iter()
+            .map(|entry| {
+                Ok((
+                    parse_system(&entry.system)?,
+                    (entry.obs1.clone(), entry.obs2.clone()),
+                ))
+            })
+            .collect::<Result<_, JsValue>>()?;
+        options.clock_reference = Some(ClockReferenceObservables {
+            per_system: self
+                .clock_reference
                 .iter()
                 .map(|entry| {
                     Ok((
@@ -341,44 +347,33 @@ impl CodeBiasInput {
                     ))
                 })
                 .collect::<Result<_, JsValue>>()?,
-            clock_reference: Some(ClockReferenceObservables {
-                per_system: self
-                    .clock_reference
-                    .iter()
-                    .map(|entry| {
-                        Ok((
-                            parse_system(&entry.system)?,
-                            (entry.obs1.clone(), entry.obs2.clone()),
-                        ))
-                    })
-                    .collect::<Result<_, JsValue>>()?,
-            }),
-        })
+        });
+        Ok(options)
     }
 }
 
 impl OptionsInput {
     fn to_core(&self) -> Result<PppCorrectionsOptions, JsValue> {
-        Ok(PppCorrectionsOptions {
-            solid_earth_tide: self.solid_earth_tide,
-            pole_tide: self
-                .pole_tide
-                .as_ref()
-                .map(PoleTideInput::to_core)
-                .transpose()?,
-            ocean_loading: self
-                .ocean_loading
-                .as_ref()
-                .map(OceanLoadingInput::to_core)
-                .transpose()?,
-            phase_windup: self.phase_windup,
-            satellite_antenna: self
-                .satellite_antenna
-                .as_ref()
-                .map(SatelliteAntennaOptionsInput::to_core)
-                .transpose()?,
-            code_bias: None,
-        })
+        let mut options = PppCorrectionsOptions::new();
+        options.solid_earth_tide = self.solid_earth_tide;
+        options.pole_tide = self
+            .pole_tide
+            .as_ref()
+            .map(PoleTideInput::to_core)
+            .transpose()?;
+        options.ocean_loading = self
+            .ocean_loading
+            .as_ref()
+            .map(OceanLoadingInput::to_core)
+            .transpose()?;
+        options.phase_windup = self.phase_windup;
+        options.satellite_antenna = self
+            .satellite_antenna
+            .as_ref()
+            .map(SatelliteAntennaOptionsInput::to_core)
+            .transpose()?;
+        options.code_bias = None;
+        Ok(options)
     }
 }
 

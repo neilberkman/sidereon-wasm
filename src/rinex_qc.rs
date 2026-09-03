@@ -161,19 +161,19 @@ fn repair_options(value: JsValue) -> Result<RepairOptions, JsValue> {
     let input: RepairOptionsInput = serde_wasm_bindgen::from_value(value)
         .map_err(|e| type_error(&format!("invalid RINEX repair options: {e}")))?;
     let defaults = RepairOptions::default();
-    Ok(RepairOptions {
-        file_stamp: input.file_stamp.map(|stamp| stamp.to_core()),
-        set_interval: input.set_interval.unwrap_or(defaults.set_interval),
-        set_time_of_last_obs: input
-            .set_time_of_last_obs
-            .unwrap_or(defaults.set_time_of_last_obs),
-        set_obs_counts: input.set_obs_counts.unwrap_or(defaults.set_obs_counts),
-        drop_empty_records: input
-            .drop_empty_records
-            .unwrap_or(defaults.drop_empty_records),
-        sort_records: input.sort_records.unwrap_or(defaults.sort_records),
-        drop_unsupported: input.drop_unsupported.unwrap_or(defaults.drop_unsupported),
-    })
+    let mut options = RepairOptions::default();
+    options.file_stamp = input.file_stamp.map(|stamp| stamp.to_core());
+    options.set_interval = input.set_interval.unwrap_or(defaults.set_interval);
+    options.set_time_of_last_obs = input
+        .set_time_of_last_obs
+        .unwrap_or(defaults.set_time_of_last_obs);
+    options.set_obs_counts = input.set_obs_counts.unwrap_or(defaults.set_obs_counts);
+    options.drop_empty_records = input
+        .drop_empty_records
+        .unwrap_or(defaults.drop_empty_records);
+    options.sort_records = input.sort_records.unwrap_or(defaults.sort_records);
+    options.drop_unsupported = input.drop_unsupported.unwrap_or(defaults.drop_unsupported);
+    Ok(options)
 }
 
 /// Lint RINEX observation text.
@@ -318,13 +318,13 @@ fn observation_qc_options(value: JsValue) -> Result<ObservationQcOptions, JsValu
     let input: ObservationQcOptionsInput = serde_wasm_bindgen::from_value(value)
         .map_err(|e| type_error(&format!("invalid observation QC options: {e}")))?;
     let defaults = ObservationQcOptions::default();
-    Ok(ObservationQcOptions {
-        interval_override_s: input.interval_override_s,
-        gap_factor: input.gap_factor.unwrap_or(defaults.gap_factor),
-        clock_jump_threshold_s: input
-            .clock_jump_threshold_s
-            .unwrap_or(defaults.clock_jump_threshold_s),
-    })
+    let mut options = ObservationQcOptions::default();
+    options.interval_override_s = input.interval_override_s;
+    options.gap_factor = input.gap_factor.unwrap_or(defaults.gap_factor);
+    options.clock_jump_threshold_s = input
+        .clock_jump_threshold_s
+        .unwrap_or(defaults.clock_jump_threshold_s);
+    Ok(options)
 }
 
 fn interval_source_label(source: IntervalSource) -> &'static str {

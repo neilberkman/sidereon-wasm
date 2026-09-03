@@ -134,13 +134,13 @@ struct LnavOptionsInput {
 
 impl LnavOptionsInput {
     fn to_core(&self) -> LnavOptions {
-        LnavOptions {
-            tow: int(self.tow),
-            alert: int(self.alert),
-            anti_spoof: int(self.anti_spoof),
-            integrity: int(self.integrity),
-            tlm_message: int(self.tlm_message),
-        }
+        LnavOptions::new(
+            int(self.tow),
+            int(self.alert),
+            int(self.anti_spoof),
+            int(self.integrity),
+            int(self.tlm_message),
+        )
     }
 }
 

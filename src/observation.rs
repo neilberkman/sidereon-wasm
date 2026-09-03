@@ -86,20 +86,20 @@ struct ObserveOptionsInput {
 impl ObserveOptionsInput {
     fn to_core(&self) -> Result<CoreObserveOptions, JsValue> {
         let defaults = CoreObserveOptions::default();
-        Ok(CoreObserveOptions {
-            polar_motion: self
-                .polar_motion
-                .as_ref()
-                .map(|p| PolarMotion::from_arcseconds(p.xp_arcsec, p.yp_arcsec))
-                .transpose()
-                .map_err(engine_error)?,
-            refraction: self.refraction.as_ref().map(|r| CoreRefraction {
-                pressure_mbar: r.pressure_mbar,
-                temperature_c: r.temperature_c,
-            }),
-            deflection: self.deflection.unwrap_or(defaults.deflection),
-            aberration: self.aberration.unwrap_or(defaults.aberration),
-        })
+        let mut options = CoreObserveOptions::default();
+        options.polar_motion = self
+            .polar_motion
+            .as_ref()
+            .map(|p| PolarMotion::from_arcseconds(p.xp_arcsec, p.yp_arcsec))
+            .transpose()
+            .map_err(engine_error)?;
+        options.refraction = self.refraction.as_ref().map(|r| CoreRefraction {
+            pressure_mbar: r.pressure_mbar,
+            temperature_c: r.temperature_c,
+        });
+        options.deflection = self.deflection.unwrap_or(defaults.deflection);
+        options.aberration = self.aberration.unwrap_or(defaults.aberration);
+        Ok(options)
     }
 }
 

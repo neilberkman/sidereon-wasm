@@ -168,15 +168,15 @@ struct MoonElevationOptionsInput {
 impl MoonElevationOptionsInput {
     fn to_core(&self) -> MoonElevationOptions {
         let d = MoonElevationOptions::default();
-        MoonElevationOptions {
-            elevation_threshold_deg: self
-                .elevation_threshold_deg
-                .unwrap_or(d.elevation_threshold_deg),
-            step_seconds: self.step_seconds.unwrap_or(d.step_seconds),
-            time_tolerance_seconds: self
-                .time_tolerance_seconds
-                .unwrap_or(d.time_tolerance_seconds),
-        }
+        let mut options = MoonElevationOptions::default();
+        options.elevation_threshold_deg = self
+            .elevation_threshold_deg
+            .unwrap_or(d.elevation_threshold_deg);
+        options.step_seconds = self.step_seconds.unwrap_or(d.step_seconds);
+        options.time_tolerance_seconds = self
+            .time_tolerance_seconds
+            .unwrap_or(d.time_tolerance_seconds);
+        options
     }
 }
 

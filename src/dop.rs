@@ -597,14 +597,13 @@ fn dop_options_from(
     };
 
     let weighting = parse_weighting(opts.weighting.as_deref().unwrap_or("unit"))?;
-    let dop_options = DopOptions {
-        visibility: VisibilityOptions {
-            elevation_mask_deg,
-            systems,
-        },
-        weighting,
-        light_time: opts.light_time.unwrap_or(false),
-    };
+    let mut visibility = VisibilityOptions::default();
+    visibility.elevation_mask_deg = elevation_mask_deg;
+    visibility.systems = systems;
+    let mut dop_options = DopOptions::default();
+    dop_options.visibility = visibility;
+    dop_options.weighting = weighting;
+    dop_options.light_time = opts.light_time.unwrap_or(false);
     Ok((explicit_satellites, dop_options))
 }
 
@@ -918,10 +917,10 @@ impl VisibilityOptionsInput {
             }
             None => None,
         };
-        Ok(VisibilityOptions {
-            elevation_mask_deg,
-            systems,
-        })
+        let mut options = VisibilityOptions::default();
+        options.elevation_mask_deg = elevation_mask_deg;
+        options.systems = systems;
+        Ok(options)
     }
 }
 

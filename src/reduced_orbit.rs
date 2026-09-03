@@ -119,14 +119,10 @@ struct SourceDriftOptionsInput {
 
 impl SourceDriftOptionsInput {
     fn to_core(&self) -> ReducedOrbitSourceDriftOptions {
-        ReducedOrbitSourceDriftOptions {
-            sampling: ReducedOrbitSourceSampling::new(
-                self.t0.to_core(),
-                self.t1.to_core(),
-                self.cadence_s,
-            ),
-            threshold_m: self.threshold_m,
-        }
+        ReducedOrbitSourceDriftOptions::new(
+            ReducedOrbitSourceSampling::new(self.t0.to_core(), self.t1.to_core(), self.cadence_s),
+            self.threshold_m,
+        )
     }
 }
 
@@ -453,10 +449,7 @@ fn fit_source(
     let model = model_from_str(&options.model)?;
     let result = orbit::fit_reduced_orbit_source(
         source,
-        ReducedOrbitSourceFitOptions {
-            sampling: options.sampling(),
-            model,
-        },
+        ReducedOrbitSourceFitOptions::new(options.sampling(), model),
     )
     .map_err(engine_error)?;
     Ok(ReducedOrbitSourceFit {
@@ -739,11 +732,7 @@ fn fit_piecewise_source(
     let model = model_from_str(&options.model)?;
     let result = orbit::fit_piecewise_reduced_orbit_source(
         source,
-        PiecewiseOrbitSourceFitOptions {
-            sampling: options.sampling(),
-            model,
-            segment_s: options.segment_seconds,
-        },
+        PiecewiseOrbitSourceFitOptions::new(options.sampling(), model, options.segment_seconds),
     )
     .map_err(engine_error)?;
     Ok(PiecewiseOrbitSourceFit {

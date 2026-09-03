@@ -101,14 +101,15 @@ fn parse_imu_grade(value: &str) -> Result<core_inertial::ImuGrade, JsValue> {
 fn parse_update_options(
     input: Option<UpdateOptionsInput>,
 ) -> Result<core_fusion::EkfUpdateOptions, JsValue> {
-    Ok(core_fusion::EkfUpdateOptions {
-        innovation_gate: input.and_then(|value| value.innovation_gate).map(|gate| {
-            core_fusion::InnovationGate {
+    let mut options = core_fusion::EkfUpdateOptions::default();
+    options.innovation_gate =
+        input
+            .and_then(|value| value.innovation_gate)
+            .map(|gate| core_fusion::InnovationGate {
                 threshold_sigma: gate.threshold_sigma,
                 min_rows: gate.min_rows,
-            }
-        }),
-    })
+            });
+    Ok(options)
 }
 
 fn parse_ukf_options(
@@ -117,11 +118,11 @@ fn parse_ukf_options(
     let mut out = core_fusion::UkfUpdateOptions::default();
     if let Some(input) = input {
         if let Some(transform) = input.transform {
-            out.transform = core_fusion::UnscentedTransformOptions {
-                alpha: transform.alpha.unwrap_or(out.transform.alpha),
-                beta: transform.beta.unwrap_or(out.transform.beta),
-                kappa: transform.kappa.unwrap_or(out.transform.kappa),
-            };
+            let mut tr = core_fusion::UnscentedTransformOptions::default();
+            tr.alpha = transform.alpha.unwrap_or(out.transform.alpha);
+            tr.beta = transform.beta.unwrap_or(out.transform.beta);
+            tr.kappa = transform.kappa.unwrap_or(out.transform.kappa);
+            out.transform = tr;
         }
         out.innovation_gate = input
             .innovation_gate
@@ -204,9 +205,11 @@ fn parse_mechanization(
         return Ok(core_inertial::MechanizationConfig::default());
     };
     match input.coning_correction.as_deref().unwrap_or("off") {
-        "off" | "Off" => Ok(core_inertial::MechanizationConfig {
-            coning_correction: core_inertial::ConingCorrection::Off,
-        }),
+        "off" | "Off" => {
+            let mut mech = core_inertial::MechanizationConfig::default();
+            mech.coning_correction = core_inertial::ConingCorrection::Off;
+            Ok(mech)
+        }
         other => Err(type_error(&format!(
             "invalid mechanization.coningCorrection {other:?}"
         ))),
@@ -252,27 +255,24 @@ fn parse_loose_config(
             });
         }
         if let Some(stationary) = input.stationary_updates {
-            config.stationary_updates = Some(core_fusion::StationaryUpdateConfig {
-                detector: core_fusion::StationaryDetectorConfig {
-                    window_len: stationary.detector.window_len,
-                    max_specific_force_norm_error_mps2: stationary
-                        .detector
-                        .max_specific_force_norm_error_mps2,
-                    max_body_rate_wrt_ecef_norm_rps: stationary
-                        .detector
-                        .max_body_rate_wrt_ecef_norm_rps,
-                },
-                zero_velocity_sigma_mps: stationary.zero_velocity_sigma_mps,
-                zero_angular_rate_sigma_rps: stationary.zero_angular_rate_sigma_rps,
-            });
+            let detector = core_fusion::StationaryDetectorConfig::new(
+                stationary.detector.window_len,
+                stationary.detector.max_specific_force_norm_error_mps2,
+                stationary.detector.max_body_rate_wrt_ecef_norm_rps,
+            );
+            config.stationary_updates = Some(core_fusion::StationaryUpdateConfig::new(
+                detector,
+                stationary.zero_velocity_sigma_mps,
+                stationary.zero_angular_rate_sigma_rps,
+            ));
         }
         if let Some(nhc) = input.non_holonomic {
-            config.non_holonomic = Some(core_fusion::NonHolonomicConstraintConfig {
-                lateral_velocity_sigma_mps: nhc.lateral_velocity_sigma_mps,
-                vertical_velocity_sigma_mps: nhc.vertical_velocity_sigma_mps,
-                min_speed_mps: nhc.min_speed_mps,
-                max_body_rate_wrt_ecef_norm_rps: nhc.max_body_rate_wrt_ecef_norm_rps,
-            });
+            config.non_holonomic = Some(core_fusion::NonHolonomicConstraintConfig::new(
+                nhc.lateral_velocity_sigma_mps,
+                nhc.vertical_velocity_sigma_mps,
+                nhc.min_speed_mps,
+                nhc.max_body_rate_wrt_ecef_norm_rps,
+            ));
         }
     }
     config.validate().map_err(fusion_error)?;
@@ -950,9 +950,7 @@ pub fn velocity_match_outage(
     let matched = core_fusion::velocity_match_outage(
         &states,
         &parse_loose_measurement(first_good_fix)?,
-        core_fusion::VelocityMatchingConfig {
-            max_outage_duration_s: config.max_outage_duration_s,
-        },
+        core_fusion::VelocityMatchingConfig::new(config.max_outage_duration_s),
     )
     .map_err(fusion_error)?;
     to_js(&VelocityMatchedTrajectoryJs::from(matched))

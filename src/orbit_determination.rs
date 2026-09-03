@@ -71,12 +71,12 @@ struct SolverOptionsInput {
 fn solver_options(input: Option<SolverOptionsInput>) -> SolveOptions {
     let defaults = SolveOptions::default();
     let input = input.unwrap_or_default();
-    SolveOptions {
-        gtol: input.gtol.unwrap_or(defaults.gtol),
-        ftol: input.ftol.unwrap_or(defaults.ftol),
-        xtol: input.xtol.unwrap_or(defaults.xtol),
-        max_nfev: input.max_nfev.unwrap_or(defaults.max_nfev),
-    }
+    let mut options = SolveOptions::default();
+    options.gtol = input.gtol.unwrap_or(defaults.gtol);
+    options.ftol = input.ftol.unwrap_or(defaults.ftol);
+    options.xtol = input.xtol.unwrap_or(defaults.xtol);
+    options.max_nfev = input.max_nfev.unwrap_or(defaults.max_nfev);
+    options
 }
 
 fn linear_solve(label: Option<String>) -> Result<TrustRegionSolve, JsValue> {
@@ -106,20 +106,20 @@ fn orbit_options(input: JsValue) -> Result<OrbitFitOptions, JsValue> {
             "integratorOptions.initialStepS must be positive",
         ));
     }
-    Ok(OrbitFitOptions {
-        force_model: force_model_kind(input.force_model.as_ref(), input.mu_km3_s2)?,
-        integrator: integrator_kind(input.integrator.as_deref())?,
-        integrator_options,
-        solver_options: solver_options(input.solver_options),
-        linear_solve: linear_solve(input.linear_solve)?,
-        geometry_thresholds: GeometryQualityThresholds::default(),
-        min_ledger_samples: input
-            .min_ledger_samples
-            .unwrap_or(defaults.min_ledger_samples),
-        drag: input.drag.as_ref().map(DragInput::to_core).transpose()?,
-        space_weather: None,
-        propagation_context: defaults.propagation_context,
-    })
+    let mut options = OrbitFitOptions::default();
+    options.force_model = force_model_kind(input.force_model.as_ref(), input.mu_km3_s2)?;
+    options.integrator = integrator_kind(input.integrator.as_deref())?;
+    options.integrator_options = integrator_options;
+    options.solver_options = solver_options(input.solver_options);
+    options.linear_solve = linear_solve(input.linear_solve)?;
+    options.geometry_thresholds = GeometryQualityThresholds::default();
+    options.min_ledger_samples = input
+        .min_ledger_samples
+        .unwrap_or(defaults.min_ledger_samples);
+    options.drag = input.drag.as_ref().map(DragInput::to_core).transpose()?;
+    options.space_weather = None;
+    options.propagation_context = defaults.propagation_context;
+    Ok(options)
 }
 
 #[derive(Serialize)]

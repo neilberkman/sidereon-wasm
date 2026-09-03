@@ -89,15 +89,15 @@ fn template_method(
 
 fn filter_options(input: SiderealFilterOptionsInput) -> Result<CoreSiderealFilterOptions, JsValue> {
     let defaults = CoreSiderealFilterOptions::default();
-    Ok(CoreSiderealFilterOptions {
-        sample_interval: match input.sample_interval_s {
-            Some(value) => duration_from_seconds(value, "sampleIntervalS")?,
-            None => defaults.sample_interval,
-        },
-        prior_periods: input.prior_periods.unwrap_or(defaults.prior_periods),
-        min_coverage: input.min_coverage.unwrap_or(defaults.min_coverage),
-        template_method: template_method(input.template_method)?,
-    })
+    let mut options = CoreSiderealFilterOptions::default();
+    options.sample_interval = match input.sample_interval_s {
+        Some(value) => duration_from_seconds(value, "sampleIntervalS")?,
+        None => defaults.sample_interval,
+    };
+    options.prior_periods = input.prior_periods.unwrap_or(defaults.prior_periods);
+    options.min_coverage = input.min_coverage.unwrap_or(defaults.min_coverage);
+    options.template_method = template_method(input.template_method)?;
+    Ok(options)
 }
 
 #[derive(Serialize)]

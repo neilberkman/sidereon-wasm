@@ -253,13 +253,12 @@ impl TroposphereInput {
                     self.vmf1.iter().map(VmfSampleInput::to_core).collect();
                 TropoMapping::Vmf1(VmfSiteSeries::new(&samples).map_err(engine_error)?)
             };
-            Ok(TroposphereOptions {
-                enabled: true,
-                estimate_ztd: self.estimate_ztd,
-                estimate_tropo_gradients: self.estimate_tropo_gradients,
-                met,
-                mapping,
-            })
+            let mut opts = TroposphereOptions::new(met);
+            opts.enabled = true;
+            opts.estimate_ztd = self.estimate_ztd;
+            opts.estimate_tropo_gradients = self.estimate_tropo_gradients;
+            opts.mapping = mapping;
+            Ok(opts)
         } else {
             Ok(TroposphereOptions::disabled())
         }
@@ -291,13 +290,13 @@ impl Default for OptionsInput {
 
 impl OptionsInput {
     fn to_core(&self) -> FloatSolveOptions {
-        FloatSolveOptions {
-            max_iterations: self.max_iterations,
-            position_tolerance_m: self.position_tolerance_m,
-            clock_tolerance_m: self.clock_tolerance_m,
-            ambiguity_tolerance_m: self.ambiguity_tolerance_m,
-            ztd_tolerance_m: self.ztd_tolerance_m,
-        }
+        let mut options = FloatSolveOptions::default();
+        options.max_iterations = self.max_iterations;
+        options.position_tolerance_m = self.position_tolerance_m;
+        options.clock_tolerance_m = self.clock_tolerance_m;
+        options.ambiguity_tolerance_m = self.ambiguity_tolerance_m;
+        options.ztd_tolerance_m = self.ztd_tolerance_m;
+        options
     }
 }
 
@@ -315,15 +314,15 @@ struct FloatConfigInput {
 
 impl FloatConfigInput {
     fn to_core(&self) -> Result<FloatSolveConfig, JsValue> {
-        Ok(FloatSolveConfig {
-            weights: self.weights.to_core(),
-            tropo: self.tropo.to_core()?,
-            corrections: RangeCorrections::disabled(),
-            opts: self.options.to_core(),
-            elevation_cutoff_deg: self.elevation_cutoff_deg,
-            residual_screen: self.residual_screen,
-            estimate_residual_ionosphere: self.estimate_residual_ionosphere,
-        })
+        Ok(FloatSolveConfig::new(
+            self.weights.to_core(),
+            self.tropo.to_core()?,
+            RangeCorrections::disabled(),
+            self.options.to_core(),
+            self.elevation_cutoff_deg,
+            self.residual_screen,
+            self.estimate_residual_ionosphere,
+        ))
     }
 }
 
@@ -343,11 +342,10 @@ fn default_ratio_threshold() -> f64 {
 
 impl FixedAmbiguityInput {
     fn to_core(&self) -> FixedAmbiguityOptions {
-        FixedAmbiguityOptions {
-            wavelengths_m: self.wavelengths_m.clone(),
-            offsets_m: self.offsets_m.clone(),
-            ratio_threshold: self.ratio_threshold,
-        }
+        let mut options = FixedAmbiguityOptions::new(self.ratio_threshold);
+        options.wavelengths_m = self.wavelengths_m.clone();
+        options.offsets_m = self.offsets_m.clone();
+        options
     }
 }
 
@@ -370,15 +368,15 @@ struct FixedConfigInput {
 
 impl FixedConfigInput {
     fn to_core(&self) -> Result<FixedSolveConfig, JsValue> {
-        Ok(FixedSolveConfig {
-            weights: self.weights.to_core(),
-            tropo: self.tropo.to_core()?,
-            corrections: RangeCorrections::disabled(),
-            opts: self.options.to_core(),
-            elevation_cutoff_deg: self.elevation_cutoff_deg,
-            ambiguity: self.ambiguity.to_core(),
-            estimate_residual_ionosphere: self.estimate_residual_ionosphere,
-        })
+        Ok(FixedSolveConfig::new(
+            self.weights.to_core(),
+            self.tropo.to_core()?,
+            RangeCorrections::disabled(),
+            self.options.to_core(),
+            self.elevation_cutoff_deg,
+            self.ambiguity.to_core(),
+            self.estimate_residual_ionosphere,
+        ))
     }
 }
 
@@ -445,12 +443,12 @@ struct AutoInitOptionsInput {
 
 impl AutoInitOptionsInput {
     fn to_core(&self) -> PppAutoInitOptions {
-        PppAutoInitOptions {
-            initial_guess: self.initial_guess.as_ref().map(InitialGuessInput::to_core),
-            spp_initial_guess: self.spp_initial_guess,
-            spp_troposphere: self.spp_troposphere,
-            spp_met: self.spp_met.to_core(),
-        }
+        let mut options = PppAutoInitOptions::default();
+        options.initial_guess = self.initial_guess.as_ref().map(InitialGuessInput::to_core);
+        options.spp_initial_guess = self.spp_initial_guess;
+        options.spp_troposphere = self.spp_troposphere;
+        options.spp_met = self.spp_met.to_core();
+        options
     }
 }
 

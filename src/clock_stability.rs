@@ -453,11 +453,11 @@ fn gap_policy(value: Option<String>) -> Result<GapPolicy, JsValue> {
 }
 
 fn options(input: AllanOptionsInput) -> Result<AllanOptions, JsValue> {
-    Ok(AllanOptions {
-        estimators: estimators(input.estimators)?,
-        tau_grid: tau_grid(input.tau_grid)?,
-        gap_policy: gap_policy(input.gap_policy)?,
-    })
+    let mut options = AllanOptions::default();
+    options.estimators = estimators(input.estimators)?;
+    options.tau_grid = tau_grid(input.tau_grid)?;
+    options.gap_policy = gap_policy(input.gap_policy)?;
+    Ok(options)
 }
 
 fn estimate_explicit(

@@ -139,21 +139,21 @@ fn probability_options(value: JsValue) -> Result<CoreProbabilityOptions, JsValue
         serde_wasm_bindgen::from_value(value)
             .map_err(|e| type_error(&format!("invalid geofence probability options: {e}")))?
     };
-    Ok(CoreProbabilityOptions {
-        method: match input.method.as_deref() {
-            None | Some("boundaryNormal") | Some("boundary_normal") => {
-                CoreProbabilityMethod::BoundaryNormal
-            }
-            Some("planarQuadrature") | Some("planar_quadrature") => {
-                CoreProbabilityMethod::PlanarQuadrature
-            }
-            Some(other) => {
-                return Err(type_error(&format!(
-                    "invalid probability method {other:?}: expected \"boundaryNormal\" or \"planarQuadrature\""
-                )))
-            }
-        },
-    })
+    let mut options = CoreProbabilityOptions::default();
+    options.method = match input.method.as_deref() {
+        None | Some("boundaryNormal") | Some("boundary_normal") => {
+            CoreProbabilityMethod::BoundaryNormal
+        }
+        Some("planarQuadrature") | Some("planar_quadrature") => {
+            CoreProbabilityMethod::PlanarQuadrature
+        }
+        Some(other) => {
+            return Err(type_error(&format!(
+                "invalid probability method {other:?}: expected \"boundaryNormal\" or \"planarQuadrature\""
+            )))
+        }
+    };
+    Ok(options)
 }
 
 fn hysteresis(input: &ProbabilityOptionsInput) -> Result<CoreHysteresis, JsValue> {

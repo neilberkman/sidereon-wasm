@@ -153,9 +153,9 @@ fn lookup_options(value: JsValue) -> Result<DtedLookupOptions, JsValue> {
         serde_wasm_bindgen::from_value(value)
             .map_err(|e| type_error(&format!("invalid terrain store options: {e}")))?
     };
-    Ok(DtedLookupOptions {
-        interpolation: interpolation(options.interpolation.as_deref())?,
-    })
+    let mut opts = DtedLookupOptions::default();
+    opts.interpolation = interpolation(options.interpolation.as_deref())?;
+    Ok(opts)
 }
 
 fn parse_points(value: JsValue) -> Result<Vec<(f64, f64)>, JsValue> {

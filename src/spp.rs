@@ -145,12 +145,12 @@ impl RobustInput {
         if max_outer < 1 {
             return Err(range_error("robust.maxOuter must be at least 1"));
         }
-        Ok(RobustConfig {
-            huber_k,
-            scale_floor_m,
-            max_outer,
-            outer_tol_m,
-        })
+        let mut cfg = RobustConfig::default();
+        cfg.huber_k = huber_k;
+        cfg.scale_floor_m = scale_floor_m;
+        cfg.max_outer = max_outer;
+        cfg.outer_tol_m = outer_tol_m;
+        Ok(cfg)
     }
 }
 
@@ -286,11 +286,10 @@ fn make_policy(
             return Err(range_error("coarseSearchSeeds must be at least 1"));
         }
     }
+    let mut validation = SolutionValidationOptions::default();
+    validation.max_pdop = max_pdop;
     Ok(SolvePolicy {
-        validation: SolutionValidationOptions {
-            max_pdop,
-            ..Default::default()
-        },
+        validation,
         coarse_search_seeds,
     })
 }

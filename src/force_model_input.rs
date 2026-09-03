@@ -203,15 +203,15 @@ pub(crate) struct IntegratorOptionsInput {
 impl IntegratorOptionsInput {
     pub(crate) fn to_core(self) -> IntegratorOptions {
         let defaults = IntegratorOptions::default();
-        IntegratorOptions {
-            abs_tol: self.abs_tol.unwrap_or(defaults.abs_tol),
-            rel_tol: self.rel_tol.unwrap_or(defaults.rel_tol),
-            initial_step: self.initial_step_s.unwrap_or(defaults.initial_step),
-            min_step: self.min_step_s.unwrap_or(defaults.min_step),
-            max_step: self.max_step_s.unwrap_or(defaults.max_step),
-            max_steps: self.max_steps.unwrap_or(defaults.max_steps),
-            dense_output: false,
-        }
+        let mut options = IntegratorOptions::default();
+        options.abs_tol = self.abs_tol.unwrap_or(defaults.abs_tol);
+        options.rel_tol = self.rel_tol.unwrap_or(defaults.rel_tol);
+        options.initial_step = self.initial_step_s.unwrap_or(defaults.initial_step);
+        options.min_step = self.min_step_s.unwrap_or(defaults.min_step);
+        options.max_step = self.max_step_s.unwrap_or(defaults.max_step);
+        options.max_steps = self.max_steps.unwrap_or(defaults.max_steps);
+        options.dense_output = false;
+        options
     }
 }
 
