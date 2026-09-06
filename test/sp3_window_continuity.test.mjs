@@ -54,7 +54,7 @@ test("window continuity maps inside-day, straddling, and stencil-boundary cases"
     verifyContinuity: { orbitClass: "meo_gnss", residualToleranceM: null },
   });
 
-  assert.deepEqual(merged.stencilExtent(), { beforeS: 1_500, afterS: 1_500 });
+  assert.deepEqual(merged.stencilExtent(), { beforeS: 3_300, afterS: 3_300 });
 
   const insideOneDay = report.continuityVerdict(merged, seam - 7_200, seam - 3_600);
   assert.equal(insideOneDay.decision, "accept");
@@ -72,10 +72,10 @@ test("window continuity maps inside-day, straddling, and stencil-boundary cases"
   assert.deepEqual(straddling.influencingSplices[0].fromSources, [0]);
   assert.deepEqual(straddling.influencingSplices[0].toSources, [1]);
 
-  const reachesSeam = report.continuityVerdict(merged, seam - 7_200, seam - 1_500);
+  const reachesSeam = report.continuityVerdict(merged, seam - 7_200, seam - 3_300);
   assert.equal(reachesSeam.decision, "refuse");
 
-  const missesSeam = report.continuityVerdict(merged, seam - 7_200, seam - 1_500.001);
+  const missesSeam = report.continuityVerdict(merged, seam - 7_200, seam - 3_300.001);
   assert.equal(missesSeam.decision, "accept");
 
   const direct = merged.continuityVerdict(seam - 600, seam + 600, "meo_gnss", null);

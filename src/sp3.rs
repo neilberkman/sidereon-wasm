@@ -20,7 +20,8 @@ use sidereon_core::ephemeris::{
 };
 use sidereon_core::ephemeris::{
     check_continuity, ContinuityDefect, ContinuityOptions, EpochWindow, MergeContinuityViolation,
-    OrbitClass, SpeedBound, StencilExtent, WindowContinuityDecision, WindowContinuityVerdict,
+    OrbitClass, Sp3InterpolationOptions, SpeedBound, StencilExtent, WindowContinuityDecision,
+    WindowContinuityVerdict,
 };
 use sidereon_core::DigestProvenance as CoreDigestProvenance;
 use sidereon_core::Error as CoreError;
@@ -47,6 +48,7 @@ fn instant_to_j2000_seconds(epoch: &Instant) -> f64 {
 pub(crate) fn continuity_options(
     orbit_class: Option<&str>,
     residual_tolerance_m: Option<f64>,
+    gap_threshold_factor: Option<f64>,
 ) -> Result<ContinuityOptions, JsValue> {
     let speed_bound = match orbit_class {
         None => None,
@@ -59,12 +61,18 @@ pub(crate) fn continuity_options(
             )));
         }
     };
-    Ok(ContinuityOptions::new(speed_bound, residual_tolerance_m))
+    let mut options = ContinuityOptions::new(speed_bound, residual_tolerance_m);
+    if let Some(factor) = gap_threshold_factor {
+        let interpolation = Sp3InterpolationOptions::new(factor).map_err(engine_error)?;
+        options = options.with_interpolation_options(interpolation);
+    }
+    Ok(options)
 }
 
 fn continuity_verdict_options(
     orbit_class: JsValue,
     residual_tolerance_m: JsValue,
+    gap_threshold_factor: JsValue,
 ) -> Result<ContinuityOptions, JsValue> {
     let orbit_class = if orbit_class.is_undefined() {
         Some("meo_gnss".to_string())
@@ -88,7 +96,21 @@ fn continuity_verdict_options(
                 .ok_or_else(|| type_error("residualToleranceM must be a number or null"))?,
         )
     };
-    continuity_options(orbit_class.as_deref(), residual_tolerance_m)
+    let gap_threshold_factor =
+        if gap_threshold_factor.is_undefined() || gap_threshold_factor.is_null() {
+            None
+        } else {
+            Some(
+                gap_threshold_factor
+                    .as_f64()
+                    .ok_or_else(|| type_error("gapThresholdFactor must be a number or null"))?,
+            )
+        };
+    continuity_options(
+        orbit_class.as_deref(),
+        residual_tolerance_m,
+        gap_threshold_factor,
+    )
 }
 
 fn attach_detail<T: Serialize>(value: &JsValue, detail: &T) {
@@ -504,6 +526,21 @@ impl Sp3 {
             .collect()
     }
 
+    /// SP3 interpolation gap threshold factor carried by this product.
+    #[wasm_bindgen(getter, js_name = gapThresholdFactor)]
+    pub fn gap_threshold_factor(&self) -> f64 {
+        self.inner.interpolation_options().gap_threshold_factor()
+    }
+
+    /// Return a copy of this product with an explicit gap threshold factor.
+    #[wasm_bindgen(js_name = withInterpolationOptions)]
+    pub fn with_interpolation_options(&self, gap_threshold_factor: f64) -> Result<Sp3, JsValue> {
+        let options = Sp3InterpolationOptions::new(gap_threshold_factor).map_err(engine_error)?;
+        Ok(Sp3 {
+            inner: self.inner.clone().with_interpolation_options(options),
+        })
+    }
+
     /// The product's parsed epochs as seconds since J2000 (the product's own
     /// time scale), ascending. This is the exact axis [`Sp3.interpolate`]
     /// consumes.
@@ -542,7 +579,8 @@ impl Sp3 {
     ///
     /// `orbitClass` is `"meo_gnss"` (default), `"geosynchronous"`, `"leo"`, or
     /// `null` to disable the speed gate. `residualToleranceM` enables the
-    /// residual check; `null` disables it.
+    /// residual check; `null` disables it. `gapThresholdFactor` configures the
+    /// hold-out interpolation policy; `null` leaves the core default (1.5).
     ///
     /// Returns `{ attested, defects, pairsChecked, residualsChecked,
     /// residualsSkipped }`. Reports rather than refuses: whether a product with
@@ -552,10 +590,15 @@ impl Sp3 {
         &self,
         orbit_class: Option<String>,
         residual_tolerance_m: Option<f64>,
+        gap_threshold_factor: Option<f64>,
     ) -> Result<JsValue, JsValue> {
         let report = check_continuity(
             &self.inner.precise_ephemeris_samples(),
-            &continuity_options(orbit_class.as_deref(), residual_tolerance_m)?,
+            &continuity_options(
+                orbit_class.as_deref(),
+                residual_tolerance_m,
+                gap_threshold_factor,
+            )?,
         );
 
         let defects: Vec<ContinuityDefectJs> = report
@@ -588,12 +631,13 @@ impl Sp3 {
         through_j2000_s: f64,
         orbit_class: JsValue,
         residual_tolerance_m: JsValue,
+        gap_threshold_factor: JsValue,
     ) -> Result<JsValue, JsValue> {
         let window = EpochWindow::new(from_j2000_s, through_j2000_s).map_err(engine_error)?;
         let stencil = StencilExtent::for_sp3(&self.inner).map_err(engine_error)?;
         let report = check_continuity(
             &self.inner.precise_ephemeris_samples(),
-            &continuity_verdict_options(orbit_class, residual_tolerance_m)?,
+            &continuity_verdict_options(orbit_class, residual_tolerance_m, gap_threshold_factor)?,
         );
         continuity_verdict_to_js(report.verdict_for_window(window, stencil))
     }
@@ -805,9 +849,20 @@ impl Sp3 {
     }
 
     /// Build deterministic precise-interpolant artifact bytes from this SP3 product.
+    ///
+    /// `gapThresholdFactor` optionally overrides the product's interpolation policy;
+    /// `null` or omitted retains this product's active policy.
     #[wasm_bindgen(js_name = preciseInterpolantArtifactBytes)]
-    pub fn precise_interpolant_artifact_bytes(&self) -> Result<Vec<u8>, JsValue> {
-        self.inner
+    pub fn precise_interpolant_artifact_bytes(
+        &self,
+        gap_threshold_factor: Option<f64>,
+    ) -> Result<Vec<u8>, JsValue> {
+        let mut product = self.inner.clone();
+        if let Some(factor) = gap_threshold_factor {
+            let options = Sp3InterpolationOptions::new(factor).map_err(engine_error)?;
+            product = product.with_interpolation_options(options);
+        }
+        product
             .precise_interpolant_store_bytes()
             .map_err(precise_artifact_error)
     }
@@ -872,9 +927,16 @@ impl Sp3 {
 
 /// Parse an SP3-c or SP3-d byte buffer (the full, already-decompressed file)
 /// into a precise-ephemeris product. Throws an `Error` on malformed input.
+///
+/// `gapThresholdFactor` optionally configures the product-carried SP3 coverage-gap
+/// interpolation policy; omitted or `null` leaves the core default (1.5).
 #[wasm_bindgen(js_name = loadSp3)]
-pub fn load_sp3(bytes: &[u8]) -> Result<Sp3, JsValue> {
-    let inner = sidereon::load_sp3(bytes).map_err(engine_error)?;
+pub fn load_sp3(bytes: &[u8], gap_threshold_factor: Option<f64>) -> Result<Sp3, JsValue> {
+    let mut inner = sidereon::load_sp3(bytes).map_err(engine_error)?;
+    if let Some(factor) = gap_threshold_factor {
+        let options = Sp3InterpolationOptions::new(factor).map_err(engine_error)?;
+        inner = inner.with_interpolation_options(options);
+    }
     Ok(Sp3 { inner })
 }
 
@@ -967,6 +1029,12 @@ impl PreciseInterpolantArtifact {
             CoreDigestProvenance::Attested => "attested",
         }
         .to_string()
+    }
+
+    /// SP3 interpolation gap threshold factor read from the artifact header.
+    #[wasm_bindgen(getter, js_name = gapThresholdFactor)]
+    pub fn gap_threshold_factor(&self) -> f64 {
+        self.inner.interpolation_options().gap_threshold_factor()
     }
 
     /// Recompute and verify the file-level and per-satellite checksums.

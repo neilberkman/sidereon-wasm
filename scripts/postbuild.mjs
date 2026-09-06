@@ -171,6 +171,7 @@ export type Sp3MergeOptions = Sp3MergeIdentityOptions;
 export interface Sp3ContinuityOptions {
     orbitClass?: "meo_gnss" | "geosynchronous" | "leo" | null;
     residualToleranceM?: number | null;
+    gapThresholdFactor?: number | null;
 }
 
 export interface ContinuityDefect {
@@ -756,6 +757,14 @@ const topLevelReplacements = [
     "export function chanHoInitialGuess(sensors: SourceSensor[], arrivalTimesS: number[] | Float64Array, propagationSpeedMS: number, mode: SourceSolveMode): SourceInitialGuess;",
   ],
   [
+    "export function loadSp3(bytes: Uint8Array, gap_threshold_factor?: number | null): Sp3;",
+    "export function loadSp3(bytes: Uint8Array, gapThresholdFactor?: number | null): Sp3;",
+  ],
+  [
+    "export function preciseEphemerisSamplesFromSamples(samples: any, gap_threshold_factor?: number | null): PreciseEphemerisSampleSource;",
+    "export function preciseEphemerisSamplesFromSamples(samples: any, gapThresholdFactor?: number | null): PreciseEphemerisSampleSource;",
+  ],
+  [
     "export function mergeSp3(sources: Sp3[], options: any): Sp3MergeResult;",
     "export function mergeSp3(sources: Sp3[], options?: Sp3MergeOptions | null): Sp3MergeResult;",
   ],
@@ -862,12 +871,20 @@ const classMemberReplacements = [
     "Sp3",
     [
       [
-        "checkContinuity(orbit_class?: string | null, residual_tolerance_m?: number | null): any;",
-        "checkContinuity(orbitClass?: string | null, residualToleranceM?: number | null): ContinuityReport;",
+        "checkContinuity(orbit_class?: string | null, residual_tolerance_m?: number | null, gap_threshold_factor?: number | null): any;",
+        "checkContinuity(orbitClass?: string | null, residualToleranceM?: number | null, gapThresholdFactor?: number | null): ContinuityReport;",
       ],
       [
-        "continuityVerdict(from_j2000_s: number, through_j2000_s: number, orbit_class: any, residual_tolerance_m: any): any;",
-        "continuityVerdict(fromJ2000S: number, throughJ2000S: number, orbitClass?: string | null, residualToleranceM?: number | null): WindowContinuityVerdict;",
+        "continuityVerdict(from_j2000_s: number, through_j2000_s: number, orbit_class: any, residual_tolerance_m: any, gap_threshold_factor: any): any;",
+        "continuityVerdict(fromJ2000S: number, throughJ2000S: number, orbitClass?: string | null, residualToleranceM?: number | null, gapThresholdFactor?: number | null): WindowContinuityVerdict;",
+      ],
+      [
+        "withInterpolationOptions(gap_threshold_factor: number): Sp3;",
+        "withInterpolationOptions(gapThresholdFactor: number): Sp3;",
+      ],
+      [
+        "preciseInterpolantArtifactBytes(gap_threshold_factor?: number | null): Uint8Array;",
+        "preciseInterpolantArtifactBytes(gapThresholdFactor?: number | null): Uint8Array;",
       ],
       ["stencilExtent(): any;", "stencilExtent(): { beforeS: number; afterS: number };"],
       ["fde(request: any): FdeSolution;", "fde(request: FdeRequest): FdeSolution;"],
@@ -879,6 +896,36 @@ const classMemberReplacements = [
       [
         "sppRobustFdeDriver(request: any): FdeSolution;",
         "sppRobustFdeDriver(request: FdeRequest): FdeSolution;",
+      ],
+    ],
+  ],
+  [
+    "PreciseEphemerisSampleSource",
+    [
+      [
+        "withInterpolationOptions(gap_threshold_factor: number): PreciseEphemerisSampleSource;",
+        "withInterpolationOptions(gapThresholdFactor: number): PreciseEphemerisSampleSource;",
+      ],
+    ],
+  ],
+  [
+    "PreciseEphemerisInterpolant",
+    [
+      [
+        "static fromPreciseEphemerisSamples(source: PreciseEphemerisSampleSource, gap_threshold_factor?: number | null): PreciseEphemerisInterpolant;",
+        "static fromPreciseEphemerisSamples(source: PreciseEphemerisSampleSource, gapThresholdFactor?: number | null): PreciseEphemerisInterpolant;",
+      ],
+      [
+        "static fromSamples(samples: any, gap_threshold_factor?: number | null): PreciseEphemerisInterpolant;",
+        "static fromSamples(samples: any, gapThresholdFactor?: number | null): PreciseEphemerisInterpolant;",
+      ],
+      [
+        "static fromSp3(sp3: Sp3, gap_threshold_factor?: number | null): PreciseEphemerisInterpolant;",
+        "static fromSp3(sp3: Sp3, gapThresholdFactor?: number | null): PreciseEphemerisInterpolant;",
+      ],
+      [
+        "withInterpolationOptions(gap_threshold_factor: number): PreciseEphemerisInterpolant;",
+        "withInterpolationOptions(gapThresholdFactor: number): PreciseEphemerisInterpolant;",
       ],
     ],
   ],

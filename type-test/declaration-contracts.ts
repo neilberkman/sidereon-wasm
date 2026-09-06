@@ -121,6 +121,7 @@ type ExpectedContinuityVerdict = (
   throughJ2000S: number,
   orbitClass?: string | null,
   residualToleranceM?: number | null,
+  gapThresholdFactor?: number | null,
 ) => WebBindings.WindowContinuityVerdict;
 type ExpectedMergeContinuityVerdict = (
   merged: WebBindings.Sp3,
