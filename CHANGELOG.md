@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.0 - 2026-09-05
+
+- Engine update: sidereon 2.1.0 / sidereon-core 2.1.0. Additive upstream release: the SP3 coverage-gap threshold is now a validated, product-carried policy (`Sp3InterpolationOptions`, default 1.5 and bit-identical to before), the SP3 window-scoped continuity reach is derived from the interpolator's actual selectable node spans, and RINEX 4 CNAV week/TOW round trips are stable at the week boundary.
+
 ## 2.0.0 - 2026-09-03
 
 - **Breaking (upstream):** sidereon 2.0.0 / sidereon-core 2.0.0. Public input
