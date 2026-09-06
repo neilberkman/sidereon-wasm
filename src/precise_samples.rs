@@ -25,7 +25,7 @@ use sidereon_core::ephemeris::{
     ObservableStateElementStatus as CoreObservableStateElementStatus,
     PreciseEphemerisInterpolant as CorePreciseEphemerisInterpolant,
     PreciseEphemerisSample as CoreSample, PreciseEphemerisSamples as CoreSamples,
-    PreciseSamplesError, OBSERVABLE_STATE_MISSING_POSITION_ECEF_M,
+    PreciseSamplesError, Sp3InterpolationOptions, OBSERVABLE_STATE_MISSING_POSITION_ECEF_M,
 };
 use sidereon_core::observables::{
     observable_states_at_j2000_s as core_observable_states_at_j2000_s,
@@ -179,6 +179,23 @@ impl PreciseEphemerisSampleSource {
     ) -> Result<JsValue, JsValue> {
         observable_states_at_shared_j2000_s_over(&self.inner, satellites, epoch_j2000_s)
     }
+    /// SP3 interpolation gap threshold factor carried by this source.
+    #[wasm_bindgen(getter, js_name = gapThresholdFactor)]
+    pub fn gap_threshold_factor(&self) -> f64 {
+        self.inner.interpolation_options().gap_threshold_factor()
+    }
+
+    /// Return a copy of these samples with an explicit gap threshold factor.
+    #[wasm_bindgen(js_name = withInterpolationOptions)]
+    pub fn with_interpolation_options(
+        &self,
+        gap_threshold_factor: f64,
+    ) -> Result<PreciseEphemerisSampleSource, JsValue> {
+        let options = Sp3InterpolationOptions::new(gap_threshold_factor).map_err(engine_error)?;
+        Ok(PreciseEphemerisSampleSource {
+            inner: self.inner.clone().with_interpolation_options(options),
+        })
+    }
 }
 
 /// Build a sample-backed precise-ephemeris source from an array of samples.
@@ -193,9 +210,14 @@ impl PreciseEphemerisSampleSource {
 #[wasm_bindgen(js_name = preciseEphemerisSamplesFromSamples)]
 pub fn precise_ephemeris_samples_from_samples(
     samples: JsValue,
+    gap_threshold_factor: Option<f64>,
 ) -> Result<PreciseEphemerisSampleSource, JsValue> {
     let core_samples = decode_core_samples(samples)?;
-    let inner = CoreSamples::from_samples(core_samples).map_err(samples_error)?;
+    let mut inner = CoreSamples::from_samples(core_samples).map_err(samples_error)?;
+    if let Some(factor) = gap_threshold_factor {
+        let options = Sp3InterpolationOptions::new(factor).map_err(engine_error)?;
+        inner = inner.with_interpolation_options(options);
+    }
     Ok(PreciseEphemerisSampleSource { inner })
 }
 
@@ -219,10 +241,16 @@ impl PreciseEphemerisInterpolant {
     /// Nodes are copied from the product's native SP3 records. Query epochs are
     /// seconds since J2000 in the SP3 product time scale.
     #[wasm_bindgen(js_name = fromSp3)]
-    pub fn from_sp3(sp3: &Sp3) -> PreciseEphemerisInterpolant {
-        PreciseEphemerisInterpolant {
-            inner: CorePreciseEphemerisInterpolant::from_sp3(&sp3.inner),
+    pub fn from_sp3(
+        sp3: &Sp3,
+        gap_threshold_factor: Option<f64>,
+    ) -> Result<PreciseEphemerisInterpolant, JsValue> {
+        let mut inner = CorePreciseEphemerisInterpolant::from_sp3(&sp3.inner);
+        if let Some(factor) = gap_threshold_factor {
+            let options = Sp3InterpolationOptions::new(factor).map_err(engine_error)?;
+            inner = inner.with_interpolation_options(options);
         }
+        Ok(PreciseEphemerisInterpolant { inner })
     }
 
     /// Build a cached interpolant directly from precise samples.
@@ -233,10 +261,17 @@ impl PreciseEphemerisInterpolant {
     /// J2000 and positions in ECEF metres. Throws a `TypeError` for malformed
     /// JS input and a `RangeError` for sample validation failures.
     #[wasm_bindgen(js_name = fromSamples)]
-    pub fn from_samples(samples: JsValue) -> Result<PreciseEphemerisInterpolant, JsValue> {
+    pub fn from_samples(
+        samples: JsValue,
+        gap_threshold_factor: Option<f64>,
+    ) -> Result<PreciseEphemerisInterpolant, JsValue> {
         let core_samples = decode_core_samples(samples)?;
-        let inner = CorePreciseEphemerisInterpolant::from_samples(core_samples)
+        let mut inner = CorePreciseEphemerisInterpolant::from_samples(core_samples)
             .map_err(|e| range_error(&e.to_string()))?;
+        if let Some(factor) = gap_threshold_factor {
+            let options = Sp3InterpolationOptions::new(factor).map_err(engine_error)?;
+            inner = inner.with_interpolation_options(options);
+        }
         Ok(PreciseEphemerisInterpolant { inner })
     }
 
@@ -244,10 +279,33 @@ impl PreciseEphemerisInterpolant {
     #[wasm_bindgen(js_name = fromPreciseEphemerisSamples)]
     pub fn from_precise_ephemeris_samples(
         source: &PreciseEphemerisSampleSource,
-    ) -> PreciseEphemerisInterpolant {
-        PreciseEphemerisInterpolant {
-            inner: CorePreciseEphemerisInterpolant::from_precise_ephemeris_samples(&source.inner),
+        gap_threshold_factor: Option<f64>,
+    ) -> Result<PreciseEphemerisInterpolant, JsValue> {
+        let mut inner =
+            CorePreciseEphemerisInterpolant::from_precise_ephemeris_samples(&source.inner);
+        if let Some(factor) = gap_threshold_factor {
+            let options = Sp3InterpolationOptions::new(factor).map_err(engine_error)?;
+            inner = inner.with_interpolation_options(options);
         }
+        Ok(PreciseEphemerisInterpolant { inner })
+    }
+
+    /// SP3 interpolation gap threshold factor carried by this interpolant.
+    #[wasm_bindgen(getter, js_name = gapThresholdFactor)]
+    pub fn gap_threshold_factor(&self) -> f64 {
+        self.inner.interpolation_options().gap_threshold_factor()
+    }
+
+    /// Return a copy of this interpolant with an explicit gap threshold factor.
+    #[wasm_bindgen(js_name = withInterpolationOptions)]
+    pub fn with_interpolation_options(
+        &self,
+        gap_threshold_factor: f64,
+    ) -> Result<PreciseEphemerisInterpolant, JsValue> {
+        let options = Sp3InterpolationOptions::new(gap_threshold_factor).map_err(engine_error)?;
+        Ok(PreciseEphemerisInterpolant {
+            inner: self.inner.clone().with_interpolation_options(options),
+        })
     }
 
     /// Source time-scale abbreviation used by this handle's J2000-second axis,

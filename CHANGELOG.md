@@ -2,6 +2,19 @@
 
 ## 2.1.0 - 2026-09-05
 
+### Added
+
+- Configurable SP3 coverage-gap interpolation policy (`gapThresholdFactor`, default 1.5):
+  - `loadSp3(bytes, gapThresholdFactor?)` loads SP3 products with an explicit gap threshold factor.
+  - `Sp3.gapThresholdFactor` reads the active factor; `Sp3.withInterpolationOptions(factor)` returns a copy with the updated policy.
+  - `Sp3.checkContinuity(..., gapThresholdFactor?)` and `Sp3.continuityVerdict(..., gapThresholdFactor?)` accept an optional gap threshold factor override.
+  - `mergeSp3` accepts `options.verifyContinuity.gapThresholdFactor` to configure continuity verification.
+  - `preciseEphemerisSamplesFromSamples(samples, gapThresholdFactor?)` preserves or overrides the factor; `PreciseEphemerisSampleSource.gapThresholdFactor` and `withInterpolationOptions(factor)` inspect and update it.
+  - `PreciseEphemerisInterpolant.fromSp3(sp3, gapThresholdFactor?)`, `fromSamples(samples, gapThresholdFactor?)`, and `fromPreciseEphemerisSamples(source, gapThresholdFactor?)` accept an optional factor; `PreciseEphemerisInterpolant.gapThresholdFactor` and `withInterpolationOptions(factor)` inspect and update it.
+  - `Sp3.preciseInterpolantArtifactBytes(gapThresholdFactor?)` and `PreciseInterpolantArtifact.gapThresholdFactor` serialize and inspect precomputed artifacts with the interpolation policy.
+
+### Changed
+
 - Engine update: sidereon 2.1.0 / sidereon-core 2.1.0. Additive upstream release: the SP3 coverage-gap threshold is now a validated, product-carried policy (`Sp3InterpolationOptions`, default 1.5 and bit-identical to before), the SP3 window-scoped continuity reach is derived from the interpolator's actual selectable node spans, and RINEX 4 CNAV week/TOW round trips are stable at the week boundary.
 
 ## 2.0.0 - 2026-09-03

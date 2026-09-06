@@ -403,10 +403,13 @@ The wasm surface mirrors the full breadth of the engine:
   problems (Karney), an epoch-aware terrestrial frame catalog (ITRF/ETRF
   Helmert sets), and EGM2008 geoid grids alongside EGM96.
 - **Ephemeris and time:** broadcast ephemeris and SP3 (load/interpolate/merge),
-  source-agnostic precise ephemeris sampling (one sampling interface over SP3,
-  broadcast, or caller-supplied samples), JPL SPK (DAF/.bsp) kernels,
-  scale-aware time (`Instant` with GMST/GAST and resolved TT/UT1/TDB), Earth
-  orientation parameters.
+  configurable SP3 coverage-gap interpolation policy (`gapThresholdFactor`,
+  default 1.5) and window-scoped continuity verification options
+  (`checkContinuity`, `continuityVerdict`, `verifyContinuity`), source-agnostic
+  precise ephemeris sampling (one sampling interface over SP3, broadcast, or
+  caller-supplied samples), JPL SPK (DAF/.bsp) kernels, scale-aware time
+  (`Instant` with GMST/GAST and resolved TT/UT1/TDB), Earth orientation
+  parameters.
 - **Geometry and events:** reference frames (TEME, GCRS, ITRS, geodetic, ECEF),
   relative motion in RIC/RTN/LVLH frames with Clohessy-Wiltshire propagation,
   look angles, eclipse and shadow geometry, angular separation, position angle,

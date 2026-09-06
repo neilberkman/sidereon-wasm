@@ -58,6 +58,7 @@ struct ContinuityOptionsInput {
     orbit_class: Option<String>,
     #[serde(default = "default_residual_tolerance_m")]
     residual_tolerance_m: Option<f64>,
+    gap_threshold_factor: Option<f64>,
 }
 
 fn default_continuity_orbit_class() -> Option<String> {
@@ -437,7 +438,7 @@ fn validate_merge_option_fields(options: &JsValue) -> Result<(), JsValue> {
     if !continuity.is_null() && !continuity.is_undefined() {
         reject_unknown_object_fields(
             &continuity,
-            &["orbitClass", "residualToleranceM"],
+            &["orbitClass", "residualToleranceM", "gapThresholdFactor"],
             "options.verifyContinuity",
         )?;
     }
@@ -565,6 +566,7 @@ impl MergeOptionsInput {
             opts.verify_continuity = Some(continuity_options(
                 continuity.orbit_class.as_deref(),
                 continuity.residual_tolerance_m,
+                continuity.gap_threshold_factor,
             )?);
         }
         Ok(opts)

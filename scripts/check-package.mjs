@@ -154,7 +154,7 @@ try {
     "export function sp3ContentStartOffsetSeconds(",
     "export function supportedSamples(",
     "export function validateExactSp3(",
-    "continuityVerdict(fromJ2000S: number, throughJ2000S: number, orbitClass?: string | null, residualToleranceM?: number | null): WindowContinuityVerdict;",
+    "continuityVerdict(fromJ2000S: number, throughJ2000S: number, orbitClass?: string | null, residualToleranceM?: number | null, gapThresholdFactor?: number | null): WindowContinuityVerdict;",
     "continuityVerdict(merged: Sp3, fromJ2000S: number, throughJ2000S: number): WindowContinuityVerdict | null;",
     "stencilExtent(): { beforeS: number; afterS: number };",
     "readonly covers: NominalCoverage;",
