@@ -347,13 +347,15 @@ struct PredictedLineCandidate {
 
 /// Ordered cross-line candidates for one predicted IONEX map date.
 ///
-/// Both CODE predicted lines publish the same official filename for a map
-/// date, but the two-day line is produced a day earlier, so `cod_prd2` is
-/// routinely published while `cod_prd1` is still absent when CODE runs
-/// behind. Candidates are ordered `cod_prd1` first, all cover the SAME map
-/// date (never a neighboring day's map), and each keeps its own line
-/// identity so resolved provenance names the line actually served. The walk
-/// is opt-in; single-line requests keep their fail-closed behavior.
+/// CODE archives both predicted lines under `CODE/IONO/PRD/`, the one-day
+/// line as `COD0OPSP0D_*` and the two-day line as `COD0OPSP1D_*`, with the
+/// map date in both filenames. The two-day line is produced a day earlier,
+/// so `cod_prd2` is routinely published while `cod_prd1` is still absent
+/// when CODE runs behind. Candidates are ordered `cod_prd1` first, all
+/// cover the SAME map date (never a neighboring day's map), and each keeps
+/// its own line identity so resolved provenance names the line actually
+/// served. The walk is opt-in; single-line requests keep their fail-closed
+/// behavior.
 ///
 /// Returns an array of `{center, date, sample, issue, filename, url}`.
 #[wasm_bindgen(js_name = predictedIonexLineCandidates)]

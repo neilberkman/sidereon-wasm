@@ -303,7 +303,7 @@ test("exact cache commits bind full identity, source, and all immutable bytes", 
   );
 
   const otherTier = productIdentity("cod_prd2", "ionex", 2026, 7, 16);
-  assert.equal(identity.officialFilename, otherTier.officialFilename);
+  assert.notEqual(identity.officialFilename, otherTier.officialFilename);
   assert.throws(
     () => verifyExactCacheCommit(otherTier, "direct", marker, product, archive, provenance),
     /identity, source, or bytes/,
@@ -337,17 +337,38 @@ test("CDDIS does not substitute for ESA MGEX final SP3", () => {
   );
 });
 
-test("predicted IONEX direct locations preserve tier and identity year", () => {
-  const p1 = distributionLocation("cod_prd1", "ionex", 2026, 7, 15, undefined, undefined, "direct");
+// CODE archives both predicted lines under CODE/IONO/PRD/, one filename token
+// per prediction lead, with no year directory (recorded in
+// fixtures/listings/aiub-iono-prd-20260923.csv).
+test("predicted IONEX direct locations use the AIUB PRD archive", () => {
+  const oneDay = distributionLocation(
+    "cod_prd1",
+    "ionex",
+    2026,
+    7,
+    15,
+    undefined,
+    undefined,
+    "direct",
+  );
   assert.equal(
-    p1.originalUrl,
-    "https://www.aiub.unibe.ch/download/CODE/IONO/P1/2026/COD0OPSPRD_20261960000_01D_01H_GIM.INX.gz",
+    oneDay.originalUrl,
+    "https://www.aiub.unibe.ch/download/CODE/IONO/PRD/COD0OPSP0D_20261960000_01D_01H_GIM.INX.gz",
   );
 
-  const p2 = distributionLocation("cod_prd2", "ionex", 2026, 7, 16, undefined, undefined, "direct");
+  const twoDay = distributionLocation(
+    "cod_prd2",
+    "ionex",
+    2026,
+    7,
+    16,
+    undefined,
+    undefined,
+    "direct",
+  );
   assert.equal(
-    p2.originalUrl,
-    "https://www.aiub.unibe.ch/download/CODE/IONO/P2/2026/COD0OPSPRD_20261970000_01D_01H_GIM.INX.gz",
+    twoDay.originalUrl,
+    "https://www.aiub.unibe.ch/download/CODE/IONO/PRD/COD0OPSP1D_20261970000_01D_01H_GIM.INX.gz",
   );
 
   const boundary = distributionLocation(
@@ -362,15 +383,16 @@ test("predicted IONEX direct locations preserve tier and identity year", () => {
   );
   assert.equal(
     boundary.originalUrl,
-    "https://www.aiub.unibe.ch/download/CODE/IONO/P2/2027/COD0OPSPRD_20270010000_01D_01H_GIM.INX.gz",
+    "https://www.aiub.unibe.ch/download/CODE/IONO/PRD/COD0OPSP1D_20270010000_01D_01H_GIM.INX.gz",
   );
 });
 
-test("predicted tiers with the same filename retain distinct cache identities", () => {
-  const p1 = productIdentity("cod_prd1", "ionex", 2026, 7, 16);
-  const p2 = productIdentity("cod_prd2", "ionex", 2026, 7, 16);
-  assert.equal(p1.officialFilename, p2.officialFilename);
-  assert.notEqual(p1.cacheKey, p2.cacheKey);
+test("the predicted lines for one map date retain distinct identities", () => {
+  const oneDay = productIdentity("cod_prd1", "ionex", 2026, 7, 16);
+  const twoDay = productIdentity("cod_prd2", "ionex", 2026, 7, 16);
+  assert.equal(oneDay.officialFilename, "COD0OPSP0D_20261970000_01D_01H_GIM.INX");
+  assert.equal(twoDay.officialFilename, "COD0OPSP1D_20261970000_01D_01H_GIM.INX");
+  assert.notEqual(oneDay.cacheKey, twoDay.cacheKey);
 });
 
 test("exact product sets fail closed and retain prediction metadata", () => {
@@ -401,7 +423,10 @@ test("exact product sets fail closed and retain prediction metadata", () => {
 
   const oneDay = productIdentity("cod_prd1", "ionex", 2026, 7, 16);
   const twoDay = productIdentity("cod_prd2", "ionex", 2026, 7, 16);
-  assert.equal(oneDay.officialFilename, twoDay.officialFilename);
+  assert.deepEqual(
+    [oneDay.year, oneDay.month, oneDay.day],
+    [twoDay.year, twoDay.month, twoDay.day],
+  );
   const wrongTier = new GnssExactProductSet();
   wrongTier.addExpected(oneDay);
   wrongTier.addAvailable(twoDay);
