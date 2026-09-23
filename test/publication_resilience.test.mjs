@@ -1,8 +1,9 @@
 // Publication-lag resilience surface (core 0.36.0) through the WASM binding:
 // the cross-line predicted-IONEX walk, the closed-dialect listing parsers,
-// and newest-published-issue selection, checked against the archive listings
-// recorded live during the 2026-08-04 publication lag (the same fixtures the
-// core pins).
+// and newest-published-issue selection, checked against recorded archive
+// listings (the same fixtures the core pins): the GFZ ultra-rapid listing
+// from the 2026-08-04 publication lag and the AIUB whole-tree listing of the
+// CODE/IONO/PRD predicted maps recorded on 2026-09-23.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -27,15 +28,57 @@ test("cross-line candidates share the map date and name their line", () => {
   for (const candidate of candidates) {
     assert.equal(candidate.date, "2026-08-05");
   }
-  assert.equal(candidates[0].filename, candidates[1].filename);
-  assert.match(candidates[0].url, /\/IONO\/P1\/2026\//);
-  assert.match(candidates[1].url, /\/IONO\/P2\/2026\//);
+  // Same map date and archive directory, one filename token per line.
+  assert.equal(candidates[0].filename, "COD0OPSP0D_20262170000_01D_01H_GIM.INX");
+  assert.equal(candidates[1].filename, "COD0OPSP1D_20262170000_01D_01H_GIM.INX");
+  assert.equal(
+    candidates[0].url,
+    "https://www.aiub.unibe.ch/download/CODE/IONO/PRD/COD0OPSP0D_20262170000_01D_01H_GIM.INX.gz",
+  );
+  assert.equal(
+    candidates[1].url,
+    "https://www.aiub.unibe.ch/download/CODE/IONO/PRD/COD0OPSP1D_20262170000_01D_01H_GIM.INX.gz",
+  );
 });
 
-test("the recorded P1 gap resolves to P2 with the line named", () => {
-  const body = listing("aiub-iono-p1p2-20260804.csv");
-  assert.equal(resolveFirstPublishedPredictedIonex(2026, 8, 5, undefined, body), 1);
-  assert.equal(resolveFirstPublishedPredictedIonex(2026, 8, 4, undefined, body), 0);
+test("the recorded one-day gap resolves to the two-day line", () => {
+  // In the state recorded on 2026-09-23 the one-day map for day 266 is not
+  // yet published while the two-day map is; for day 265 both are, and the
+  // walk keeps its one-day preference.
+  const body = listing("aiub-iono-prd-20260923.csv");
+  assert.equal(resolveFirstPublishedPredictedIonex(2026, 9, 23, undefined, body), 1);
+  assert.equal(resolveFirstPublishedPredictedIonex(2026, 9, 22, undefined, body), 0);
+});
+
+test("the AIUB whole-tree listing separates the predicted lines", () => {
+  const body = listing("aiub-iono-prd-20260923.csv");
+  assert.deepEqual(newestPublishedProduct("cod_prd1", "ionex", body), {
+    date: "2026-09-22",
+    issue: "0000",
+    filename: "COD0OPSP0D_20262650000_01D_01H_GIM.INX",
+    observedAt: "2026-09-22T10:00:02Z",
+  });
+  assert.deepEqual(newestPublishedProduct("cod_prd2", "ionex", body), {
+    date: "2026-09-23",
+    issue: "0000",
+    filename: "COD0OPSP1D_20262660000_01D_01H_GIM.INX",
+    observedAt: "2026-09-22T10:00:02Z",
+  });
+
+  // The rolling copies CODE keeps at the tree root are not the archived
+  // objects and are attributed to neither line.
+  const rootCopies = body
+    .split("\n")
+    .filter((row) => row.length > 0 && !row.startsWith("CODE/IONO/"))
+    .join("\n");
+  assert.ok(
+    rootCopies
+      .split("\n")
+      .some((row) => row.startsWith("CODE/COD0OPSP1D_20262660000_01D_01H_GIM.INX.gz;")),
+  );
+  for (const center of ["cod_prd1", "cod_prd2"]) {
+    assert.equal(newestPublishedProduct(center, "ionex", rootCopies), null);
+  }
 });
 
 test("newest published product reports the recorded GFZ lag", () => {

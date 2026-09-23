@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.1.1 - 2026-09-22
+
+### Fixed
+
+- Engine update: sidereon 2.1.1 / sidereon-core 2.1.1. CODE predicted
+  ionosphere maps resolve to the archive AIUB now serves them from: `cod_prd1`
+  is `CODE/IONO/PRD/COD0OPSP0D_<date>0000_01D_01H_GIM.INX.gz` and `cod_prd2`
+  is `CODE/IONO/PRD/COD0OPSP1D_<date>0000_01D_01H_GIM.INX.gz`. The
+  `CODE/IONO/P1/<year>` and `CODE/IONO/P2/<year>` `COD0OPSPRD` trees they were
+  read from stopped receiving issues after 2026-09-21 and are now empty, so
+  every predicted-IONEX URL `distributionLocation` and
+  `predictedIonexLineCandidates` returned pointed at an object that no longer
+  exists. For the dates both layouts carried the objects decompress to the
+  same bytes.
+- The two predicted lines now carry distinct official filenames, so
+  `productIdentity("cod_prd1", ...)` and `productIdentity("cod_prd2", ...)`
+  for one map date differ in `officialFilename` as well as in
+  `predictionHorizonDays` and `cacheKey`.
+- `newestPublishedProduct` and `resolveFirstPublishedPredictedIonex` attribute
+  only objects under `CODE/IONO/PRD/` to a predicted line, not the rolling
+  copies CODE keeps at the tree root.
+- The JavaScript API is unchanged.
+
 ## 2.1.0 - 2026-09-05
 
 ### Added
