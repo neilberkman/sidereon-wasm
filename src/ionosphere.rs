@@ -109,7 +109,10 @@ pub fn galileo_nequick_delay(
     let receiver = Wgs84Geodetic::new(lat_deg * DEG_TO_RAD, lon_deg * DEG_TO_RAD, 0.0)
         .map_err(engine_error)?;
     let (jd_whole, fraction) = split_julian_date(year, month, day, hour, minute, second);
-    let jd = JulianDateSplit::new(jd_whole, fraction).map_err(engine_error)?;
+    let jd = JulianDateSplit::new(jd_whole, fraction).map_err(|error| {
+        let message = error.to_string();
+        crate::tropo::time_model_error_with(error, "Error", &message)
+    })?;
     let epoch = Instant::from_julian_date(TimeScale::Gst, jd);
     let model = IonoModel::GalileoNequickG(GalileoNequickCoeffs { ai0, ai1, ai2 });
     ionosphere_delay(

@@ -61,17 +61,8 @@ export const C_M_S = 299792458.0;
 
 const OMEGA_E = 7.2921151467e-5;
 
-export const VELOCITY_OBS_BITS = [
-  ["G07", "0xC0768A0B93C45F82"],
-  ["G08", "0xC081BBF2879835FD"],
-  ["G10", "0xC081C9B51570E844"],
-  ["G16", "0xC045EB58A1B7B54E"],
-  ["G18", "0x407EC07DD774B2F8"],
-  ["G20", "0xC0689F0E9E24FBC3"],
-  ["G21", "0x4063A9470C18C1A7"],
-  ["G26", "0x4079EF7D9618F6B0"],
-  ["G27", "0xC0775231A845D789"],
-];
+// The engine-generated goldens of `test/golden-gen` (see its Cargo.toml).
+export const coreGoldens = () => fixtureJson("core_goldens.json");
 
 export function geodeticToEcef(latDeg, lonDeg, hM) {
   const a = 6378137.0;
@@ -87,19 +78,34 @@ export function geodeticToEcef(latDeg, lonDeg, hM) {
   ];
 }
 
-export function synthSp3Pseudoranges(sp3, tRx, rx, rxClockS = 0, minElevationDeg = 10) {
+// Synthetic code pseudoranges from an SP3 product: the Earth-rotated
+// light-time range to each satellite of `systemLetters` above
+// `minElevationDeg`, plus c (dtr - dts) with dts the product clock carrying
+// the RTKLIB `peph2pos` relativistic term -2 r.v / c^2 (the velocity the
+// difference of the product positions 1 ms apart), which positioning applies
+// to a precise clock.
+export function synthSp3Pseudoranges(
+  sp3,
+  tRx,
+  rx,
+  rxClockS = 0,
+  minElevationDeg = 10,
+  systemLetters = ["G"],
+) {
   const rxRadius = norm(rx);
   const up = rx.map((c) => c / rxRadius);
   const out = [];
-  for (const sat of sp3.satellites.filter((s) => s.startsWith("G"))) {
+  for (const sat of sp3.satellites.filter((s) => systemLetters.includes(s[0]))) {
     let dtFlight = 0.075;
     let p;
     let dtSat;
+    let raw;
+    let tTx = tRx;
     let range = 0;
     for (let it = 0; it < 4; it++) {
-      const tTx = tRx - dtFlight;
+      tTx = tRx - dtFlight;
       const interp = sp3.interpolate(sat, Float64Array.of(tTx));
-      const raw = interp.positionM;
+      raw = interp.positionM;
       dtSat = interp.clockS[0];
       if (!Number.isFinite(raw[0]) || !Number.isFinite(dtSat)) {
         p = null;
@@ -115,11 +121,17 @@ export function synthSp3Pseudoranges(sp3, tRx, rx, rxClockS = 0, minElevationDeg
       dtFlight = range / C_M_S;
     }
     if (!p) continue;
+    const later = sp3.interpolate(sat, Float64Array.of(tTx + 1e-3)).positionM;
+    const v = [0, 1, 2].map((i) => (later[i] - raw[i]) / 1e-3);
+    const relativityS = (-2 * (raw[0] * v[0] + raw[1] * v[1] + raw[2] * v[2])) / C_M_S / C_M_S;
     const los = [p[0] - rx[0], p[1] - rx[1], p[2] - rx[2]];
     const elDeg =
       (Math.asin((los[0] * up[0] + los[1] * up[1] + los[2] * up[2]) / range) * 180) / Math.PI;
     if (elDeg < minElevationDeg) continue;
-    out.push({ satelliteId: sat, pseudorangeM: range + C_M_S * (rxClockS - dtSat) });
+    out.push({
+      satelliteId: sat,
+      pseudorangeM: range + C_M_S * (rxClockS - (dtSat + relativityS)),
+    });
   }
   return out;
 }

@@ -17,6 +17,15 @@ const terminalRecordCorpus = JSON.parse(
   readFileSync(new URL("./fixtures/sp3-terminal-record-v1.json", import.meta.url), "utf8"),
 );
 
+function captureThrow(fn, expected) {
+  let thrown;
+  assert.throws(fn, (error) => {
+    thrown = error;
+    return expected === undefined || expected.test(error.message);
+  });
+  return thrown;
+}
+
 function regularOffsets(count, cadenceSeconds = 300) {
   return Array.from({ length: count }, (_, index) => index * cadenceSeconds);
 }
@@ -192,5 +201,12 @@ test("historical GFZ identity applies its cataloged content start across a GPS w
   assert.equal(parseExactSp3(bytes, catalogRequest).coverage, ExactSp3Coverage.HalfOpen);
 
   const literalFilenameEpoch = new ExactSp3Request(2022, 9, 4, "02D", "05M", "0000");
-  assert.throws(() => parseExactSp3(bytes, literalFilenameEpoch), /start mismatch/);
+  const startMismatch = captureThrow(
+    () => parseExactSp3(bytes, literalFilenameEpoch),
+    /start mismatch/,
+  );
+  assert.equal(startMismatch.name, "ExactSp3ValidationError");
+  assert.match(startMismatch.detail.requestedTick, /^-?\d+$/);
+  assert.match(startMismatch.detail.declaredTick, /^-?\d+$/);
+  assert.notEqual(startMismatch.detail.requestedTick, startMismatch.detail.declaredTick);
 });

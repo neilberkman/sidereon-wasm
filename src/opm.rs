@@ -4,7 +4,7 @@
 //! `sidereon_core::astro::opm`; this module marshals fields, optional blocks, and
 //! the flat 6x6 covariance.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::astro::opm::{
@@ -12,24 +12,57 @@ use sidereon_core::astro::opm::{
     OpmCovariance as CoreOpmCovariance, OpmKeplerian as CoreOpmKeplerian,
     OpmManeuver as CoreOpmManeuver, OpmMetadata as CoreOpmMetadata,
     OpmSpacecraft as CoreOpmSpacecraft, OpmState as CoreOpmState,
+    OpmUserDefined as CoreOpmUserDefined,
 };
 
-use crate::error::{engine_error, range_error, type_error};
-use crate::marshal::{covariance6_flat, covariance6_from_flat, vec3};
+use crate::error::{range_error, reject_unknown_keys, to_plain_js, type_error};
+use crate::marshal::{
+    covariance6_error, covariance6_flat, lower_triangle21_from_input, lower_triangle21_to_full,
+    vec3,
+};
+use crate::ndm_error::opm_error;
 
-/// Optional OPM header fields, defaulting to the CCSDS-standard values.
+/// Optional OPM header fields. `ccsdsOpmVers` defaults to `"2.0"`; every
+/// other absent field is absent from the message.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct OpmHeaderMeta {
     ccsds_opm_vers: Option<String>,
+    classification: Option<String>,
     creation_date: Option<String>,
     originator: Option<String>,
+    message_id: Option<String>,
+    comments: Vec<String>,
+    user_defined: Vec<OpmUserDefinedJs>,
+    user_defined_comments: Vec<String>,
+}
+
+/// One `USER_DEFINED_*` parameter, verbatim.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpmUserDefinedJs {
+    parameter: String,
+    value: String,
 }
 
 fn parse_header_meta(value: JsValue) -> Result<OpmHeaderMeta, JsValue> {
     if value.is_undefined() || value.is_null() {
         Ok(OpmHeaderMeta::default())
     } else {
+        reject_unknown_keys(
+            &value,
+            "Opm meta",
+            &[
+                "ccsdsOpmVers",
+                "classification",
+                "creationDate",
+                "originator",
+                "messageId",
+                "comments",
+                "userDefined",
+                "userDefinedComments",
+            ],
+        )?;
         serde_wasm_bindgen::from_value(value)
             .map_err(|e| type_error(&format!("invalid Opm meta: {e}")))
     }
@@ -52,7 +85,8 @@ pub struct OpmMetadata {
 
 #[wasm_bindgen]
 impl OpmMetadata {
-    /// Build the OPM metadata block. Every field is mandatory in CCSDS 502.0-B.
+    /// Build the OPM metadata block. The five leading fields are mandatory in
+    /// CCSDS 502.0-B-3; `refFrameEpoch` and the block `comments` are optional.
     #[wasm_bindgen(constructor)]
     pub fn new(
         object_name: String,
@@ -60,16 +94,32 @@ impl OpmMetadata {
         center_name: String,
         ref_frame: String,
         time_system: String,
+        ref_frame_epoch: Option<String>,
+        comments: Option<Vec<String>>,
     ) -> OpmMetadata {
         OpmMetadata {
             inner: CoreOpmMetadata {
+                comments: comments.unwrap_or_default(),
                 object_name,
                 object_id,
                 center_name,
                 ref_frame,
+                ref_frame_epoch,
                 time_system,
             },
         }
+    }
+
+    /// `REF_FRAME_EPOCH` as written, or `undefined`.
+    #[wasm_bindgen(getter, js_name = refFrameEpoch)]
+    pub fn ref_frame_epoch(&self) -> Option<String> {
+        self.inner.ref_frame_epoch.clone()
+    }
+
+    /// Comments at the start of the block, in source order.
+    #[wasm_bindgen(getter)]
+    pub fn comments(&self) -> Vec<String> {
+        self.inner.comments.clone()
     }
 
     /// Object name.
@@ -119,9 +169,11 @@ impl OpmState {
         epoch: String,
         position_km: &[f64],
         velocity_km_s: &[f64],
+        comments: Option<Vec<String>>,
     ) -> Result<OpmState, JsValue> {
         Ok(OpmState {
             inner: CoreOpmState {
+                comments: comments.unwrap_or_default(),
                 epoch,
                 position_km: vec3("positionKm", position_km)?,
                 velocity_km_s: vec3("velocityKmS", velocity_km_s)?,
@@ -133,6 +185,12 @@ impl OpmState {
     #[wasm_bindgen(getter)]
     pub fn epoch(&self) -> String {
         self.inner.epoch.clone()
+    }
+
+    /// Comments at the start of the block, in source order.
+    #[wasm_bindgen(getter)]
+    pub fn comments(&self) -> Vec<String> {
+        self.inner.comments.clone()
     }
 
     /// Position vector, kilometres, length-3 `Float64Array`.
@@ -170,6 +228,7 @@ impl OpmKeplerian {
         gm_km3_s2: f64,
         true_anomaly_deg: Option<f64>,
         mean_anomaly_deg: Option<f64>,
+        comments: Option<Vec<String>>,
     ) -> Result<OpmKeplerian, JsValue> {
         let anomaly = match (true_anomaly_deg, mean_anomaly_deg) {
             (Some(value), None) => CoreOpmAnomaly::True(finite(value, "trueAnomalyDeg")?),
@@ -187,6 +246,7 @@ impl OpmKeplerian {
         };
         Ok(OpmKeplerian {
             inner: CoreOpmKeplerian {
+                comments: comments.unwrap_or_default(),
                 semi_major_axis_km: finite(semi_major_axis_km, "semiMajorAxisKm")?,
                 eccentricity: finite(eccentricity, "eccentricity")?,
                 inclination_deg: finite(inclination_deg, "inclinationDeg")?,
@@ -251,6 +311,12 @@ impl OpmKeplerian {
     pub fn gm_km3_s2(&self) -> f64 {
         self.inner.gm_km3_s2
     }
+
+    /// Comments at the start of the block, in source order.
+    #[wasm_bindgen(getter)]
+    pub fn comments(&self) -> Vec<String> {
+        self.inner.comments.clone()
+    }
 }
 
 /// Optional OPM spacecraft-parameters block. Every sub-field is individually
@@ -271,9 +337,11 @@ impl OpmSpacecraft {
         solar_rad_coeff: Option<f64>,
         drag_area_m2: Option<f64>,
         drag_coeff: Option<f64>,
+        comments: Option<Vec<String>>,
     ) -> OpmSpacecraft {
         OpmSpacecraft {
             inner: CoreOpmSpacecraft {
+                comments: comments.unwrap_or_default(),
                 mass_kg,
                 solar_rad_area_m2,
                 solar_rad_coeff,
@@ -312,6 +380,12 @@ impl OpmSpacecraft {
     pub fn drag_coeff(&self) -> Option<f64> {
         self.inner.drag_coeff
     }
+
+    /// Comments at the start of the block, in source order.
+    #[wasm_bindgen(getter)]
+    pub fn comments(&self) -> Vec<String> {
+        self.inner.comments.clone()
+    }
 }
 
 /// Optional OPM 6x6 state covariance.
@@ -323,15 +397,22 @@ pub struct OpmCovariance {
 
 #[wasm_bindgen]
 impl OpmCovariance {
-    /// Build the covariance block. `matrix` is a length-36 row-major
-    /// `Float64Array` for the `[r, v]` state; it must be finite, symmetric, and
-    /// positive semidefinite. `covRefFrame` is the optional frame label.
+    /// Build the covariance block from the 21 lower-triangle values
+    /// (`CX_X`, `CY_X`, `CY_Y`, ...) or a length-36 row-major symmetric
+    /// matrix for the `[r, v]` state. The values are kept as given; no
+    /// definiteness check is applied, as a message holds them as stated.
+    /// `covRefFrame` is the optional frame label.
     #[wasm_bindgen(constructor)]
-    pub fn new(matrix: &[f64], cov_ref_frame: Option<String>) -> Result<OpmCovariance, JsValue> {
+    pub fn new(
+        matrix: &[f64],
+        cov_ref_frame: Option<String>,
+        comments: Option<Vec<String>>,
+    ) -> Result<OpmCovariance, JsValue> {
         Ok(OpmCovariance {
             inner: CoreOpmCovariance {
+                comments: comments.unwrap_or_default(),
                 cov_ref_frame,
-                matrix: covariance6_from_flat("matrix", matrix)?,
+                lower_triangle: lower_triangle21_from_input("matrix", matrix)?,
             },
         })
     }
@@ -342,10 +423,34 @@ impl OpmCovariance {
         self.inner.cov_ref_frame.clone()
     }
 
-    /// The 6x6 state covariance as a length-36 row-major `Float64Array`.
+    /// The 21 lower-triangle values exactly as read, row by row.
+    #[wasm_bindgen(getter, js_name = lowerTriangle)]
+    pub fn lower_triangle(&self) -> Vec<f64> {
+        self.inner.lower_triangle.to_vec()
+    }
+
+    /// The stated values as a length-36 row-major symmetric matrix, without
+    /// validation.
     #[wasm_bindgen(getter)]
     pub fn matrix(&self) -> Vec<f64> {
-        covariance6_flat(&self.inner.matrix)
+        lower_triangle21_to_full(&self.inner.lower_triangle)
+    }
+
+    /// The matrix validated as a state covariance (finite and positive
+    /// semidefinite within the covariance tolerance), as a length-36 row-major
+    /// `Float64Array`. Throws a `RangeError` when it is not one.
+    #[wasm_bindgen(js_name = toValidatedMatrix)]
+    pub fn to_validated_matrix(&self) -> Result<Vec<f64>, JsValue> {
+        self.inner
+            .to_covariance6()
+            .map(|covariance| covariance6_flat(&covariance))
+            .map_err(|error| covariance6_error("covariance", error))
+    }
+
+    /// Comments at the start of the block, in source order.
+    #[wasm_bindgen(getter)]
+    pub fn comments(&self) -> Vec<String> {
+        self.inner.comments.clone()
     }
 }
 
@@ -368,9 +473,11 @@ impl OpmManeuver {
         delta_mass_kg: f64,
         ref_frame: String,
         dv_km_s: &[f64],
+        comments: Option<Vec<String>>,
     ) -> Result<OpmManeuver, JsValue> {
         Ok(OpmManeuver {
             inner: CoreOpmManeuver {
+                comments: comments.unwrap_or_default(),
                 epoch_ignition,
                 duration_s: finite(duration_s, "durationS")?,
                 delta_mass_kg: finite(delta_mass_kg, "deltaMassKg")?,
@@ -409,6 +516,12 @@ impl OpmManeuver {
     pub fn dv_km_s(&self) -> Vec<f64> {
         self.inner.dv_km_s.to_vec()
     }
+
+    /// Comments at the start of the block, in source order.
+    #[wasm_bindgen(getter)]
+    pub fn comments(&self) -> Vec<String> {
+        self.inner.comments.clone()
+    }
 }
 
 /// A canonical, format-agnostic CCSDS Orbit Parameter Message parsed from KVN or
@@ -423,8 +536,10 @@ pub struct Opm {
 impl Opm {
     /// Build an OPM from its blocks. `keplerian`, `spacecraft`, and `covariance`
     /// are optional (pass `undefined`); `maneuvers` is an array (possibly empty).
-    /// `meta` carries the optional header fields (`ccsdsOpmVers`, `creationDate`,
-    /// `originator`).
+    /// `meta` carries the optional header fields (`ccsdsOpmVers`,
+    /// `classification`, `creationDate`, `originator`, `messageId`, header
+    /// `comments`) and the `userDefined` parameters with their
+    /// `userDefinedComments`.
     #[wasm_bindgen(constructor)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -434,14 +549,26 @@ impl Opm {
         spacecraft: Option<OpmSpacecraft>,
         covariance: Option<OpmCovariance>,
         maneuvers: Vec<OpmManeuver>,
-        meta: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "OpmMeta | undefined | null")] meta: JsValue,
     ) -> Result<Opm, JsValue> {
         let header = parse_header_meta(meta)?;
         Ok(Opm {
             inner: CoreOpm {
                 ccsds_opm_vers: header.ccsds_opm_vers.unwrap_or_else(|| "2.0".to_string()),
+                comments: header.comments,
+                classification: header.classification,
                 creation_date: header.creation_date,
                 originator: header.originator,
+                message_id: header.message_id,
+                user_defined: header
+                    .user_defined
+                    .into_iter()
+                    .map(|entry| CoreOpmUserDefined {
+                        parameter: entry.parameter,
+                        value: entry.value,
+                    })
+                    .collect(),
+                user_defined_comments: header.user_defined_comments,
                 metadata: metadata.inner.clone(),
                 state: state.inner.clone(),
                 keplerian: keplerian.map(|k| k.inner),
@@ -462,6 +589,46 @@ impl Opm {
     #[wasm_bindgen(getter, js_name = creationDate)]
     pub fn creation_date(&self) -> Option<String> {
         self.inner.creation_date.clone()
+    }
+
+    /// Header `CLASSIFICATION`.
+    #[wasm_bindgen(getter)]
+    pub fn classification(&self) -> Option<String> {
+        self.inner.classification.clone()
+    }
+
+    /// Header `MESSAGE_ID`.
+    #[wasm_bindgen(getter, js_name = messageId)]
+    pub fn message_id(&self) -> Option<String> {
+        self.inner.message_id.clone()
+    }
+
+    /// Header comments, in source order.
+    #[wasm_bindgen(getter)]
+    pub fn comments(&self) -> Vec<String> {
+        self.inner.comments.clone()
+    }
+
+    /// `USER_DEFINED_*` parameters as `{ parameter, value }`, verbatim, in
+    /// source order.
+    #[wasm_bindgen(getter, js_name = userDefined, unchecked_return_type = "OmmUserDefined[]")]
+    pub fn user_defined(&self) -> Result<JsValue, JsValue> {
+        let rows: Vec<OpmUserDefinedJs> = self
+            .inner
+            .user_defined
+            .iter()
+            .map(|entry| OpmUserDefinedJs {
+                parameter: entry.parameter.clone(),
+                value: entry.value.clone(),
+            })
+            .collect();
+        to_plain_js(&rows, "OPM user-defined parameters")
+    }
+
+    /// Comments of the user-defined parameters block, in source order.
+    #[wasm_bindgen(getter, js_name = userDefinedComments)]
+    pub fn user_defined_comments(&self) -> Vec<String> {
+        self.inner.user_defined_comments.clone()
     }
 
     /// Originator.
@@ -524,31 +691,34 @@ impl Opm {
             .collect()
     }
 
-    /// Encode this OPM to CCSDS OPM KVN text.
+    /// Encode this OPM to CCSDS OPM KVN text. Throws an `OpmError` for what
+    /// the reader would not return unchanged (`UNWRITABLE_TEXT`) and for a
+    /// non-finite number (`INVALID_FIELD`).
     #[wasm_bindgen(js_name = toKvnString)]
-    pub fn to_kvn_string(&self) -> String {
-        encode_kvn(&self.inner)
+    pub fn to_kvn_string(&self) -> Result<String, JsValue> {
+        encode_kvn(&self.inner).map_err(opm_error)
     }
 
-    /// Encode this OPM to CCSDS OPM XML text.
+    /// Encode this OPM to CCSDS OPM XML text. Throws an `OpmError` as
+    /// `toKvnString` does.
     #[wasm_bindgen(js_name = toXmlString)]
-    pub fn to_xml_string(&self) -> String {
-        encode_xml(&self.inner)
+    pub fn to_xml_string(&self) -> Result<String, JsValue> {
+        encode_xml(&self.inner).map_err(opm_error)
     }
 }
 
-/// Parse CCSDS OPM KVN text. Throws an `Error` on a parse failure.
+/// Parse CCSDS OPM KVN text. Throws an `OpmError` on a parse failure.
 #[wasm_bindgen(js_name = parseOpmKvn)]
 pub fn parse_opm_kvn(text: &str) -> Result<Opm, JsValue> {
     parse_kvn(text)
         .map(|inner| Opm { inner })
-        .map_err(engine_error)
+        .map_err(opm_error)
 }
 
-/// Parse CCSDS OPM XML text. Throws an `Error` on a parse failure.
+/// Parse CCSDS OPM XML text. Throws an `OpmError` on a parse failure.
 #[wasm_bindgen(js_name = parseOpmXml)]
 pub fn parse_opm_xml(text: &str) -> Result<Opm, JsValue> {
     parse_xml(text)
         .map(|inner| Opm { inner })
-        .map_err(engine_error)
+        .map_err(opm_error)
 }

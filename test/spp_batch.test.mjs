@@ -114,6 +114,23 @@ test("solveSppBatch is bit-identical to per-epoch solveSpp", async () => {
   }
 });
 
+test("solveSppBatch forwards QZSS clock and troposphere selectors", async () => {
+  const sp3 = await loadFixtureSp3();
+  const reqs = requests(sp3, [48]).map((request) => ({
+    ...request,
+    qzssClock: "separate",
+    troposphereModel: "saastamoinenNiell",
+  }));
+  const batch = sp3.solveSppBatch(reqs);
+  const single = sp3.solveSpp(reqs[0]);
+  assert.equal(batch.isOk(0), true);
+  const fromBatch = batch.solution(0);
+  Array.from(fromBatch.positionM).forEach((value, index) => {
+    assert.equal(f64Bits(value), f64Bits(single.positionM[index]));
+  });
+  assert.equal(f64Bits(fromBatch.rxClockS), f64Bits(single.rxClockS));
+});
+
 test("solveSppBatch with no options defaults withGeodetic to true", async () => {
   const sp3 = await loadFixtureSp3();
   const reqs = requests(sp3, [48]);
@@ -133,8 +150,14 @@ test("a shared maxPdop ceiling surfaces a per-epoch error, not a throw", async (
   assert.equal(batch.count, reqs.length);
   for (let i = 0; i < reqs.length; i++) {
     assert.equal(batch.isOk(i), false, `epoch ${i} rejected`);
-    assert.equal(typeof batch.error(i), "string", `epoch ${i} carries a message`);
-    assert.throws(() => batch.solution(i), Error, `epoch ${i} solution() throws`);
+    const detail = batch.error(i);
+    assert.equal(detail.kind, "SOLUTION_REJECTED", `epoch ${i} carries its typed failure`);
+    assert.equal(detail.validation.kind, "DEGENERATE_GEOMETRY_PDOP");
+    assert.throws(
+      () => batch.solution(i),
+      (e) => e.name === "PositioningError" && e.detail.kind === "SOLUTION_REJECTED",
+      `epoch ${i} solution() throws`,
+    );
   }
 });
 

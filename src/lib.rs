@@ -18,6 +18,7 @@ mod almanac;
 mod anomaly;
 mod antex;
 mod araim;
+mod astro_error;
 mod atmosphere;
 mod bias;
 mod bodies;
@@ -26,11 +27,13 @@ mod cdm;
 mod clock_stability;
 mod conjunction;
 mod constellation;
+mod core_error;
 mod covariance;
 mod coverage;
 mod crinex;
 mod data_distribution;
 mod dgnss;
+mod domain_error;
 mod dop;
 mod doppler;
 mod elements;
@@ -53,14 +56,17 @@ mod geoid;
 mod geometry_quality;
 mod gnss;
 mod ils;
+mod inertial;
 mod iod;
 mod ionex;
 mod ionosphere;
+mod label;
 mod lambert;
 mod least_squares;
 mod lnav;
 mod marshal;
 mod moving_baseline;
+mod ndm_error;
 mod nmea;
 mod normality;
 mod ntrip;
@@ -70,6 +76,7 @@ mod oem;
 mod omm;
 mod opm;
 mod orbit_determination;
+mod positioning_error;
 mod ppp;
 mod ppp_corrections;
 mod precise_samples;
@@ -91,6 +98,7 @@ mod sbas;
 mod sbas_pl;
 mod scenario;
 mod sgp4;
+mod sgp4_error;
 mod sidereal;
 mod signal_analysis;
 mod sky;
@@ -113,7 +121,8 @@ mod tropo;
 
 pub use almanac::{
     lunar_solar_eclipses, lunar_solar_eclipses_spk, meridian_transits, meridian_transits_spk,
-    moon_phases, moon_phases_spk, planetary_events, seasons, seasons_spk,
+    meridian_transits_spk_with_validity, meridian_transits_with_validity, moon_phases,
+    moon_phases_spk, planetary_events, seasons, seasons_spk,
 };
 pub use anomaly::{
     eccentric_to_mean, eccentric_to_true, mean_to_eccentric, mean_to_true, propagate_kepler,
@@ -198,12 +207,14 @@ pub use frame_catalog::{
     HelmertTransform, TerrestrialFrame,
 };
 pub use frames::{
-    civil_to_j2000_seconds, data_day_of_year, day_of_year, ecef_to_geodetic, gcrs_to_itrs,
-    geodetic_to_ecef, gps_utc_offset_s, itrs_to_gcrs, j2000_seconds_to_civil,
+    civil_to_j2000_seconds, data_day_of_year, day_of_year, ecef_to_geodetic,
+    exact_epoch_attoseconds_per_second, gcrs_to_itrs, gcrs_to_itrs_with_validity, geodetic_to_ecef,
+    gps_utc_offset_s, itrs_to_gcrs, itrs_to_gcrs_with_validity, j2000_seconds_to_civil,
     leap_second_table_info, leap_seconds, leap_seconds_batch, second_of_day,
     split_jd_to_j2000_seconds, tai_utc_offset_s, teme_to_gcrs, time_scale_abbrev,
-    timescale_offset_at_s_js, timescale_offset_s_js, ut1_coverage_info, CivilDateTime, FrameStates,
-    GnssWeekTow, Instant, JulianDate, LeapSecondTable, TimeScale, Ut1Coverage,
+    timescale_offset_at_s_js, timescale_offset_s_js, ut1_coverage_info, CivilDateTime,
+    ExactEpochQueryValue, ExactEpochValue, FrameStates, GnssWeekTow, Instant, JulianDate,
+    LeapSecondTable, TimeScale, Ut1Coverage,
 };
 pub use fusion::{
     fusion_state_bytes_round_trip, smooth_fusion_rts, velocity_match_outage, FusionRtsHistory,
@@ -226,8 +237,25 @@ pub use geoid::{
 pub use geometry_quality::{observability_tier_label, GeometryQuality, ObservabilityTier};
 pub use gnss::{carrier_band_name, gnss_system_label, gnss_system_letter, CarrierBand, GnssSystem};
 pub use ils::{bounded_ils_search_js, lambda_ils_search_js};
+pub use inertial::{
+    attitude_yaw_pitch_roll_rad_js, correct_imu_sample_js, dcm_to_quaternion_js,
+    default_imu_sim_seed_js, gauss_markov_bias_decay_js, gauss_markov_bias_variance_increment_js,
+    gravity_ecef_mps2_js, imu_calibration_from_scale_ppm_js, imu_rate_random_walk_js,
+    imu_spec_from_datasheet_js, imu_spec_preset_js, mechanize_ecef_js, nav_state_attitude_js,
+    normal_gravity_mps2_js, normalize_attitude_quaternion_js, quaternion_to_dcm_js,
+    random_walk_bias_tau_s_js, reorthonormalize_dcm_js, rodrigues_delta_dcm_js,
+    simulate_imu_samples_from_increments_js, simulate_imu_samples_js,
+    true_imu_increment_between_js, validate_imu_bias_js, validate_imu_calibration_js,
+    validate_imu_rate_random_walk_js, validate_imu_simulation_options_js, validate_imu_spec_js,
+    wgs84_gravity_constants_js, ImuGrade, ImuSimulator, StrapdownMechanizer,
+};
 pub use iod::{iod_gauss_angles, iod_gibbs, iod_herrick_gibbs, IodState, IodVelocity};
-pub use ionex::{ionex_from_node_samples, ionex_from_samples, load_ionex, Ionex};
+pub use ionex::{
+    ionex_from_node_samples, ionex_from_samples, ionex_slant_delay, ionex_slant_delay_results,
+    ionex_slant_delay_with_policy, iono_delay_xyz, iono_delay_xyz_with_policy, load_ionex,
+    load_ionex_with_warnings, tec_xyz, tec_xyz_with_policy, Ionex, IonexSlantPolicy, TecGrid,
+    TecGridEpoch, TecGridEvalOptions, TecGridShellGeometry,
+};
 pub use ionosphere::{
     galileo_nequick_delay, klobuchar_delay, nequick_g_delay_m_js, nequick_g_stec_tecu_js,
 };
@@ -244,7 +272,7 @@ pub use ntrip::{
     ntrip_request_bytes, parse_ntrip_sourcetable, NtripClientMachine, NtripState, NtripVersion,
 };
 pub use observables::{
-    acquire, autocorrelation, ca_chip, ca_code, carrier_frequency_hz, coherent_loss,
+    acquire, autocorrelation, ca_chip, ca_code, carrier_frequency_hz, chi2_inv, coherent_loss,
     coherent_loss_db, correlate, correlate_against, correlation_at, cross_correlation,
     default_pair, default_spp_frequency_hz_js, detect_cycle_slips, doppler_to_range_rate, gamma,
     geometry_free, glonass_g1_frequency_hz_js, ionosphere_free, ionosphere_free_phase_cycles,
@@ -261,13 +289,17 @@ pub use observables::{
     VelocitySolution,
 };
 pub use observation::{
-    observe, observe_barycentric_state, observe_spk_body, parallactic_angle_deg,
-    satellite_visual_magnitude, sub_observer_point, sub_solar_point, terminator_latitude_deg,
+    observe, observe_barycentric_state, observe_spk_body, observe_spk_body_with_validity,
+    observe_with_validity, parallactic_angle_deg, satellite_visual_magnitude, sub_observer_point,
+    sub_solar_point, terminator_latitude_deg,
 };
 pub use oem::{
     parse_oem_kvn, parse_oem_xml, Oem, OemCovariance, OemMetadata, OemSegment, OemState,
 };
-pub use omm::{parse_omm_json, parse_omm_kvn, parse_omm_xml, Omm, OmmEpoch};
+pub use omm::{
+    parse_omm_csv, parse_omm_csv_array, parse_omm_json, parse_omm_json_array, parse_omm_kvn,
+    parse_omm_xml, parse_omm_xml_all, Omm, OmmEpoch,
+};
 pub use opm::{
     parse_opm_kvn, parse_opm_xml, Opm, OpmCovariance, OpmKeplerian, OpmManeuver, OpmMetadata,
     OpmSpacecraft, OpmState,
@@ -277,14 +309,16 @@ pub use orbit_determination::{
     fit_sp3_ecef_precise_orbit, fit_sp3_ecef_precise_orbits, fit_sp3_precise_orbit,
 };
 pub use ppp::{
-    solve_ppp_auto_init_fixed_js, solve_ppp_auto_init_float_js, solve_ppp_fixed, solve_ppp_float,
-    PppFixedSolution, PppFloatSolution,
+    solve_ppp_auto_init_fixed_js, solve_ppp_auto_init_float_js, solve_ppp_fixed,
+    solve_ppp_fixed_with_ssr, solve_ppp_float, solve_ppp_float_with_ssr, PppFixedSolution,
+    PppFloatSolution,
 };
 pub use ppp_corrections::ppp_corrections;
 pub use ppp_corrections::ppp_corrections_with_code_bias;
 pub use precise_samples::{
     observable_state_missing_position_ecef_m, precise_ephemeris_samples_from_samples,
-    sample_broadcast_ephemeris, sample_sp3_ephemeris, sp3_precise_ephemeris_samples,
+    precise_ephemeris_samples_from_samples_with_accuracy, sample_broadcast_ephemeris,
+    sample_sp3_ephemeris, sp3_precise_ephemeris_accuracy_samples, sp3_precise_ephemeris_samples,
     PreciseEphemerisInterpolant, PreciseEphemerisSampleSource,
 };
 pub use propagation::{propagate_state, Ephemeris};
@@ -308,16 +342,18 @@ pub use rinex_clock::{
 };
 pub use rinex_nav::{
     cnav_ura_nominal_m, encode_rinex_nav, load_rinex_nav, parse_rinex_glonass_records,
-    parse_rinex_iono_corrections, parse_rinex_leap_seconds, parse_rinex_nav,
+    parse_rinex_iono_corrections, parse_rinex_leap_seconds, parse_rinex_nav, parse_rinex_nav_file,
     parse_rinex_nav_lenient, parse_rinex_nav_records, BroadcastDelayTerm, BroadcastEphemeris,
     BroadcastEvaluation, BroadcastGroupDelaysJs, BroadcastRecordJs, BroadcastStoreEvaluation,
     ClockPolynomialJs, CnavParametersJs, CnavSignal, GlonassRecordJs, IonoCorrectionsJs,
-    KeplerianElementsJs, KlobucharAlphaBetaJs, NavMessage, RinexNavParse, SkippedNavBlock,
+    KeplerianElementsJs, KlobucharAlphaBetaJs, NavMessage, RinexNavFile, RinexNavParse,
+    SkippedNavBlock,
 };
 pub use rinex_obs::{
-    load_rinex_obs, observation_kind_label, parse_rinex_obs, CarrierPhaseSeries, ObsEpoch,
-    ObsEpochTime, ObsHeader, ObsPhaseShift, ObservationFilter, ObservationKind,
-    ObservationValueSeries, PseudorangeSeries, RinexObs, SignalPolicy,
+    load_rinex_obs, observation_kind_label, parse_rinex_obs, rinex_obs_cycle_slip_flag,
+    CarrierPhaseSeries, ObsEpoch, ObsEpochTime, ObsHeader, ObsHeaderSegment, ObsHeaderTimeline,
+    ObsLeapSeconds, ObsPhaseShift, ObservationFilter, ObservationKind, ObservationValueSeries,
+    PseudorangeSeries, RinexObs, SignalPolicy,
 };
 pub use rinex_qc::{
     lint_rinex_nav, lint_rinex_obs, observation_qc, repair_rinex_nav, repair_rinex_obs,
@@ -337,8 +373,9 @@ pub use rtk_arc::{
     solve_wide_lane_fixed_rinex_rtk_baseline_js,
 };
 pub use sbas::{
-    decode_sbas_message, parse_sbas_ems_lines, parse_sbas_rtklib_lines, sat_to_sbas_prn,
-    sbas_corrected_state, sbas_prn_to_sat, solve_spp_sbas, SbasCorrectionStore, SbasLogBlock,
+    decode_sbas_message, parse_sbas_ems_lines, parse_sbas_ems_log, parse_sbas_rtklib_lines,
+    parse_sbas_rtklib_log, sat_to_sbas_prn, sbas_corrected_state, sbas_prn_to_sat, solve_spp_sbas,
+    SbasCorrectionStore, SbasLog, SbasLogBlock,
 };
 pub use sbas_pl::{
     sbas_pl_error_label, sbas_protection_levels, AirborneModel, DegradationParams, SbasErrorModel,
@@ -347,12 +384,13 @@ pub use sbas_pl::{
 pub use scenario::{
     default_scenario_seed_hex, scenario_engine_version, scenario_schema_version, simulate_scenario,
     simulate_scenario_bytes, simulate_scenario_json, simulate_scenario_json_bytes,
+    simulate_scenario_set, ScenarioSimulation,
 };
 pub use sgp4::{
-    fit_tle, parse_tle_file, propagate_batch, visible_from_satellites_js, ChecksumWarning,
-    Constellation, DecayLatch, FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles,
-    NamedTle, ParsedTleFile, SatellitePass, Tle, TleFit, TlePropagation, VisibilitySeries,
-    VisibleSatellite,
+    fit_tle, parse_tle_file, propagate_batch, visible_from_satellites_js,
+    visible_from_satellites_with_validity_js, ChecksumWarning, Constellation, DecayLatch,
+    FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles, NamedTle, ParsedTleFile,
+    SatellitePass, Tle, TleFit, TlePropagation, VisibilitySeries, VisibleSatellite,
 };
 pub use sidereal::{orbit_repeat_lag, periodicity_strength, repeat_period, sidereal_filter};
 pub use signal_analysis::{
@@ -360,8 +398,10 @@ pub use signal_analysis::{
     spectral_separation_coefficient_hz, DllProcessing, SignalAnalysisModulation,
 };
 pub use sky::{
-    find_moon_elevation_crossings, find_moon_transits, moon_az_el, moon_elevation_deg,
-    moon_illumination, sun_az_el, MoonElevationCrossing, MoonTransit,
+    find_moon_elevation_crossings, find_moon_elevation_crossings_with_validity, find_moon_transits,
+    find_moon_transits_with_validity, moon_az_el, moon_az_el_with_validity, moon_elevation_deg,
+    moon_illumination, moon_illumination_with_validity, sun_az_el, sun_az_el_with_validity,
+    MoonElevationCrossing, MoonTransit,
 };
 pub use source_localization::{
     chan_ho_initial_guess, closed_form_initial_guess, locate_source, source_crlb, source_dop,
@@ -382,12 +422,18 @@ pub use space_weather::{
     estimate_decay_with_space_weather, parse_space_weather, parse_space_weather_csv,
     parse_space_weather_txt, SpaceWeatherTable,
 };
-pub use spk::{Spk, SpkSegment, SpkState};
-pub use spp::{
-    solve_spp_from_rinex_obs_js, spp_inputs_from_rinex_obs_js, RinexSppSolutionBatch,
-    SppBatchSolution, SppDopplerSolution, SppSolution,
+pub use spk::{
+    spk_inertial_frame_name, spk_inertial_frame_rotation, Spk, SpkKernels, SpkSegment, SpkState,
 };
-pub use ssr::{decode_ssr, ssr_corrected_state, ssr_source_label, SsrCorrectionStore, SsrSource};
+pub use spp::{
+    solve_spp_from_rinex_obs_js, solve_spp_with_ssr_exact_epoch_js, solve_with_exact_epoch_js,
+    spp_inputs_from_rinex_obs_js, RinexSppSolutionBatch, SppBatchSolution, SppDopplerSolution,
+    SppSolution,
+};
+pub use ssr::{
+    decode_ssr, ssr_corrected_state, ssr_corrected_state_exact, ssr_source_label,
+    SsrCorrectionSizePolicy, SsrCorrectionStore, SsrSource,
+};
 pub use staleness::{
     select_ionex_js, select_ionex_over_range_js, select_sp3_js, select_sp3_over_range_js,
     solve_with_fallback_js, IonexSelection, SourcedSolution, Sp3Selection,
@@ -399,8 +445,8 @@ pub use tca::{
     find_tca_candidates, find_tca_conjunctions, screen_tca_candidates, screen_tca_conjunctions,
 };
 pub use tdm::{
-    parse_tdm_kvn, Tdm, TdmDataRecord, TdmDataSection, TdmField, TdmMetadata, TdmParticipant,
-    TdmPath, TdmScalar, TdmSegment,
+    parse_tdm_kvn, parse_tdm_kvn_with_policy, Tdm, TdmDataRecord, TdmDataSection, TdmField,
+    TdmMetadata, TdmParticipant, TdmPath, TdmScalar, TdmSegment,
 };
 pub use terrain::DtedTerrain;
 pub use terrain_store::{
@@ -408,7 +454,12 @@ pub use terrain_store::{
     Egm96FifteenMinuteGeoid, EllipsoidalHeightM, MmapTerrain, OrthometricHeightM,
     TerrainDatumError, TerrainGeoidModel, TerrainStoreError, TerrainStoreTileIndex, VerticalDatum,
 };
-pub use tides::{ocean_tide_loading_js, solid_earth_pole_tide_js, solid_earth_tide_js};
+pub use tides::{
+    ocean_tide_loading_js, parse_ocean_loading_blq_block_js, parse_ocean_loading_blq_blocks_js,
+    solid_earth_pole_tide_js, solid_earth_tide_js, station_displacement_batch_js,
+    station_displacement_js, write_ocean_loading_blq_block_js, write_ocean_loading_blq_blocks_js,
+    StationTideConstants,
+};
 pub use trls::{
     least_squares, least_squares_drop_one, LeastSquaresDropOneReport, LeastSquaresResult,
 };

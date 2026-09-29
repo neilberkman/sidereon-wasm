@@ -126,7 +126,7 @@ impl GeometryQuality {
 }
 
 /// Plain-object form used by serde-returning APIs in this binding.
-#[derive(Serialize)]
+#[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GeometryQualityJs {
     tier: &'static str,

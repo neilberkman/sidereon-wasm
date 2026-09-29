@@ -14,9 +14,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  ExactEpochQuery,
   loadSp3,
   sp3PreciseEphemerisSamples,
   preciseEphemerisSamplesFromSamples,
+  PreciseEphemerisInterpolant,
+  sampleSp3Ephemeris,
 } from "../pkg-node/sidereon.js";
 import { fixture } from "./helpers.mjs";
 
@@ -167,12 +170,186 @@ test("predictRanges batch equals per-request calls", () => {
 test("preciseEphemerisSamplesFromSamples throws on a validation failure", () => {
   const sp3 = setup();
   const samples = sp3PreciseEphemerisSamples(sp3);
-  // A satellite with a single sample cannot be interpolated: the source builder
-  // must reject it (RangeError).
   const oneG01 = samples.filter((s) => s.sat === "G01").slice(0, 1);
-  assert.throws(() => preciseEphemerisSamplesFromSamples(oneG01), RangeError);
-  // Empty input is rejected too.
-  assert.throws(() => preciseEphemerisSamplesFromSamples([]), RangeError);
+  const assertSampleError = (call, kind, satellite, message) => {
+    assert.throws(call, (error) => {
+      assert.ok(error instanceof RangeError);
+      assert.equal(error.message, message);
+      assert.deepEqual(error.detail, { kind, satellite, message });
+      return true;
+    });
+  };
+  assertSampleError(
+    () => preciseEphemerisSamplesFromSamples([]),
+    "EMPTY",
+    null,
+    "no precise-ephemeris samples supplied",
+  );
+  assertSampleError(
+    () => PreciseEphemerisInterpolant.fromSamples(oneG01),
+    "SINGLE_SAMPLE_SATELLITE",
+    "G01",
+    "satellite G01 has a single sample; need at least two",
+  );
+  assertSampleError(
+    () =>
+      preciseEphemerisSamplesFromSamples([
+        {
+          sat: "G01",
+          epoch: 0,
+          positionEcefM: [NaN, 0, 0],
+          clockS: null,
+          clockEvent: false,
+        },
+      ]),
+    "NON_FINITE_SAMPLE",
+    "G01",
+    "satellite G01 has a non-finite sample",
+  );
+});
+
+test("observable-state rows retain typed refusal details beside legacy error text", () => {
+  let sp3 = setup();
+  let other;
+  try {
+    const epoch = sp3.epochsJ2000Seconds()[4];
+    const batch = sp3.observableStatesAtJ2000S(["G01", "G99"], [epoch, epoch]);
+
+    assert.equal(batch.count, 2);
+    assert.equal(batch.elementResults[0].ok, true);
+    assert.equal(batch.elementResults[0].error, null);
+    assert.equal(batch.elementResults[0].detail, null);
+    assert.equal(batch.elementResults[1].ok, false);
+    assert.equal(batch.statuses[1], "gap");
+    assert.deepEqual(batch.positionsEcefM[1].map(Number.isNaN), [true, true, true]);
+    assert.equal(typeof batch.elementResults[1].error, "string");
+    assert.equal(batch.elementResults[1].detail.kind, "EPHEMERIS");
+    assert.equal(batch.elementResults[1].detail.cause.kind, "UNKNOWN_SATELLITE");
+    assert.equal(batch.elementResults[1].detail.cause.satelliteId, "G99");
+    assert.equal(batch.elementResults[1].error, batch.elementResults[1].detail.message);
+
+    const retainedDetail = JSON.stringify(batch.elementResults[1].detail);
+    sp3.free();
+    sp3 = null;
+    other = setup();
+    assert.equal(other.observableStatesAtSharedJ2000S(["G01"], epoch).elementResults[0].ok, true);
+    assert.equal(JSON.stringify(batch.elementResults[1].detail), retainedDetail);
+  } finally {
+    sp3?.free();
+    other?.free();
+  }
+});
+
+test("precise sample entry points preserve core observables and interpolant errors", () => {
+  const sp3 = setup();
+  let interpolant;
+  let query;
+  let validOptions;
+  try {
+    const epochs = sp3.epochsJ2000Seconds();
+    const assertTypedObservablesError = (call, expectedKind) => {
+      assert.throws(call, (error) => {
+        assert.equal(error.name, "Error");
+        assert.equal(error.detail.kind, expectedKind);
+        assert.equal(error.message, error.detail.message);
+        assert.deepEqual(error.cause, error.detail);
+        if (expectedKind === "INVALID_INPUT") {
+          assert.equal(error.detail.field, "step_s");
+          assert.equal(error.detail.reason, "not positive");
+          assert.equal(error.detail.message, "invalid observable input step_s: not positive");
+        }
+        return true;
+      });
+    };
+
+    assertTypedObservablesError(
+      () => sampleSp3Ephemeris(sp3, ["G01"], epochs[4], epochs[5], 0),
+      "INVALID_INPUT",
+    );
+
+    let predictionError;
+    try {
+      sp3.predictRanges(
+        [{ sat: "G99", receiverEcefM: RECEIVERS[0], tRxJ2000S: epochs[4] }],
+        undefined,
+      );
+    } catch (error) {
+      predictionError = error;
+    }
+    assert.ok(predictionError instanceof Error);
+    assert.equal(predictionError.detail.kind, "EPHEMERIS");
+    assert.equal(predictionError.detail.message, predictionError.message);
+    assert.equal(predictionError.detail.cause.kind, "UNKNOWN_SATELLITE");
+    assert.equal(predictionError.detail.cause.satelliteId, "G99");
+    assert.deepEqual(predictionError.cause, predictionError.detail);
+
+    let optionsError;
+    try {
+      PreciseEphemerisInterpolant.fromSp3(sp3, 1.0);
+    } catch (error) {
+      optionsError = error;
+    }
+    assert.ok(optionsError instanceof Error);
+    assert.deepEqual(optionsError.detail, {
+      kind: "INVALID_INPUT",
+      message: "gap_threshold_factor must be finite and greater than 1.0",
+    });
+    assert.deepEqual(optionsError.cause, optionsError.detail);
+
+    validOptions = PreciseEphemerisInterpolant.fromSp3(sp3, 2.0);
+    assert.equal(validOptions.gapThresholdFactor, 2.0);
+    interpolant = PreciseEphemerisInterpolant.fromSp3(sp3);
+    query = ExactEpochQuery.fromBinaryJ2000Seconds(epochs[4]);
+    assert.throws(
+      () => interpolant.evaluateExact("G99", query),
+      (error) => {
+        assert.equal(error.name, "Error");
+        assert.equal(error.detail.kind, "UNKNOWN_SATELLITE");
+        assert.equal(error.detail.satelliteId, "G99");
+        assert.deepEqual(error.cause, error.detail);
+        return true;
+      },
+    );
+  } finally {
+    query?.free();
+    interpolant?.free();
+    validOptions?.free();
+    sp3.free();
+  }
+});
+
+test("split instant construction preserves typed time-model validation", () => {
+  const sample = (fraction) => ({
+    sat: "G01",
+    instant: {
+      scale: "GPST",
+      representation: { kind: "julianDate", jdWhole: 2451545, fraction },
+    },
+    positionEcefM: [20_000_000, 0, 0],
+    clockS: null,
+    clockEvent: false,
+  });
+
+  assert.throws(
+    () => preciseEphemerisSamplesFromSamples([sample(2)]),
+    (error) => {
+      assert.equal(error.name, "Error");
+      assert.deepEqual(error.detail, {
+        kind: "INVALID_INPUT",
+        field: "fraction",
+        reason: "must be within one residual day",
+        message: "invalid time model fraction: must be within one residual day",
+      });
+      return true;
+    },
+  );
+
+  const source = preciseEphemerisSamplesFromSamples([sample(0), sample(1 / 86_400)]);
+  try {
+    assert.deepEqual(source.satellites, ["G01"]);
+  } finally {
+    source.free();
+  }
 });
 
 test("predictRanges rejects a non-finite receiver", () => {

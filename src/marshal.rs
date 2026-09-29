@@ -167,3 +167,55 @@ fn covariance6_error_message(error: Covariance6Error) -> &'static str {
         }
     }
 }
+
+/// Read the 21 lower-triangle values of a 6x6 covariance as a CCSDS message
+/// holds them (`CX_X`, `CY_X`, `CY_Y`, `CZ_X`, ... row by row), from either the
+/// 21 values themselves or a length-36 row-major matrix. A full matrix whose
+/// mirrored entries differ in any bit is refused as a `RangeError`, since only
+/// one of the two values could be kept. No definiteness check is applied: the
+/// message keeps the values as stated.
+pub fn lower_triangle21_from_input(name: &str, values: &[f64]) -> Result<[f64; 21], JsValue> {
+    match values.len() {
+        21 => {
+            let mut out = [0.0_f64; 21];
+            out.copy_from_slice(values);
+            Ok(out)
+        }
+        36 => {
+            let mut out = [0.0_f64; 21];
+            let mut index = 0;
+            for i in 0..6 {
+                for j in 0..=i {
+                    let lower = values[i * 6 + j];
+                    let upper = values[j * 6 + i];
+                    if lower.to_bits() != upper.to_bits() {
+                        return Err(range_error(&format!(
+                            "{name} must be symmetric: entries ({i}, {j}) and ({j}, {i}) differ"
+                        )));
+                    }
+                    out[index] = lower;
+                    index += 1;
+                }
+            }
+            Ok(out)
+        }
+        other => Err(type_error(&format!(
+            "{name} must have length 21 (lower triangle) or 36 (flat row-major 6-by-6), got {other}"
+        ))),
+    }
+}
+
+/// Expand 21 lower-triangle values into a length-36 row-major symmetric
+/// matrix, without validation.
+pub fn lower_triangle21_to_full(values: &[f64; 21]) -> Vec<f64> {
+    let mut out = vec![0.0_f64; 36];
+    let mut index = 0;
+    for i in 0..6 {
+        for j in 0..=i {
+            out[i * 6 + j] = values[index];
+            out[j * 6 + i] = values[index];
+            index += 1;
+        }
+    }
+    out
+}

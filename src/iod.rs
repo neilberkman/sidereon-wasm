@@ -8,10 +8,48 @@
 
 use wasm_bindgen::prelude::*;
 
-use sidereon_core::astro::iod::{gauss_angles, gibbs, hgibbs};
+use sidereon_core::astro::iod::{gauss_angles, gibbs, hgibbs, IodError};
 
-use crate::error::engine_error;
+use crate::error::error_with_detail;
 use crate::marshal::{mat3_from_flat, vec3_finite};
+
+#[wasm_bindgen(typescript_custom_section)]
+const IOD_ERROR_TYPESCRIPT: &'static str = r#"
+export type IodErrorKind =
+  | "determinant_too_small"
+  | "orbit_not_possible"
+  | "zero_vector"
+  | "collinear_vectors"
+  | "not_coplanar"
+  | "invalid_time_geometry"
+  | "no_positive_root"
+  | "root_solve_failed"
+  | "non_finite_value";
+
+export type IodErrorDetail = {
+  family: "IodError";
+  kind: IodErrorKind;
+};
+"#;
+
+fn iod_error(error: IodError) -> JsValue {
+    let kind = match error {
+        IodError::DeterminantTooSmall => "determinant_too_small",
+        IodError::OrbitNotPossible => "orbit_not_possible",
+        IodError::ZeroVector => "zero_vector",
+        IodError::CollinearVectors => "collinear_vectors",
+        IodError::NotCoplanar => "not_coplanar",
+        IodError::InvalidTimeGeometry => "invalid_time_geometry",
+        IodError::NoPositiveRoot => "no_positive_root",
+        IodError::RootSolveFailed => "root_solve_failed",
+        IodError::NonFiniteValue => "non_finite_value",
+    };
+    error_with_detail(
+        "Error",
+        &error.to_string(),
+        &serde_json::json!({ "family": "IodError", "kind": kind }),
+    )
+}
 
 /// A Gibbs / Herrick-Gibbs velocity solve: the velocity at the middle position
 /// and the geometry diagnostics.
@@ -82,7 +120,7 @@ pub fn iod_gibbs(r1: &[f64], r2: &[f64], r3: &[f64]) -> Result<IodVelocity, JsVa
     let r1 = vec3_finite("r1", r1)?;
     let r2 = vec3_finite("r2", r2)?;
     let r3 = vec3_finite("r3", r3)?;
-    let (v2, theta12, theta23, copa) = gibbs(&r1, &r2, &r3).map_err(engine_error)?;
+    let (v2, theta12, theta23, copa) = gibbs(&r1, &r2, &r3).map_err(iod_error)?;
     Ok(IodVelocity {
         velocity_km_s: v2.to_vec(),
         theta12_rad: theta12,
@@ -110,8 +148,7 @@ pub fn iod_herrick_gibbs(
     let r1 = vec3_finite("r1", r1)?;
     let r2 = vec3_finite("r2", r2)?;
     let r3 = vec3_finite("r3", r3)?;
-    let (v2, theta12, theta23, copa) =
-        hgibbs(&r1, &r2, &r3, jd1, jd2, jd3).map_err(engine_error)?;
+    let (v2, theta12, theta23, copa) = hgibbs(&r1, &r2, &r3, jd1, jd2, jd3).map_err(iod_error)?;
     Ok(IodVelocity {
         velocity_km_s: v2.to_vec(),
         theta12_rad: theta12,
@@ -141,7 +178,7 @@ pub fn iod_gauss_angles(
     let jd = vec3_finite("jd", jd)?;
     let jdf = vec3_finite("jdf", jdf)?;
     let rseci = mat3_from_flat("rseci", rseci)?;
-    let (r2, v2) = gauss_angles(&decl, &rtasc, &jd, &jdf, &rseci).map_err(engine_error)?;
+    let (r2, v2) = gauss_angles(&decl, &rtasc, &jd, &jdf, &rseci).map_err(iod_error)?;
     Ok(IodState {
         position_km: r2.to_vec(),
         velocity_km_s: v2.to_vec(),

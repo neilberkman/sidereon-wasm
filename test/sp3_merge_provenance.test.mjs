@@ -8,6 +8,15 @@ const golden = JSON.parse(
   readFileSync(new URL("./fixtures/sp3-merge-input-v1.json", import.meta.url), "utf8"),
 );
 
+function captureThrow(fn, expected) {
+  let thrown;
+  assert.throws(fn, (error) => {
+    thrown = error;
+    return expected === undefined || expected.test(error.message);
+  });
+  return thrown;
+}
+
 function goldenIdentity(value) {
   const [year, month, day] = value.date.split("-").map(Number);
   return {
@@ -184,14 +193,32 @@ test("shared literal golden fixture matches every canonical identity", () => {
   const malformed = structuredClone(cod);
   malformed.productSha256 = golden.required_mutations.malformed_product_sha256;
   assert.throws(() => sp3MergeInputIdentity([esa, malformed], goldenPolicy("mean")), /SHA-256/);
-  assert.throws(
-    () =>
-      sp3MergeInputIdentity([esa, cod], {
-        ...goldenPolicy("mean"),
-        targetEpochIntervalS: golden.required_mutations.fractional_target_epoch_interval_s,
-      }),
-    /whole number of seconds/,
+  const fractionalInterval = sp3MergeInputIdentity([esa, cod], {
+    ...goldenPolicy("mean"),
+    targetEpochIntervalS: golden.required_mutations.accepted_fractional_target_epoch_interval_s,
+  });
+  assert.notEqual(fractionalInterval.stableId, mean.stableId);
+  const offTickError = captureThrow(() =>
+    sp3MergeInputIdentity([esa, cod], {
+      ...goldenPolicy("mean"),
+      targetEpochIntervalS: golden.required_mutations.refused_off_tick_target_epoch_interval_s,
+    }),
   );
+  assert.equal(offTickError.name, "Sp3EpochIntervalError");
+  assert.deepEqual(offTickError.detail, {
+    field: "target_epoch_interval_s",
+    value: "600.0000000001",
+    reason: "it is not a whole number of the 10-nanosecond ticks an SP3 epoch states",
+  });
+  const specificationLimitError = captureThrow(() =>
+    sp3MergeInputIdentity([esa, cod], {
+      ...goldenPolicy("mean"),
+      targetEpochIntervalS: 100000,
+    }),
+  );
+  assert.equal(specificationLimitError.name, "Sp3EpochIntervalError");
+  assert.equal(specificationLimitError.detail.value, "100000");
+  assert.match(specificationLimitError.detail.reason, /below 100000/);
   assert.throws(
     () => sp3MergeInputIdentity([esa, cod], { ...goldenPolicy("mean"), systems: [] }),
     /must not be empty/,
@@ -259,18 +286,22 @@ test("zero position and clock tolerances are valid identity policy", () => {
 
   assert.equal(exact.schemaVersion, 1);
   assert.match(exact.stableId, /^sidereon-sp3-merge-input-v1:[0-9a-f]{64}$/);
-  assert.throws(
-    () => sp3MergeInputIdentity([contributor], { positionToleranceM: -1 }),
-    /non-negative and finite/,
+  const toleranceError = captureThrow(() =>
+    sp3MergeInputIdentity([contributor], { positionToleranceM: -1 }),
   );
-  assert.throws(
-    () => sp3MergeInputIdentity([contributor], { targetEpochIntervalS: 0 }),
-    /positive and finite/,
+  assert.equal(toleranceError.name, "Sp3MergeToleranceError");
+  assert.deepEqual(toleranceError.detail, {
+    field: "positionToleranceM",
+    value: "-1",
+    reason: "must be finite and nonnegative",
+  });
+  const nonPositiveInterval = captureThrow(() =>
+    sp3MergeInputIdentity([contributor], { targetEpochIntervalS: 0 }),
   );
-  assert.throws(
-    () => sp3MergeInputIdentity([contributor], { targetEpochIntervalS: 1.5 }),
-    /whole number of seconds/,
-  );
+  assert.equal(nonPositiveInterval.name, "Sp3EpochIntervalError");
+  assert.equal(nonPositiveInterval.detail.reason, "it is not positive");
+  const fractional = sp3MergeInputIdentity([contributor], { targetEpochIntervalS: 1.5 });
+  assert.match(fractional.stableId, /^sidereon-sp3-merge-input-v1:[0-9a-f]{64}$/);
 });
 
 test("single contributors work and incomplete, mismatched, or extra records fail closed", () => {

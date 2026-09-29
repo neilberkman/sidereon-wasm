@@ -6,14 +6,60 @@ use wasm_bindgen::prelude::*;
 use sidereon_core::astro::time::civil::j2000_seconds_from_split;
 use sidereon_core::nmea::{
     group_epochs as core_group_epochs, parse_nmea as core_parse_nmea, write_gga as core_write_gga,
-    Diagnostics, EpochSnapshot, Gga, GgaQuality, Gll, Gsa, GsaFixMode, GsaSelectionMode, Gst, Gsv,
-    GsvGroup, GsvSatellite, NmeaAccumulator as CoreNmeaAccumulator, NmeaBody, NmeaCoordinate,
-    NmeaDate, NmeaLog, NmeaSatNumber, NmeaSentence, NmeaSignalId, NmeaTalker, NmeaTime, Rmc,
-    RmcStatus, Vtg, Zda,
+    Diagnostics, EpochSnapshot, FieldError, Gga, GgaQuality, Gll, Gsa, GsaFixMode,
+    GsaSelectionMode, Gst, Gsv, GsvGroup, GsvSatellite, NmeaAccumulator as CoreNmeaAccumulator,
+    NmeaBody, NmeaCoordinate, NmeaDate, NmeaLog, NmeaSatNumber, NmeaSentence, NmeaSignalId,
+    NmeaTalker, NmeaTime, Rmc, RmcStatus, SkipReason, Vtg, WarningKind, Zda,
 };
 use sidereon_core::GnssSystem;
 
 use crate::error::{engine_error, type_error};
+
+#[wasm_bindgen(typescript_custom_section)]
+const NMEA_DIAGNOSTIC_TYPESCRIPT: &'static str = r#"
+export interface NmeaRecordRef {
+  line: number | null | undefined;
+  recordIndex: number | null | undefined;
+  satellite: string | null | undefined;
+}
+
+export type NmeaFieldError =
+  | { kind: "missing" | "nonFinite" | "notPositive" | "negative"; field: string }
+  | { kind: "outOfRange"; field: string; min: number; max: number; upperInclusive: boolean }
+  | { kind: "floatParse" | "intParse"; field: string; value: string }
+  | { kind: "invalidCivilDate"; field: string; year: string; month: string; day: string }
+  | { kind: "invalidCivilTime"; field: string; hour: string; minute: string; second: number };
+
+export type NmeaSkipReason =
+  | { reasonKind: "unrepresentableSatellite" }
+  | { reasonKind: "unsupportedRecordType"; recordType: string }
+  | { reasonKind: "malformedField"; cause: NmeaFieldError }
+  | { reasonKind: "outOfRangeEpoch" }
+  | { reasonKind: "truncated" }
+  | { reasonKind: "unsupportedUnit"; unit: string }
+  | { reasonKind: "unknownBlock"; block: string }
+  | { reasonKind: "inconsistentRecord"; reasonDetail: string };
+
+export type NmeaSkipDiagnostic = { at: NmeaRecordRef; reason: string } & NmeaSkipReason;
+export type NmeaWarningKind = "checksum" | "clamped" | "degraded" | "mismatch" | "overlap" | "missingMetadata";
+export interface NmeaWarningDiagnostic {
+  at: NmeaRecordRef;
+  reason: string;
+  kind: NmeaWarningKind;
+}
+export interface NmeaDiagnostics {
+  skipCount: number;
+  warningCount: number;
+  skips: NmeaSkipDiagnostic[];
+  warnings: NmeaWarningDiagnostic[];
+}
+export interface NmeaAccumulatorOutput {
+  sentences: any[];
+  epochs: any[];
+  diagnostics: NmeaDiagnostics;
+  retainedLength: number;
+}
+"#;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,18 +74,265 @@ struct RecordRefJs {
 struct DiagnosticEntryJs {
     at: RecordRefJs,
     reason: String,
+    #[serde(flatten)]
+    reason_detail: SkipReasonJs,
+}
+
+#[derive(Serialize)]
+#[serde(
+    tag = "reasonKind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum SkipReasonJs {
+    UnrepresentableSatellite,
+    UnsupportedRecordType { record_type: &'static str },
+    MalformedField { cause: FieldErrorJs },
+    OutOfRangeEpoch,
+    Truncated,
+    UnsupportedUnit { unit: String },
+    UnknownBlock { block: String },
+    InconsistentRecord { reason_detail: &'static str },
+}
+
+#[derive(Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum FieldErrorJs {
+    Missing {
+        field: &'static str,
+    },
+    NonFinite {
+        field: &'static str,
+    },
+    NotPositive {
+        field: &'static str,
+    },
+    Negative {
+        field: &'static str,
+    },
+    OutOfRange {
+        field: &'static str,
+        min: f64,
+        max: f64,
+        upper_inclusive: bool,
+    },
+    FloatParse {
+        field: &'static str,
+        value: String,
+    },
+    IntParse {
+        field: &'static str,
+        value: String,
+    },
+    InvalidCivilDate {
+        field: &'static str,
+        year: String,
+        month: String,
+        day: String,
+    },
+    InvalidCivilTime {
+        field: &'static str,
+        hour: String,
+        minute: String,
+        second: f64,
+    },
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct DiagnosticsJs {
+struct WarningEntryJs {
+    at: RecordRefJs,
+    reason: String,
+    kind: WarningKindJs,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+enum WarningKindJs {
+    Checksum,
+    Clamped,
+    Degraded,
+    Mismatch,
+    Overlap,
+    MissingMetadata,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DiagnosticsJs {
     skip_count: usize,
     warning_count: usize,
     skips: Vec<DiagnosticEntryJs>,
-    warnings: Vec<DiagnosticEntryJs>,
+    warnings: Vec<WarningEntryJs>,
 }
 
-fn diagnostics_js(diagnostics: &Diagnostics) -> DiagnosticsJs {
+fn field_error_js(error: &FieldError) -> FieldErrorJs {
+    match error {
+        FieldError::Missing { field } => FieldErrorJs::Missing { field },
+        FieldError::NonFinite { field } => FieldErrorJs::NonFinite { field },
+        FieldError::NotPositive { field } => FieldErrorJs::NotPositive { field },
+        FieldError::Negative { field } => FieldErrorJs::Negative { field },
+        FieldError::OutOfRange {
+            field,
+            min,
+            max,
+            upper_inclusive,
+        } => FieldErrorJs::OutOfRange {
+            field,
+            min: *min,
+            max: *max,
+            upper_inclusive: *upper_inclusive,
+        },
+        FieldError::FloatParse { field, value } => FieldErrorJs::FloatParse {
+            field,
+            value: value.clone(),
+        },
+        FieldError::IntParse { field, value } => FieldErrorJs::IntParse {
+            field,
+            value: value.clone(),
+        },
+        FieldError::InvalidCivilDate {
+            field,
+            year,
+            month,
+            day,
+        } => FieldErrorJs::InvalidCivilDate {
+            field,
+            year: year.to_string(),
+            month: month.to_string(),
+            day: day.to_string(),
+        },
+        FieldError::InvalidCivilTime {
+            field,
+            hour,
+            minute,
+            second,
+        } => FieldErrorJs::InvalidCivilTime {
+            field,
+            hour: hour.to_string(),
+            minute: minute.to_string(),
+            second: *second,
+        },
+    }
+}
+
+fn skip_reason_js(reason: &SkipReason) -> SkipReasonJs {
+    match reason {
+        SkipReason::UnrepresentableSatellite => SkipReasonJs::UnrepresentableSatellite,
+        SkipReason::UnsupportedRecordType(record_type) => {
+            SkipReasonJs::UnsupportedRecordType { record_type }
+        }
+        SkipReason::MalformedField(error) => SkipReasonJs::MalformedField {
+            cause: field_error_js(error),
+        },
+        SkipReason::OutOfRangeEpoch => SkipReasonJs::OutOfRangeEpoch,
+        SkipReason::Truncated => SkipReasonJs::Truncated,
+        SkipReason::UnsupportedUnit(unit) => SkipReasonJs::UnsupportedUnit { unit: unit.clone() },
+        SkipReason::UnknownBlock(block) => SkipReasonJs::UnknownBlock {
+            block: block.clone(),
+        },
+        SkipReason::InconsistentRecord(reason) => SkipReasonJs::InconsistentRecord {
+            reason_detail: reason,
+        },
+    }
+}
+
+fn warning_kind_js(kind: WarningKind) -> WarningKindJs {
+    match kind {
+        WarningKind::Checksum => WarningKindJs::Checksum,
+        WarningKind::Clamped => WarningKindJs::Clamped,
+        WarningKind::Degraded => WarningKindJs::Degraded,
+        WarningKind::Mismatch => WarningKindJs::Mismatch,
+        WarningKind::Overlap => WarningKindJs::Overlap,
+        WarningKind::MissingMetadata => WarningKindJs::MissingMetadata,
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_mapping_tests {
+    use super::*;
+
+    #[test]
+    fn absent_record_reference_components_remain_absent() {
+        let record_ref = RecordRefJs {
+            line: None,
+            record_index: None,
+            satellite: None,
+        };
+        assert!(record_ref.line.is_none());
+        assert!(record_ref.record_index.is_none());
+        assert!(record_ref.satellite.is_none());
+    }
+
+    #[test]
+    fn signed_civil_components_are_exported_without_number_precision_loss() {
+        let date = field_error_js(&FieldError::InvalidCivilDate {
+            field: "date",
+            year: i64::MAX,
+            month: i64::MIN,
+            day: 9_007_199_254_740_993,
+        });
+        match date {
+            FieldErrorJs::InvalidCivilDate {
+                year, month, day, ..
+            } => {
+                assert_eq!(year, i64::MAX.to_string());
+                assert_eq!(month, i64::MIN.to_string());
+                assert_eq!(day, "9007199254740993");
+            }
+            _ => panic!("civil-date error retained its variant"),
+        }
+
+        let time = field_error_js(&FieldError::InvalidCivilTime {
+            field: "time",
+            hour: i64::MAX,
+            minute: i64::MIN,
+            second: f64::INFINITY,
+        });
+        match time {
+            FieldErrorJs::InvalidCivilTime {
+                hour,
+                minute,
+                second,
+                ..
+            } => {
+                assert_eq!(hour, i64::MAX.to_string());
+                assert_eq!(minute, i64::MIN.to_string());
+                assert!(second.is_infinite());
+            }
+            _ => panic!("civil-time error retained its variant"),
+        }
+    }
+
+    #[test]
+    fn out_of_range_float_bounds_keep_non_finite_values() {
+        let mapped = field_error_js(&FieldError::OutOfRange {
+            field: "range",
+            min: f64::NAN,
+            max: f64::INFINITY,
+            upper_inclusive: false,
+        });
+        match mapped {
+            FieldErrorJs::OutOfRange {
+                min,
+                max,
+                upper_inclusive,
+                ..
+            } => {
+                assert!(min.is_nan());
+                assert!(max.is_infinite());
+                assert!(!upper_inclusive);
+            }
+            _ => panic!("range error retained its variant"),
+        }
+    }
+}
+
+pub(crate) fn diagnostics_js(diagnostics: &Diagnostics) -> DiagnosticsJs {
     DiagnosticsJs {
         skip_count: diagnostics.skips.len(),
         warning_count: diagnostics.warnings.len(),
@@ -53,25 +346,29 @@ fn diagnostics_js(diagnostics: &Diagnostics) -> DiagnosticsJs {
                     satellite: skip.at.satellite.clone(),
                 },
                 reason: format!("{:?}", skip.reason),
+                reason_detail: skip_reason_js(&skip.reason),
             })
             .collect(),
         warnings: diagnostics
             .warnings
             .iter()
-            .map(|warning| DiagnosticEntryJs {
+            .map(|warning| WarningEntryJs {
                 at: RecordRefJs {
                     line: warning.at.line,
                     record_index: warning.at.record_index,
                     satellite: warning.at.satellite.clone(),
                 },
                 reason: format!("{:?}", warning.kind),
+                kind: warning_kind_js(warning.kind),
             })
             .collect(),
     }
 }
 
 fn to_value<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(value).map_err(|e| type_error(&e.to_string()))
+    value
+        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true))
+        .map_err(|e| type_error(&e.to_string()))
 }
 
 fn system_label(system: GnssSystem) -> &'static str {
@@ -582,7 +879,7 @@ impl NmeaParseResult {
         to_value(&epochs)
     }
 
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, unchecked_return_type = "NmeaDiagnostics")]
     pub fn diagnostics(&self) -> Result<JsValue, JsValue> {
         to_value(&diagnostics_js(&self.diagnostics))
     }
@@ -668,6 +965,7 @@ impl NmeaAccumulator {
         self.inner.retained_len()
     }
 
+    #[wasm_bindgen(unchecked_return_type = "NmeaAccumulatorOutput")]
     pub fn push(&mut self, bytes: &[u8]) -> Result<JsValue, JsValue> {
         let output = self.inner.push_bytes(bytes);
         let out = AccumulatorOutputJs {
@@ -679,16 +977,13 @@ impl NmeaAccumulator {
         to_value(&out)
     }
 
+    #[wasm_bindgen(unchecked_return_type = "NmeaAccumulatorOutput")]
     pub fn finish(&mut self) -> Result<JsValue, JsValue> {
-        let epochs = self
-            .inner
-            .finish()
-            .map(|snapshot| vec![epoch_js(&snapshot)])
-            .unwrap_or_default();
+        let output = self.inner.finish_with_output();
         let out = AccumulatorOutputJs {
-            sentences: Vec::new(),
-            epochs,
-            diagnostics: diagnostics_js(&Diagnostics::new()),
+            sentences: output.sentences.iter().map(sentence_js).collect(),
+            epochs: output.snapshots.iter().map(epoch_js).collect(),
+            diagnostics: diagnostics_js(&output.diagnostics),
             retained_length: self.inner.retained_len(),
         };
         to_value(&out)

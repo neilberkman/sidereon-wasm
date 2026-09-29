@@ -276,11 +276,17 @@ test("IONEX samples rebuild parsed products through both sample constructors", (
   const ionex = loadIonex(fixture("synthetic_2map_7x7.20i"));
   const gridSamples = ionex.tecGridSamples();
   const fromGrid = ionexFromSamples(gridSamples);
+  // Node samples carry grid values only, so the descriptive header travels as
+  // the fifth argument. Without it the product reads as one carrying none of
+  // the descriptive records — version 1.0, no `mapsInFile` — and both the
+  // samples and the emitted text would differ from the parsed fixture's 1.1
+  // and 2.
   const fromNodes = ionexFromNodeSamples(
     ionex.tecSamples(),
     ionex.shellHeightKm,
     ionex.baseRadiusKm,
     ionex.exponent,
+    ionex.header,
   );
 
   assert.deepEqual(fromGrid.tecGridSamples(), gridSamples);
@@ -305,6 +311,13 @@ test("SBAS decode payload and store accessors expose core message data", () => {
 
   assert.equal(sbasPrnToSat(129), "S29");
   assert.equal(satToSbasPrn("S29"), 129);
+  // Only the slots a broadcast PRN exists for convert: S20..S58, PRN 120..158.
+  assert.equal(satToSbasPrn("S20"), 120);
+  assert.equal(satToSbasPrn("S58"), 158);
+  assert.equal(satToSbasPrn("S19"), null);
+  assert.equal(satToSbasPrn("S59"), null);
+  assert.equal(satToSbasPrn("S01"), null);
+  assert.equal(satToSbasPrn("G29"), null);
 
   const store = new SbasCorrectionStore();
   const mt9 = hexToBytes("9A25C80C8D3F574632853C69A015EEBFF2D7DF580018FE3FCFF79C38C0");
@@ -315,6 +328,10 @@ test("SBAS decode payload and store accessors expose core message data", () => {
   assert.ok(geo.positionEcefM.every(Number.isFinite));
   assert.equal(store.fastCorrection("S29", "G01"), null);
   assert.equal(store.ionoGrid("S29"), null);
+  // S29 has a partition but no PRN mask, so no correction reached an
+  // unassigned mask number; a GEO never ingested has no partition at all.
+  assert.deepEqual(store.unassignedMaskCorrections("S29"), []);
+  assert.equal(store.unassignedMaskCorrections("S30"), null);
 });
 
 const WG_C_ROWS = [

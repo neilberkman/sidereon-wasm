@@ -6,9 +6,10 @@
 // `solveWithFallback` have their own suites (qc_fde, broadcast_fallback); this
 // file proves the remaining levers the Elixir interface exposes.
 //
-// Observations are synthesized with the light-time iteration and Sagnac rotation
-// the core solver itself models, so a clean set is consistent to ~mm and the
-// robust path is byte-identical to the static path on it.
+// Observations are synthesized with the light-time iteration, the Sagnac
+// rotation and the precise-clock relativistic term the core solver itself
+// models, so a clean set is consistent to ~mm and the robust path is
+// byte-identical to the static path on it.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -16,10 +17,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { loadSp3 } from "../pkg-node/sidereon.js";
+import { synthSp3Pseudoranges } from "./helpers.mjs";
 
 const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
-const C_M_S = 299792458.0;
-const OMEGA_E = 7.2921151467e-5;
 const norm3 = (a) => Math.hypot(a[0], a[1], a[2]);
 const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 
@@ -41,47 +41,10 @@ async function loadFixtureSp3() {
   return loadSp3(await readFile(here("./fixtures/GRG0MGXFIN_20201760000_01D_15M_ORB.SP3")));
 }
 
-function synth(sp3, tRx, rx, rxClockS = 0) {
-  const rxRadius = norm3(rx);
-  const up = rx.map((c) => c / rxRadius);
-  const out = [];
-  for (const sat of sp3.satellites.filter((s) => s.startsWith("G"))) {
-    let dtFlight = 0.075;
-    let p;
-    let dtSat;
-    let range = 0;
-    for (let it = 0; it < 4; it++) {
-      const tTx = tRx - dtFlight;
-      const interp = sp3.interpolate(sat, Float64Array.of(tTx));
-      const raw = interp.positionM;
-      dtSat = interp.clockS[0];
-      if (!Number.isFinite(raw[0]) || !Number.isFinite(dtSat)) {
-        p = null;
-        break;
-      }
-      const theta = OMEGA_E * dtFlight;
-      p = [
-        raw[0] * Math.cos(theta) + raw[1] * Math.sin(theta),
-        -raw[0] * Math.sin(theta) + raw[1] * Math.cos(theta),
-        raw[2],
-      ];
-      range = norm3(sub3(p, rx));
-      dtFlight = range / C_M_S;
-    }
-    if (!p) continue;
-    const los = sub3(p, rx);
-    const elDeg =
-      (Math.asin((los[0] * up[0] + los[1] * up[1] + los[2] * up[2]) / range) * 180) / Math.PI;
-    if (elDeg < 10) continue;
-    out.push({ satelliteId: sat, pseudorangeM: range + C_M_S * (rxClockS - dtSat) });
-  }
-  return out;
-}
-
 function scenario(sp3) {
   const tRx = sp3.epochsJ2000Seconds()[48];
   const rx = geodeticToEcef(48.0, 11.0, 600.0);
-  const observations = synth(sp3, tRx, rx, 0.0);
+  const observations = synthSp3Pseudoranges(sp3, tRx, rx, 0.0);
   const request = {
     observations,
     tRxJ2000S: tRx,
@@ -131,6 +94,14 @@ test("robust down-weights an outlier and beats the static solve", async () => {
 
   // Robust keeps every satellite (it reweights, it does not exclude).
   assert.equal(robustSol.usedSats.length, faulted.length, "robust keeps all satellites");
+  assert.equal(robustSol.pseudorangeVariancesM2.length, robustSol.usedSats.length);
+  assert.equal(robustSol.weights.length, robustSol.usedSats.length);
+  assert.ok(
+    robustSol.weights.some(
+      (weight, i) => Math.abs(weight * robustSol.pseudorangeVariancesM2[i] - 1) > 1e-6,
+    ),
+    "effective weights retain robust down-weighting independently of the variance array",
+  );
   assert.ok(staticErr > 5.0, `static solve is dragged by the outlier (${staticErr.toFixed(1)} m)`);
   assert.ok(
     robustErr < staticErr,

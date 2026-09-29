@@ -20,6 +20,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { loadSp3, loadRinexNav, solveWithFallback } from "../pkg-node/sidereon.js";
+import { f64Bits } from "./helpers.mjs";
 
 const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 const C_M_S = 299792458.0;
@@ -119,6 +120,7 @@ test("solveBroadcast solves a position from broadcast ephemeris alone", () => {
 
 test("BroadcastEphemeris.fde excludes a faulty broadcast SPP observation", () => {
   const { request } = scenario();
+  const faultSat = request.observations[0].satelliteId;
   const faulty = {
     ...request,
     observations: request.observations.map((observation, index) => ({
@@ -126,14 +128,17 @@ test("BroadcastEphemeris.fde excludes a faulty broadcast SPP observation", () =>
       pseudorangeM: observation.pseudorangeM + (index === 0 ? 5000 : 0),
     })),
     pFa: 1e-3,
-    maxIterations: 4,
+    maxExclusions: 4,
   };
 
   const clean = nav.solveBroadcast(request);
   const fde = nav.fde(faulty);
-  assert.equal(fde.iterations, 4);
-  assert.equal(fde.excluded.length, 4);
-  assert.ok(fde.excluded.includes(request.observations[0].satelliteId));
+  assert.equal(fde.iterations, fde.excluded.length);
+  assert.ok(fde.excluded.includes(faultSat));
+  assert.ok(!fde.usedSats.includes(faultSat));
+  assert.deepEqual(fde.solution.usedSats, fde.usedSats);
+  assert.equal(fde.raim.faultDetected, false);
+  assert.equal(fde.raim.testable, true);
   assert.ok(norm3(sub3(Array.from(fde.positionM), Array.from(clean.positionM))) < 200);
 });
 
@@ -215,11 +220,13 @@ test("fallback drops to broadcast when a within-cap precise product cannot reach
   assert.equal(source.broadcastReason.attemptedStaleness.kind, "nearestPrior");
   assert.equal(source.broadcastReason.attemptedStaleness.sourceEpochJ2000S, priorLast);
   assert.equal(source.broadcastReason.attemptedStaleness.stalenessS, request.tRxJ2000S - priorLast);
-  assert.ok(
-    typeof source.broadcastReason.preciseError === "string" &&
-      source.broadcastReason.preciseError.length > 0,
-    "the precise solve error that triggered the fallback is reported",
-  );
+  // The precise solve failure that triggered the fallback is reported typed:
+  // the product ends before the epoch, so no satellite has an ephemeris there.
+  const preciseError = source.broadcastReason.preciseError;
+  assert.equal(preciseError.kind, "TOO_FEW_SATELLITES");
+  assert.equal(preciseError.used, 0);
+  assert.equal(preciseError.required, 4);
+  assert.match(preciseError.message, /only 0 usable satellites/);
 
   assertSolutionBitsEq(sourced.solution, broadcast);
 });
@@ -240,4 +247,45 @@ test("the broadcast and precise fixes are genuinely different solutions", () => 
   // other; a real broadcast-vs-precise pair differs by the signal-in-space error.
   assert.ok(delta > 0.01, `broadcast and precise differ (${delta.toFixed(3)} m)`);
   assert.ok(delta < 50, `the difference is the labeled SIS-level delta (${delta.toFixed(3)} m)`);
+});
+
+test("pseudorangeCode selects whether the broadcast group delay applies", () => {
+  const { request } = scenario();
+
+  const byDefault = nav.solveBroadcast(request);
+  const single = nav.solveBroadcast({ ...request, pseudorangeCode: "singleFrequency" });
+  const ionoFree = nav.solveBroadcast({ ...request, pseudorangeCode: "ionosphereFree" });
+  assertSolutionBitsEq(single, byDefault);
+  // GPS TGD differs per satellite, so leaving it out moves the fix.
+  assert.notDeepEqual(
+    Array.from(ionoFree.positionM, f64Bits),
+    Array.from(byDefault.positionM, f64Bits),
+  );
+  assert.equal(byDefault.ut1Degraded, undefined);
+
+  // SP3 carries no group delay, but the code kind still sets the pseudorange
+  // variance RTKLIB rescode forms: single-frequency code adds the 0.3 m
+  // measurement term and, with the ionosphere uncorrected, 25 (f_L1 / f)^4 m^2,
+  // while ionosphere-free code takes neither and nine times the error term. The
+  // weights move the fix; the satellites used stay the same.
+  const precise = sp3Day177().solveSpp(request);
+  const preciseIonoFree = sp3Day177().solveSpp({ ...request, pseudorangeCode: "ionosphereFree" });
+  assert.deepEqual(preciseIonoFree.usedSats, precise.usedSats);
+  assert.notDeepEqual(
+    Array.from(preciseIonoFree.positionM, f64Bits),
+    Array.from(precise.positionM, f64Bits),
+  );
+  assert.throws(() => nav.solveBroadcast({ ...request, pseudorangeCode: "dual" }), TypeError);
+});
+
+test("SPP requests expose the core QZSS-clock and troposphere choices", () => {
+  const { request } = scenario();
+  const selected = nav.solveBroadcast({
+    ...request,
+    qzssClock: "separate",
+    troposphereModel: "saastamoinenNiell",
+  });
+  assert.ok(selected.positionM.every(Number.isFinite));
+  assert.throws(() => nav.solveBroadcast({ ...request, qzssClock: "own" }), TypeError);
+  assert.throws(() => nav.solveBroadcast({ ...request, troposphereModel: "niell" }), TypeError);
 });

@@ -14,7 +14,8 @@ use sidereon_core::astro::elements::{
     coe2rv as core_coe2rv, rv2coe as core_rv2coe, ClassicalElements, OrbitType,
 };
 
-use crate::error::{engine_error, type_error};
+use crate::domain_error::elements_error;
+use crate::error::type_error;
 use crate::marshal::vec3_finite;
 
 /// The element set crossing to JS as a plain object. Angles are radians; `a` and
@@ -123,7 +124,7 @@ fn elements_to_object(coe: &ClassicalElements) -> Result<JsValue, JsValue> {
 pub fn rv2coe(r: &[f64], v: &[f64], mu: f64) -> Result<JsValue, JsValue> {
     let r = vec3_finite("r", r)?;
     let v = vec3_finite("v", v)?;
-    let coe = core_rv2coe(r, v, mu).map_err(engine_error)?;
+    let coe = core_rv2coe(r, v, mu).map_err(elements_error)?;
     elements_to_object(&coe)
 }
 
@@ -148,7 +149,7 @@ pub fn coe2rv(coe: JsValue, mu: f64) -> Result<JsValue, JsValue> {
     elements.lonper = input.lonper;
     elements.orbit_type = orbit_type;
 
-    let (r, v) = core_coe2rv(&elements, mu).map_err(engine_error)?;
+    let (r, v) = core_coe2rv(&elements, mu).map_err(elements_error)?;
 
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]

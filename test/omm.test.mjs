@@ -4,7 +4,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { Omm, OmmEpoch, parseOmmKvn, parseOmmXml, parseOmmJson } from "../pkg-node/sidereon.js";
+import {
+  Omm,
+  OmmEpoch,
+  parseOmmCsv,
+  parseOmmCsvArray,
+  parseOmmJson,
+  parseOmmJsonArray,
+  parseOmmKvn,
+  parseOmmXml,
+  parseOmmXmlAll,
+} from "../pkg-node/sidereon.js";
 import { fixtureText, fixtureJson, hexToF64, f64Bits } from "./helpers.mjs";
 
 const FX = fixtureJson("omm.json");
@@ -28,7 +38,7 @@ const assertEpoch = (epoch, ref) => {
 const opt = (v) => v ?? null;
 
 const assertOmm = (omm, ref) => {
-  assert.equal(omm.ccsdsOmmVers, ref.ccsds_omm_vers);
+  assert.equal(opt(omm.ccsdsOmmVers), ref.ccsds_omm_vers);
   assert.equal(opt(omm.creationDate), ref.creation_date);
   assert.equal(opt(omm.originator), ref.originator);
   assert.equal(opt(omm.objectName), ref.object_name);
@@ -125,4 +135,69 @@ test("OMM parse and constructor errors throw", () => {
   assert.throws(() => parseOmmJson("{}"));
   assert.throws(() => new OmmEpoch(2026, 13, 1, 0, 0, 0, 0));
   assert.throws(() => new Omm(new OmmEpoch(2026, 1, 1, 0, 0, 0, 0), NaN, 0, 0, 0, 0, 0, 1));
+});
+
+const isOmmError = (kind) => (e) =>
+  e instanceof Error &&
+  e.name === "OmmError" &&
+  e.detail.kind === kind &&
+  e.detail.message === e.message;
+
+test("OMM failures are typed OmmErrors whose detail names the engine variant", () => {
+  assert.throws(
+    () => parseOmmKvn("CCSDS_OMM_VERS = 2.0\n"),
+    (e) => {
+      assert.equal(e.name, "OmmError");
+      assert.equal(typeof e.detail.kind, "string");
+      assert.equal(e.detail.message, e.message);
+      return true;
+    },
+  );
+  // A JSON array of several records is not one OMM.
+  const records = FX.fixtures.map((fx) => JSON.parse(load(fx.json_fixture))).flat();
+  assert.throws(() => parseOmmJson(JSON.stringify(records)), isOmmError("MULTIPLE_MESSAGES"));
+});
+
+test("the array readers keep every record they can read and report the rest", () => {
+  const records = FX.fixtures.map((fx) => JSON.parse(load(fx.json_fixture))).flat();
+  const parsed = parseOmmJsonArray(JSON.stringify([...records, { OBJECT_NAME: "BROKEN" }]));
+  assert.deepEqual(
+    parsed.omms.map((omm) => omm.noradCatId),
+    FX.fixtures.map((fx) => fx.from_json.norad_cat_id),
+  );
+  assert.equal(parsed.skipped.length, 1);
+  assert.equal(parsed.skipped[0].index, records.length);
+  assert.equal(typeof parsed.skipped[0].reason.kind, "string");
+
+  const xml = parseOmmXmlAll(load(FX.fixtures[0].xml_fixture));
+  assert.equal(xml.omms.length, 1);
+  assert.deepEqual(xml.skipped, []);
+  assert.equal(
+    xml.omms[0].toXmlString(),
+    parseOmmXml(load(FX.fixtures[0].xml_fixture)).toXmlString(),
+  );
+});
+
+test("GP CSV writes and reads back one record and a table of several", () => {
+  const omms = FX.fixtures.map((fx) => parseOmmJson(load(fx.json_fixture)));
+  const csv = omms.map((omm) => omm.toCsvString());
+  const one = parseOmmCsv(csv[0]);
+  assert.equal(one.toCsvString(), csv[0]);
+  assert.equal(one.noradCatId, omms[0].noradCatId);
+  eqBits(one.meanMotion, FX.fixtures[0].from_json.mean_motion_hex);
+  assert.equal(omms[0].toCsvStringDiscardingComments(), csv[0]);
+
+  // One header, then each record's data row.
+  const lines = (text) => text.trimEnd().split(/\r?\n/);
+  const [header] = lines(csv[0]);
+  for (const text of csv) assert.equal(lines(text)[0], header);
+  const rows = csv.map((text) => lines(text)[1]);
+  const table = [header, ...rows].join("\n") + "\n";
+  const parsed = parseOmmCsvArray(table);
+  assert.deepEqual(
+    parsed.omms.map((omm) => omm.noradCatId),
+    omms.map((omm) => omm.noradCatId),
+  );
+  assert.deepEqual(parsed.skipped, []);
+  assert.throws(() => parseOmmCsv(table), isOmmError("MULTIPLE_MESSAGES"));
 });

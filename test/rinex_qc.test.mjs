@@ -12,7 +12,7 @@ import {
   repairRinexObs,
 } from "../pkg-node/sidereon.js";
 
-import { fixture } from "./helpers.mjs";
+import { coreGoldens, fixture } from "./helpers.mjs";
 
 const encoder = new TextEncoder();
 
@@ -65,7 +65,17 @@ test("lintRinexObs reports the core diagnostics for RINEX 2 OBS", () => {
   );
   assert.equal(report.findings[0].severity, "info");
   assert.equal(report.findings[0].repairable, false);
-  assert.match(report.findings[0].detail, /WAVELENGTH FACT L1\/2/);
+  // The detail is typed: the unretained header record names its label, and
+  // each GLONASS slot finding its satellite and issue.
+  assert.deepEqual(report.findings[0].detail, {
+    kind: "OBS_UNRETAINED_HEADER",
+    label: "WAVELENGTH FACT L1/2",
+  });
+  for (const finding of report.findings.slice(1)) {
+    assert.equal(finding.detail.kind, "OBS_GLONASS_SLOT_ISSUE");
+    assert.equal(finding.detail.satellite, finding.at.satellite);
+    assert.equal(typeof finding.detail.issue, "string");
+  }
 });
 
 test("unavailable source INTERVAL is linted while QC infers or reports cadence", () => {
@@ -225,7 +235,10 @@ test("observationQc reports the core summary and selected signal statistics", ()
   assert.equal(qc.dataGaps.length, 0);
   assert.equal(qc.notes.length, 0);
   assert.deepEqual(qc.clockJumps, []);
-  assert.equal(qc.cycleSlips.observations, 68);
+  // R09 carries G3 (C3Q/L3Q) beside G1 and G2. G3 now resolves a carrier, so
+  // its two epochs enter the dual-frequency statistics: 14 GLONASS
+  // observations become 16.
+  assert.equal(qc.cycleSlips.observations, 70);
   assert.equal(qc.cycleSlips.totalSlips, 0);
   assert.equal(qc.cycleSlips.observationsPerSlip, undefined);
   assert.deepEqual(
@@ -237,12 +250,12 @@ test("observationQc reports the core summary and selected signal statistics", ()
     })),
     [
       { system: "GPS", observations: 22, slips: 0, observationsPerSlip: undefined },
-      { system: "GLONASS", observations: 14, slips: 0, observationsPerSlip: undefined },
+      { system: "GLONASS", observations: 16, slips: 0, observationsPerSlip: undefined },
       { system: "Galileo", observations: 16, slips: 0, observationsPerSlip: undefined },
       { system: "BeiDou", observations: 16, slips: 0, observationsPerSlip: undefined },
     ],
   );
-  assert.equal(qc.multipath.satellites.length, 34);
+  assert.equal(qc.multipath.satellites.length, 35);
   assert.equal(qc.multipath.systems.length, 4);
 
   assert.deepEqual(
@@ -312,11 +325,28 @@ test("lintRinexNav and repairRinexNav expose core NAV diagnostics", () => {
     repaired.actions.map((a) => a.id),
     ["A12", "NAV-B06", "NAV-B06", "NAV-B06"],
   );
-  assert.equal(repaired.records.length, 7);
+  // The repaired record set and its encoding, reproduced natively by
+  // test/golden-gen; the writer now also states PGM / RUN BY / DATE.
+  const ref = coreGoldens().navRepair;
+  assert.equal(repaired.records.length, ref.recordCount);
   assert.equal(repaired.leapSeconds, 18);
-  assert.equal(repaired.repairedText.length, 5208);
+  assert.equal(repaired.repairedText.length, ref.repairedTextLength);
+  assert.match(repaired.repairedText, /PGM \/ RUN BY \/ DATE/);
   assert.equal(repaired.remaining.clean, true);
   assert.equal(repaired.remaining.findingCount, 2);
   assert.equal(repaired.remaining.findings[0].code, "NAV-B05");
   assert.equal(repaired.remaining.findings[1].code, "NAV-B05");
+});
+
+test("the QC report states the header and per-system sections the engine built", () => {
+  const obs = parseRinexObs(fixture("obs/WTZR00DEU_R_20201770000_01D_30S_MO_120epoch.rnx"));
+  const qc = observationQc(obs);
+  // The engine's own report for the same file and options, reproduced
+  // natively by test/golden-gen.
+  const golden = coreGoldens().qcReport;
+  assert.deepEqual(qc.header, golden.header);
+  assert.deepEqual(qc.systems, golden.systems);
+  const json = JSON.parse(qc.toJson());
+  assert.deepEqual(json.header, golden.header);
+  assert.deepEqual(json.systems, golden.systems);
 });

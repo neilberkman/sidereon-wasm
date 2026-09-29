@@ -6,12 +6,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  decodeSbasMessage,
+  encodeSbasMessage,
   encodeRinexNav,
   GnssSystem,
   parseRinexNavLenient,
   parseRinexNavRecords,
   parseSbasEmsLines,
+  parseSbasEmsLog,
   parseSbasRtklibLines,
+  parseSbasRtklibLog,
   rinexObservationFrequencyHz,
   rinexObservationWavelengthM,
 } from "../pkg-node/sidereon.js";
@@ -73,7 +77,9 @@ test("RINEX observation-code mappings are direct and version-aware", () => {
 });
 
 test("EMS and RTKLIB parsers return timestamped, decodable engine blocks", () => {
-  const ems = parseSbasEmsLines(`ignored\n120,26,7,1,0,0,1,1,${SBAS_HEX}\n`);
+  // The message type field states 2, the type SBAS_HEX carries at message
+  // bits 8-13.
+  const ems = parseSbasEmsLines(`ignored\n120,26,7,1,0,0,1,2,${SBAS_HEX}\n`);
   assert.equal(ems.length, 1);
   assert.equal(ems[0].satellite, "S20");
   assert.equal(ems[0].satelliteId, "S20");
@@ -82,8 +88,10 @@ test("EMS and RTKLIB parsers return timestamped, decodable engine blocks", () =>
   assert.equal(ems[0].form, "body226");
   assert.deepEqual(Array.from(ems[0].bytes), Array.from(hexToBytes(SBAS_HEX)));
   assert.equal(ems[0].decode().messageType, 2);
+  assert.equal(ems[0].declaredMessageType, 2);
+  assert.equal(ems[0].messageType, 2);
 
-  const rtklib = parseSbasRtklibLines(`ignored\n2360 259200 120 1 : ${SBAS_HEX}\n`);
+  const rtklib = parseSbasRtklibLines(`ignored\n2360 259200 120 2 : ${SBAS_HEX}\n`);
   assert.equal(rtklib.length, 1);
   assert.equal(rtklib[0].satelliteId, "S20");
   assert.equal(rtklib[0].week, 2_360);
@@ -93,6 +101,80 @@ test("EMS and RTKLIB parsers return timestamped, decodable engine blocks", () =>
 
   assert.deepEqual(parseSbasEmsLines("ignored\n"), []);
   assert.deepEqual(parseSbasRtklibLines("ignored\n"), []);
+});
+
+test("a declared message type that differs from the carried one is refused strict and reported lenient", () => {
+  const text = `# comment\n\n120,26,7,1,0,0,1,1,${SBAS_HEX}\n`;
+  assert.throws(
+    () => parseSbasEmsLines(text),
+    /declares SBAS message type 1 but its message carries type 2/,
+  );
+  assert.throws(() => parseSbasEmsLog(text), /declares SBAS message type 1/);
+
+  const log = parseSbasEmsLog(text, { policy: "lenient" });
+  assert.equal(log.blocks.length, 1);
+  assert.equal(log.blocks[0].declaredMessageType, 1);
+  assert.equal(log.blocks[0].messageType, 2);
+  assert.deepEqual(log.skippedLines, [
+    { line: 1, kind: "comment" },
+    { line: 2, kind: "blank" },
+  ]);
+  assert.deepEqual(log.refusedLines, []);
+  assert.equal(log.departures.length, 1);
+  assert.equal(log.departures[0].kind, "declaredMessageType");
+  assert.equal(log.departures[0].declared, 1);
+  assert.equal(log.departures[0].carried, 2);
+  assert.equal(log.departures[0].line, 3);
+
+  const rtk = parseSbasRtklibLog(`2360 259200 120 1 : ${SBAS_HEX}\n`, { policy: "lenient" });
+  assert.equal(rtk.blocks.length, 1);
+  assert.equal(rtk.departures[0].kind, "declaredMessageType");
+  assert.throws(() => parseSbasEmsLog(text, { polcy: "lenient" }), TypeError);
+  assert.throws(() => parseSbasEmsLog(text, { policy: "loose" }), TypeError);
+});
+
+test("decodeSbasMessage reports the pad bits and refuses an unknown preamble unless lenient", () => {
+  const bytes = hexToBytes(SBAS_HEX);
+  const decoded = decodeSbasMessage(bytes, "body226");
+  assert.equal(typeof decoded.padBits, "number");
+  assert.deepEqual(decoded.departures, []);
+  const altered = Uint8Array.from(bytes);
+  altered[0] = 0x11;
+  assert.throws(() => decodeSbasMessage(altered, "body226"), Error);
+  const lenient = decodeSbasMessage(altered, "body226", "lenient");
+  assert.equal(lenient.departures[0].kind, "unrecognizedPreamble");
+  assert.equal(lenient.departures[0].preamble, 0x11);
+});
+
+test("encodeSbasMessage exposes the typed strict preamble refusal and lenient departure", () => {
+  const altered = hexToBytes(SBAS_HEX);
+  altered[0] = 0x11;
+
+  assert.throws(
+    () => encodeSbasMessage(altered, "body226"),
+    (error) => {
+      assert.equal(error.name, "SbasEncodeError");
+      assert.deepEqual(error.detail, {
+        kind: "SBAS_ENCODE",
+        core: { kind: "unrecognizedPreamble", preamble: 0x11 },
+        message: "SBAS encode error: SBAS preamble 0x11 is not 0x53, 0x9A or 0xC6",
+      });
+      return true;
+    },
+  );
+
+  const lenient = encodeSbasMessage(altered, "body226", "lenient");
+  assert.deepEqual(Array.from(lenient.bytes), Array.from(altered));
+  assert.deepEqual(lenient.departures, [
+    {
+      kind: "unrecognizedPreamble",
+      message: "SBAS preamble 0x11 is not 0x53, 0x9A or 0xC6",
+      preamble: 0x11,
+      declared: null,
+      carried: null,
+      line: null,
+    },
+  ]);
 });
 
 test("SBAS text parser errors remain engine errors", () => {

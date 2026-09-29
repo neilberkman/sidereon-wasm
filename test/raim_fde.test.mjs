@@ -54,6 +54,20 @@ test("raimFdeDesign honours a maxExclusions budget of zero", () => {
   assert.equal(r.globalTest.faultDetected, true);
 });
 
+test("raimFdeDesign validates the configurable exclusion RMS cap", () => {
+  assert.throws(
+    () => raimFdeDesign(CLEAN_ROWS, { maxExclusionRmsM: 0 }),
+    (error) => error.detail.kind === "INVALID_PARAMETER",
+  );
+});
+
+test("raimFdeDesign preserves the typed invalid-probability error", () => {
+  assert.throws(
+    () => raimFdeDesign(CLEAN_ROWS, { pFa: 1 }),
+    (error) => error.detail.kind === "INVALID_PROBABILITY",
+  );
+});
+
 test("raimFdeDesign rejects an empty measurement set", () => {
   assert.throws(() => raimFdeDesign([], undefined));
 });

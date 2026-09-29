@@ -5,10 +5,11 @@ use sidereon_core::astro::time::model::{GnssWeekTow, TimeScale};
 use sidereon_core::frame::Wgs84Geodetic;
 use sidereon_core::positioning::EphemerisSource;
 use sidereon_core::sbas::message::{
-    SbasBlock as CoreSbasBlock, SbasDoNotUse, SbasFastCorrections, SbasFastDegradation,
-    SbasGeoAlmanac, SbasGeoNav, SbasIgpMask, SbasIntegrity, SbasIonoDelays,
-    SbasLongTermCorrections, SbasLongTermHalf, SbasLongTermRecord, SbasMessage,
-    SbasMixedCorrections, SbasNetworkTime, SbasPrnMask, SbasUnsupported, SbasWireForm, SpareBits,
+    SbasBlock as CoreSbasBlock, SbasDoNotUse, SbasEncodeError as CoreSbasEncodeError,
+    SbasFastCorrections, SbasFastDegradation, SbasGeoAlmanac, SbasGeoNav, SbasIgpMask,
+    SbasIntegrity, SbasIonoDelays, SbasLongTermCorrections, SbasLongTermHalf, SbasLongTermRecord,
+    SbasMessage, SbasMixedCorrections, SbasNetworkTime, SbasPrnMask, SbasUnsupported, SbasWireForm,
+    SpareBits,
 };
 use sidereon_core::sbas::source::{SbasCorrectedEphemeris, SbasSolveMode};
 use sidereon_core::sbas::store::{
@@ -17,13 +18,17 @@ use sidereon_core::sbas::store::{
     SbasIonoGrid, SbasLongTermCorrection,
 };
 use sidereon_core::sbas::{
-    parse_ems_lines as core_parse_ems_lines, parse_rtklib_lines as core_parse_rtklib_lines,
-    SbasLogBlock as CoreSbasLogBlock,
+    parse_ems_lines as core_parse_ems_lines, parse_ems_log as core_parse_ems_log,
+    parse_rtklib_lines as core_parse_rtklib_lines, parse_rtklib_log as core_parse_rtklib_log,
+    SbasDeparture, SbasIgpUnavailableReason, SbasLineRefusal, SbasLog as CoreSbasLog,
+    SbasLogBlock as CoreSbasLogBlock, SbasLogOptions, SbasPolicy, SbasSkippedLineKind,
 };
 use sidereon_core::staleness::StalenessPolicy;
 use sidereon_core::GnssSatelliteId;
 
-use crate::error::{engine_error, range_error, type_error};
+use crate::error::{engine_error, error_with_detail, range_error, type_error};
+use crate::frames::ExactEpochQueryValue;
+use crate::label::{lower_camel_variant, Label};
 use crate::rinex_nav::BroadcastEphemeris;
 use crate::spp::{self, SppSolution};
 
@@ -34,6 +39,67 @@ struct SbasMessageJs {
     form: &'static str,
     kind: String,
     message: serde_json::Value,
+    /// The six bits that complete the last byte of either wire form, as read.
+    pad_bits: u8,
+    /// Departures read under the lenient policy.
+    departures: Vec<SbasDepartureJs>,
+}
+
+/// A departure from the SBAS format, as `{ kind, message, ... }`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SbasDepartureJs {
+    /// `"unrecognizedPreamble"`, `"declaredMessageType"`, or, for a departure
+    /// this binding does not name yet, the engine variant's name in the same
+    /// case.
+    kind: Label,
+    message: String,
+    preamble: Option<u8>,
+    declared: Option<u8>,
+    carried: Option<u8>,
+    /// One-based log line, for a departure read from a log.
+    line: Option<usize>,
+}
+
+impl From<&SbasDeparture> for SbasDepartureJs {
+    fn from(departure: &SbasDeparture) -> Self {
+        let (kind, preamble, declared, carried) = match departure {
+            SbasDeparture::UnrecognizedPreamble { preamble } => (
+                Label::Borrowed("unrecognizedPreamble"),
+                Some(*preamble),
+                None,
+                None,
+            ),
+            SbasDeparture::DeclaredMessageType { declared, carried } => (
+                Label::Borrowed("declaredMessageType"),
+                None,
+                Some(*declared),
+                Some(*carried),
+            ),
+            other => (lower_camel_variant(other), None, None, None),
+        };
+        Self {
+            kind,
+            message: departure.to_string(),
+            preamble,
+            declared,
+            carried,
+            line: None,
+        }
+    }
+}
+
+/// Read an SBAS policy: `"strict"` (the default) refuses a preamble other
+/// than `0x53`, `0x9A` and `0xC6` and a declared message type that differs
+/// from the one the message carries; `"lenient"` reads them and reports each.
+fn sbas_policy(value: Option<&str>) -> Result<SbasPolicy, JsValue> {
+    match value {
+        None | Some("strict") => Ok(SbasPolicy::Strict),
+        Some("lenient") => Ok(SbasPolicy::Lenient),
+        Some(other) => Err(type_error(&format!(
+            "invalid SBAS policy {other:?}: expected \"strict\" or \"lenient\""
+        ))),
+    }
 }
 
 #[derive(Serialize)]
@@ -85,6 +151,19 @@ struct IgpJs {
 struct IonoGridJs {
     iodi: u8,
     igps: Vec<IgpJs>,
+    unavailable_igps: Vec<UnavailableIgpJs>,
+}
+
+/// A grid point whose latest entry DO-229 marks unavailable.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnavailableIgpJs {
+    lat_deg: f64,
+    lon_deg: f64,
+    vertical_delay: u16,
+    givei: u8,
+    /// `"doNotUse"` (vertical delay 511) or `"notMonitored"` (GIVEI 15).
+    reason: &'static str,
 }
 
 #[derive(Serialize)]
@@ -395,6 +474,20 @@ fn iono_grid(value: &SbasIonoGrid) -> IonoGridJs {
     IonoGridJs {
         iodi: value.iodi,
         igps: value.igps().iter().map(igp).collect(),
+        unavailable_igps: value
+            .unavailable_igps()
+            .iter()
+            .map(|point| UnavailableIgpJs {
+                lat_deg: point.lat_deg,
+                lon_deg: point.lon_deg,
+                vertical_delay: point.vertical_delay,
+                givei: point.givei,
+                reason: match point.reason {
+                    SbasIgpUnavailableReason::DoNotUse => "doNotUse",
+                    SbasIgpUnavailableReason::NotMonitored => "notMonitored",
+                },
+            })
+            .collect(),
     }
 }
 
@@ -466,22 +559,177 @@ impl SbasLogBlock {
         self.inner.bytes.clone()
     }
 
-    /// Decode this raw message using its parsed wire form.
-    pub fn decode(&self) -> Result<JsValue, JsValue> {
-        let block =
-            CoreSbasBlock::decode(&self.inner.bytes, self.inner.form).map_err(engine_error)?;
-        decoded_sbas_block(block)
+    /// The message type the record's own field states (the EMS message-type
+    /// field or RTKLIB's fourth header field), or `undefined` for an
+    /// eight-field comma line, which carries none.
+    #[wasm_bindgen(getter, js_name = declaredMessageType)]
+    pub fn declared_message_type(&self) -> Option<u8> {
+        self.inner.declared_message_type
+    }
+
+    /// The six-bit message type the bytes carry, or `undefined` when they are
+    /// shorter than two bytes.
+    #[wasm_bindgen(getter, js_name = messageType)]
+    pub fn message_type(&self) -> Option<u8> {
+        self.inner.message_type()
+    }
+
+    /// Decode this raw message using its parsed wire form, under `policy`
+    /// (`"strict"` by default, or `"lenient"`).
+    pub fn decode(&self, policy: Option<String>) -> Result<JsValue, JsValue> {
+        let (block, departures) = CoreSbasBlock::decode_with_policy(
+            &self.inner.bytes,
+            self.inner.form,
+            sbas_policy(policy.as_deref())?,
+        )
+        .map_err(engine_error)?;
+        decoded_sbas_block(block, &departures)
     }
 }
 
-fn decoded_sbas_block(block: CoreSbasBlock) -> Result<JsValue, JsValue> {
+fn decoded_sbas_block(
+    block: CoreSbasBlock,
+    departures: &[SbasDeparture],
+) -> Result<JsValue, JsValue> {
     let out = SbasMessageJs {
         message_type: block.message.message_type(),
         form: form_label(block.form),
         kind: format!("{:?}", block.message),
         message: message_payload(&block.message),
+        pad_bits: block.pad_bits,
+        departures: departures.iter().map(SbasDepartureJs::from).collect(),
     };
     to_js(&out)
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct SbasLogOptionsInput {
+    policy: Option<String>,
+    reference_week: Option<u32>,
+}
+
+fn log_options(options: JsValue) -> Result<SbasLogOptions, JsValue> {
+    let input: SbasLogOptionsInput = if options.is_undefined() || options.is_null() {
+        SbasLogOptionsInput::default()
+    } else {
+        crate::error::reject_unknown_keys(
+            &options,
+            "SBAS log options",
+            &["policy", "referenceWeek"],
+        )?;
+        serde_wasm_bindgen::from_value(options)
+            .map_err(|e| type_error(&format!("invalid SBAS log options: {e}")))?
+    };
+    let mut out = SbasLogOptions::default().with_policy(sbas_policy(input.policy.as_deref())?);
+    if let Some(week) = input.reference_week {
+        out = out.with_reference_week(week);
+    }
+    Ok(out)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SbasSkippedLineJs {
+    line: usize,
+    /// `"blank"`, `"comment"` or `"nonRecord"`.
+    kind: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SbasRefusedLineJs {
+    line: usize,
+    /// `"ambiguousWeek"`, `"checksumMismatch"`, or, for a reason this binding
+    /// does not name yet, the engine variant's name in the same case.
+    reason: Label,
+    week: Option<u32>,
+    written: Option<u32>,
+    computed: Option<u32>,
+}
+
+/// Everything a log reader read: `blocks`, `skippedLines` (read as no record),
+/// `refusedLines` (record lines left unread) and `departures`.
+#[wasm_bindgen]
+pub struct SbasLog {
+    inner: CoreSbasLog,
+}
+
+#[wasm_bindgen]
+impl SbasLog {
+    /// Records in input order.
+    #[wasm_bindgen(getter)]
+    pub fn blocks(&self) -> Vec<SbasLogBlock> {
+        self.inner.blocks.iter().cloned().map(Into::into).collect()
+    }
+
+    /// Lines read as no record, as `{ line, kind }`.
+    #[wasm_bindgen(getter, js_name = skippedLines, unchecked_return_type = "SbasSkippedLine[]")]
+    pub fn skipped_lines(&self) -> Result<JsValue, JsValue> {
+        let rows: Vec<SbasSkippedLineJs> = self
+            .inner
+            .skipped_lines
+            .iter()
+            .map(|line| SbasSkippedLineJs {
+                line: line.line,
+                kind: match line.kind {
+                    SbasSkippedLineKind::Blank => "blank",
+                    SbasSkippedLineKind::Comment => "comment",
+                    SbasSkippedLineKind::NonRecord => "nonRecord",
+                },
+            })
+            .collect();
+        to_js(&rows)
+    }
+
+    /// Record lines left unread while the rest of the log was read, as
+    /// `{ line, reason, week, written, computed }`.
+    #[wasm_bindgen(getter, js_name = refusedLines, unchecked_return_type = "SbasRefusedLine[]")]
+    pub fn refused_lines(&self) -> Result<JsValue, JsValue> {
+        let rows: Vec<SbasRefusedLineJs> = self
+            .inner
+            .refused_lines
+            .iter()
+            .map(|line| {
+                let mut row = SbasRefusedLineJs {
+                    line: line.line,
+                    reason: lower_camel_variant(&line.reason),
+                    week: None,
+                    written: None,
+                    computed: None,
+                };
+                match line.reason {
+                    SbasLineRefusal::AmbiguousWeek { week } => {
+                        row.reason = Label::Borrowed("ambiguousWeek");
+                        row.week = Some(week);
+                    }
+                    SbasLineRefusal::ChecksumMismatch { written, computed } => {
+                        row.reason = Label::Borrowed("checksumMismatch");
+                        row.written = written;
+                        row.computed = Some(computed);
+                    }
+                    _ => {}
+                }
+                row
+            })
+            .collect();
+        to_js(&rows)
+    }
+
+    /// Departures read under the lenient policy, each with its `line`.
+    #[wasm_bindgen(getter, unchecked_return_type = "SbasDeparture[]")]
+    pub fn departures(&self) -> Result<JsValue, JsValue> {
+        let rows: Vec<SbasDepartureJs> = self
+            .inner
+            .departures
+            .iter()
+            .map(|entry| SbasDepartureJs {
+                line: Some(entry.line),
+                ..SbasDepartureJs::from(&entry.departure)
+            })
+            .collect();
+        to_js(&rows)
+    }
 }
 
 /// Decode a raw SBAS message.
@@ -489,11 +737,215 @@ fn decoded_sbas_block(block: CoreSbasBlock) -> Result<JsValue, JsValue> {
 /// `form` is `"framed250"` for a 32-byte message with CRC or `"body226"` for a
 /// 29-byte body. The result contains `messageType`, `form`, legacy debug
 /// `kind`, and `message`, a structured decoded payload. Parse failures are
-/// thrown as `Error`.
+/// thrown as `Error`. `policy` is `"strict"` (the default), which refuses a
+/// preamble other than `0x53`, `0x9A` and `0xC6`, or `"lenient"`, which reads
+/// it and reports it in `departures`. A framed block whose CRC does not match
+/// is refused under both.
 #[wasm_bindgen(js_name = decodeSbasMessage)]
-pub fn decode_sbas_message(bytes: &[u8], form: Option<String>) -> Result<JsValue, JsValue> {
-    let block = decode_block(bytes, form)?;
-    decoded_sbas_block(block)
+pub fn decode_sbas_message(
+    bytes: &[u8],
+    form: Option<String>,
+    policy: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let (block, departures) = CoreSbasBlock::decode_with_policy(
+        bytes,
+        parse_form(form)?,
+        sbas_policy(policy.as_deref())?,
+    )
+    .map_err(engine_error)?;
+    decoded_sbas_block(block, &departures)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SbasReencodedMessageJs {
+    bytes: Vec<u8>,
+    departures: Vec<SbasDepartureJs>,
+}
+
+/// Re-encode an SBAS body or framed block under `policy` (`"strict"` by
+/// default, or `"lenient"`). The input is decoded leniently so an unknown
+/// preamble is refused by the encoder with a typed `SbasEncodeError` in strict
+/// mode, or preserved and reported in lenient mode. Returns `{ bytes,
+/// departures }`.
+#[wasm_bindgen(
+    js_name = encodeSbasMessage,
+    unchecked_return_type = "SbasReencodedMessage"
+)]
+pub fn encode_sbas_message(
+    bytes: &[u8],
+    form: Option<String>,
+    policy: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let form = parse_form(form)?;
+    let policy = sbas_policy(policy.as_deref())?;
+    let (block, _) = CoreSbasBlock::decode_with_policy(bytes, form, SbasPolicy::Lenient)
+        .map_err(engine_error)?;
+    let (bytes, departures) = block
+        .encode_with_policy(policy)
+        .map_err(sbas_encode_error)?;
+    to_js(&SbasReencodedMessageJs {
+        bytes,
+        departures: departures.iter().map(SbasDepartureJs::from).collect(),
+    })
+}
+
+fn sbas_encode_error(error: sidereon_core::Error) -> JsValue {
+    let message = error.to_string();
+    let detail = match error {
+        sidereon_core::Error::SbasEncode(error) => serde_json::json!({
+            "kind": "SBAS_ENCODE",
+            "core": sbas_encode_error_payload(&error),
+            "message": message.clone(),
+        }),
+        _ => serde_json::json!({ "kind": "UNKNOWN", "message": message.clone() }),
+    };
+    error_with_detail("SbasEncodeError", &message, &detail)
+}
+
+fn sbas_encode_error_payload(error: &CoreSbasEncodeError) -> serde_json::Value {
+    use CoreSbasEncodeError as EncodeError;
+    match error {
+        EncodeError::FieldOutOfRange {
+            message_type,
+            field,
+            index,
+            value,
+            width,
+            signed,
+        } => serde_json::json!({
+            "kind": "fieldOutOfRange",
+            "messageType": *message_type,
+            "field": field,
+            "index": index,
+            "value": value.to_string(),
+            "width": width,
+            "signed": signed,
+        }),
+        EncodeError::UnrecognizedPreamble { preamble } => serde_json::json!({
+            "kind": "unrecognizedPreamble",
+            "preamble": preamble,
+        }),
+        EncodeError::MessageType {
+            message_type,
+            reason,
+        } => serde_json::json!({
+            "kind": "messageType",
+            "messageType": *message_type,
+            "reason": reason,
+        }),
+        EncodeError::RawPayload {
+            message_type,
+            bytes,
+            bits_past_payload,
+        } => serde_json::json!({
+            "kind": "rawPayload",
+            "messageType": *message_type,
+            "bytes": bytes,
+            "bitsPastPayload": bits_past_payload,
+        }),
+        EncodeError::ReservedLayout {
+            message_type,
+            part,
+            expected,
+            found,
+        } => serde_json::json!({
+            "kind": "reservedLayout",
+            "messageType": *message_type,
+            "part": part,
+            "expected": expected,
+            "found": found,
+        }),
+        EncodeError::LongTermRecordCount {
+            message_type,
+            half,
+            velocity_code,
+            expected,
+            found,
+        } => serde_json::json!({
+            "kind": "longTermRecordCount",
+            "messageType": *message_type,
+            "half": half,
+            "velocityCode": velocity_code,
+            "expected": expected,
+            "found": found,
+        }),
+        EncodeError::LongTermFieldNotCarried {
+            message_type,
+            half,
+            record,
+            field,
+        } => serde_json::json!({
+            "kind": "longTermFieldNotCarried",
+            "messageType": *message_type,
+            "half": half,
+            "record": record,
+            "field": field,
+        }),
+        EncodeError::LongTermMissingTimeOfDay { message_type, half } => serde_json::json!({
+            "kind": "longTermMissingTimeOfDay",
+            "messageType": *message_type,
+            "half": half,
+        }),
+        EncodeError::PadBits { value } => serde_json::json!({
+            "kind": "padBits",
+            "value": value,
+        }),
+        other => serde_json::json!({
+            "kind": "unrecognizedSbasEncodeError",
+            "message": other.to_string(),
+        }),
+    }
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const TS_SBAS_ENCODE_ERROR: &str = r#"
+export type SbasEncodeErrorDetail =
+  | { kind: "SBAS_ENCODE"; core: SbasEncodeCoreDetail; message: string }
+  | { kind: "UNKNOWN"; message: string };
+
+export interface SbasReencodedMessage {
+  bytes: number[];
+  departures: SbasDeparture[];
+}
+
+export type SbasEncodeCoreDetail =
+  | { kind: "fieldOutOfRange"; messageType: number; field: string; index: number | null; value: string; width: number; signed: boolean }
+  | { kind: "unrecognizedPreamble"; preamble: number }
+  | { kind: "messageType"; messageType: number; reason: string }
+  | { kind: "rawPayload"; messageType: number; bytes: number; bitsPastPayload: boolean }
+  | { kind: "reservedLayout"; messageType: number; part: string; expected: number[]; found: number[] }
+  | { kind: "longTermRecordCount"; messageType: number; half: number; velocityCode: boolean; expected: number; found: number }
+  | { kind: "longTermFieldNotCarried"; messageType: number; half: number; record: number; field: string }
+  | { kind: "longTermMissingTimeOfDay"; messageType: number; half: number }
+  | { kind: "padBits"; value: number }
+  | { kind: "unrecognizedSbasEncodeError"; message: string };
+"#;
+
+/// Read an EMS log under `options` (`{ policy?, referenceWeek? }`): the
+/// records, every line read as no record, every record line left unread and
+/// every departure read under the lenient policy. NovAtel OEM4
+/// `#RAWWAASFRAMEA` and OEM3 `$FRMA` lines are read as RTKLIB `readmsgs`
+/// reads them; `referenceWeek` resolves an OEM3 10-bit week.
+#[wasm_bindgen(js_name = parseSbasEmsLog)]
+pub fn parse_sbas_ems_log(
+    text: &str,
+    #[wasm_bindgen(unchecked_optional_param_type = "SbasLogOptions")] options: JsValue,
+) -> Result<SbasLog, JsValue> {
+    Ok(SbasLog {
+        inner: core_parse_ems_log(text, log_options(options)?).map_err(engine_error)?,
+    })
+}
+
+/// Read an RTKLIB SBAS log under `options`, as `parseSbasEmsLog` does.
+#[wasm_bindgen(js_name = parseSbasRtklibLog)]
+pub fn parse_sbas_rtklib_log(
+    text: &str,
+    #[wasm_bindgen(unchecked_optional_param_type = "SbasLogOptions")] options: JsValue,
+) -> Result<SbasLog, JsValue> {
+    Ok(SbasLog {
+        inner: core_parse_rtklib_log(text, log_options(options)?).map_err(engine_error)?,
+    })
 }
 
 /// Parse timestamped SBAS EMS log lines into raw message blocks.
@@ -640,6 +1092,44 @@ impl SbasCorrectionStore {
         nullable(self.inner.geo_nav(geo).map(geo_state))
     }
 
+    /// Corrections a source GEO addressed to active PRN-mask bits that name no
+    /// satellite held here, per 1-based PRN mask number, or `null` when the
+    /// GEO has no mask partition.
+    ///
+    /// The mask follows the RTCA DO-229 layout: numbers 1..37 are GPS, 38..61
+    /// GLONASS slots 1..24, 120..158 SBAS, and the rest name no satellite. An
+    /// unassigned bit keeps its place among the active bits, so the corrections
+    /// after it still reach their own satellites; the corrections addressed to
+    /// it are applied to no satellite and counted here. Each entry is
+    /// `{ maskNumber, count }` in ascending `maskNumber`, with `count` an exact
+    /// `bigint`.
+    #[wasm_bindgen(
+        js_name = unassignedMaskCorrections,
+        unchecked_return_type = "SbasUnassignedMaskCorrections[] | null"
+    )]
+    pub fn unassigned_mask_corrections(&self, geo: &str) -> Result<JsValue, JsValue> {
+        let geo = parse_sat(geo)?;
+        let Some(counts) = self.inner.unassigned_mask_corrections(geo) else {
+            return Ok(JsValue::NULL);
+        };
+        let out = js_sys::Array::new();
+        for (&mask_number, &count) in counts {
+            let entry = js_sys::Object::new();
+            js_sys::Reflect::set(
+                &entry,
+                &JsValue::from_str("maskNumber"),
+                &JsValue::from_f64(f64::from(mask_number)),
+            )?;
+            js_sys::Reflect::set(
+                &entry,
+                &JsValue::from_str("count"),
+                &js_sys::BigInt::from(count).into(),
+            )?;
+            out.push(&entry);
+        }
+        Ok(out.into())
+    }
+
     /// SBAS ionospheric slant delay in meters, or `null`.
     ///
     /// Receiver latitude, longitude, elevation, and azimuth are radians.
@@ -674,6 +1164,108 @@ impl SbasCorrectionStore {
     }
 }
 
+#[wasm_bindgen]
+impl BroadcastEphemeris {
+    /// Evaluate SBAS-selected broadcast state using distinct exact state and
+    /// record-selection epochs.
+    #[wasm_bindgen(js_name = sbasPositionClockAtExactQueries, unchecked_return_type = "Ut1Validated<SelectedPositionClock> | null")]
+    pub fn sbas_position_clock_at_exact_queries(
+        &self,
+        store: &SbasCorrectionStore,
+        geo: &str,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+        mode: Option<String>,
+    ) -> Result<JsValue, JsValue> {
+        let geo = parse_sat(geo)?;
+        let satellite = parse_sat(satellite)?;
+        let source = SbasCorrectedEphemeris::new(&self.inner, store.core(), geo)
+            .with_mode(parse_mode(mode)?);
+        crate::sp3::selected_position_clock_at_queries(
+            &source,
+            satellite,
+            state_epoch,
+            selection_epoch,
+        )
+    }
+
+    /// Evaluate the SBAS-selected satellite clock at an exact transmission
+    /// epoch while selecting the broadcast record at a separate exact epoch.
+    #[wasm_bindgen(js_name = sbasTransmitEpochClockAtExactQueries, unchecked_return_type = "Ut1Validated<number> | null")]
+    pub fn sbas_transmit_epoch_clock_at_exact_queries(
+        &self,
+        store: &SbasCorrectionStore,
+        geo: &str,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+        mode: Option<String>,
+    ) -> Result<JsValue, JsValue> {
+        let geo = parse_sat(geo)?;
+        let satellite = parse_sat(satellite)?;
+        let source = SbasCorrectedEphemeris::new(&self.inner, store.core(), geo)
+            .with_mode(parse_mode(mode)?);
+        crate::sp3::transmit_epoch_clock_at_queries(
+            &source,
+            satellite,
+            state_epoch,
+            selection_epoch,
+        )
+    }
+
+    /// Return SBAS source variance in square metres at an exact state epoch,
+    /// using the exact selection epoch for broadcast-record selection.
+    #[wasm_bindgen(js_name = sbasEphemerisVarianceAtExactQueries)]
+    pub fn sbas_ephemeris_variance_at_exact_queries(
+        &self,
+        store: &SbasCorrectionStore,
+        geo: &str,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+        mode: Option<String>,
+    ) -> Result<f64, JsValue> {
+        let geo = parse_sat(geo)?;
+        let satellite = parse_sat(satellite)?;
+        let source = SbasCorrectedEphemeris::new(&self.inner, store.core(), geo)
+            .with_mode(parse_mode(mode)?);
+        Ok(crate::sp3::precise_variance_at_queries(
+            &source,
+            satellite,
+            state_epoch,
+            selection_epoch,
+        ))
+    }
+
+    /// Evaluate the state-dependent SBAS clock relativity term at an exact
+    /// epoch and supplied satellite position in ECEF metres.
+    #[wasm_bindgen(js_name = sbasClockRelativityAtExactQuery, unchecked_return_type = "ClockRelativity")]
+    pub fn sbas_clock_relativity_at_exact_query(
+        &self,
+        store: &SbasCorrectionStore,
+        geo: &str,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        position_ecef_m: Vec<f64>,
+        mode: Option<String>,
+    ) -> Result<JsValue, JsValue> {
+        let geo = parse_sat(geo)?;
+        let satellite = parse_sat(satellite)?;
+        let position_ecef_m: [f64; 3] = position_ecef_m
+            .try_into()
+            .map_err(|_| type_error("positionEcefM must contain exactly three coordinates"))?;
+        let source = SbasCorrectedEphemeris::new(&self.inner, store.core(), geo)
+            .with_mode(parse_mode(mode)?);
+        crate::sp3::precise_clock_relativity_at_query(
+            &source,
+            satellite,
+            state_epoch,
+            position_ecef_m,
+        )
+    }
+}
+
 /// Convert an SBAS broadcast PRN number such as `129` to an SBAS satellite
 /// token such as `"S29"`. Returns `null` when the PRN is outside the SBAS range.
 #[wasm_bindgen(js_name = sbasPrnToSat)]
@@ -684,7 +1276,9 @@ pub fn sbas_prn_to_sat(broadcast_prn: u16) -> JsValue {
 }
 
 /// Convert an SBAS satellite token such as `"S29"` to broadcast PRN number
-/// such as `129`. Returns `null` for non-SBAS satellites.
+/// such as `129`. Only the slots a broadcast PRN exists for convert, `S20`
+/// through `S58` (PRN 120 through 158); returns `null` for any other SBAS slot
+/// and for a satellite of another constellation.
 #[wasm_bindgen(js_name = satToSbasPrn)]
 pub fn sat_to_sbas_prn(sat: &str) -> Result<JsValue, JsValue> {
     let sat = parse_sat(sat)?;
@@ -744,6 +1338,21 @@ pub fn solve_spp_sbas(
         with_geodetic,
         sidereon_core::positioning::SolvePolicy::default(),
     )
-    .map_err(engine_error)?;
+    .map_err(|e| crate::positioning_error::facade_error(&e))?;
     Ok(SppSolution { inner: solution })
 }
+
+// The unassigned PRN-mask correction counts `SbasCorrectionStore` reports.
+// `wasm-pack` writes this into both `sidereon.d.ts` targets;
+// `types/sidereon-extra.d.ts` re-exports it.
+#[wasm_bindgen(typescript_custom_section)]
+const TS_SBAS_DEFINITIONS: &str = r#"
+/**
+ * Corrections a GEO addressed to one PRN-mask number that names no satellite
+ * held here. `count` is exact.
+ */
+export interface SbasUnassignedMaskCorrections {
+  maskNumber: number;
+  count: bigint;
+}
+"#;

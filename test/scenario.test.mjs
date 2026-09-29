@@ -5,11 +5,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  parseRinexObs,
   simulateScenario,
+  simulateScenarioSet,
   simulateScenarioJson,
   simulateScenarioJsonBytes,
 } from "../pkg-node/sidereon.js";
-import { f64Bits } from "./helpers.mjs";
+import { coreGoldens, f64Bits } from "./helpers.mjs";
 
 const eqBits = (value, hex) => assert.equal(f64Bits(value), BigInt(hex));
 
@@ -84,16 +86,18 @@ test("scenario simulator returns pinned arrays", () => {
   // release; the invariant is cross-entry-point agreement, and the value pins
   // below anchor the actual numbers.
   assert.equal(fromObject.determinismFingerprintHex, fromJson.determinismFingerprintHex);
-  assert.equal(fromJson.observationCount, 10);
-  assert.deepEqual(fromJson.observations.epochOffsets, [0, 5, 10]);
-  assert.equal(fromJson.observations.satelliteId[0], "G01");
+  // The same scenario simulated natively by test/golden-gen.
+  const ref = coreGoldens().scenario;
+  assert.equal(fromJson.observationCount, ref.observationCount);
+  assert.deepEqual(fromJson.observations.epochOffsets, ref.epochOffsets);
+  assert.equal(fromJson.observations.satelliteId[0], ref.firstSatellite);
 
-  eqBits(fromJson.observations.pseudorangeM[0], "0x41733F38567B8EB6");
-  eqBits(fromJson.observations.carrierPhaseCycles[0], "0x4199492DFEABD3F0");
-  eqBits(fromJson.observations.dopplerHz[0], "0xBFC00D7EDDBD533C");
-  eqBits(fromJson.truthTerms.geometricRangeM[0], "0x41733F367001A84B");
-  eqBits(fromJson.truthTerms.thermalNoiseM[0], "0x3FD7711C52A2AF5B");
-  eqBits(fromJson.receiverTruth[1].positionEcefM[0], "0x415854A640000000");
+  eqBits(fromJson.observations.pseudorangeM[0], ref.pseudorangeM0);
+  eqBits(fromJson.observations.carrierPhaseCycles[0], ref.carrierPhaseCycles0);
+  eqBits(fromJson.observations.dopplerHz[0], ref.dopplerHz0);
+  eqBits(fromJson.truthTerms.geometricRangeM[0], ref.geometricRangeM0);
+  eqBits(fromJson.truthTerms.thermalNoiseM[0], ref.thermalNoiseM0);
+  eqBits(fromJson.receiverTruth[1].positionEcefM[0], ref.receiverTruth1PositionEcefM0);
 });
 
 test("scenario simulator is byte-deterministic for the same schema and seed", () => {
@@ -105,4 +109,24 @@ test("scenario simulator is byte-deterministic for the same schema and seed", ()
   const payload = JSON.parse(Buffer.from(first).toString("utf8"));
   assert.equal(payload.schemaVersion, 1);
   assert.match(payload.engineVersion, /^\d+\.\d+\.\d+:scenario-observables-v1$/);
+});
+
+test("the simulation set writes the engine's RINEX text and SPP observations", () => {
+  const ref = coreGoldens().scenario;
+  const sim = simulateScenarioSet(SCENARIO);
+  assert.equal(sim.determinismFingerprintHex, ref.determinismFingerprintHex);
+  assert.equal(sim.arrays.observationCount, ref.observationCount);
+
+  // The text is the engine's own for the same scenario, reproduced natively
+  // by test/golden-gen, and the product reads back to it.
+  const text = sim.toRinexString();
+  assert.equal(text, ref.rinexText);
+  assert.equal(sim.toRinexObservationFile().toRinexString(), text);
+  assert.equal(parseRinexObs(new TextEncoder().encode(text)).toRinexString(), text);
+
+  assert.deepEqual(
+    sim.sppObservationsForEpoch(0).map((obs) => [obs.satelliteId, f64Bits(obs.pseudorangeM)]),
+    ref.sppObservationsEpoch0.map((obs) => [obs.satelliteId, BigInt(obs.pseudorangeM)]),
+  );
+  assert.deepEqual(sim.sppObservationsForEpoch(1_000_000), []);
 });

@@ -11,8 +11,9 @@ use wasm_bindgen::prelude::*;
 use sidereon::passes::UtcInstant;
 use sidereon_core::astro::bodies::{
     observe as core_observe, observe_spk_body as core_observe_spk_body,
-    Observation as CoreObservation, ObserveOptions as CoreObserveOptions,
-    Refraction as CoreRefraction, Target,
+    observe_spk_body_with_validity as core_observe_spk_body_with_validity,
+    observe_with_validity as core_observe_with_validity, Observation as CoreObservation,
+    ObserveOptions as CoreObserveOptions, Refraction as CoreRefraction, Target,
 };
 use sidereon_core::astro::frames::transforms::{GeodeticStationKm, PolarMotion};
 use sidereon_core::astro::observation::{
@@ -22,7 +23,7 @@ use sidereon_core::astro::observation::{
     terminator_latitude_deg as core_terminator_latitude_deg, SurfacePoint,
 };
 
-use crate::error::{engine_error, type_error};
+use crate::error::{engine_error, type_error, ut1_validity, validated_object};
 use crate::marshal::vec3_finite;
 use crate::spk::Spk;
 
@@ -278,38 +279,84 @@ pub fn sub_observer_point(
     surface_point_to_object(point)
 }
 
-/// Observe `"sun"` or `"moon"` from a geodetic station at a UTC unix microsecond epoch.
-#[wasm_bindgen(js_name = observe)]
-pub fn observe(
-    station: JsValue,
+fn sun_or_moon(target: &str) -> Result<Target<'static>, JsValue> {
+    match target {
+        "sun" => Ok(Target::Sun),
+        "moon" => Ok(Target::Moon),
+        other => Err(type_error(&format!(
+            "invalid target {other:?}: expected \"sun\" or \"moon\""
+        ))),
+    }
+}
+
+/// [`observe`] under a UT1 validity policy: `"strict"` (the default) refuses
+/// an epoch outside the UT1 table, `"permissive"` accepts it. Returns
+/// `{ value, ut1Degraded }` with `value` the `observe` result.
+#[wasm_bindgen(js_name = observeWithValidity, unchecked_return_type = "Ut1Validated<ObserveResult>")]
+pub fn observe_with_validity(
+    #[wasm_bindgen(unchecked_param_type = "ObserveStation")] station: JsValue,
     epoch_unix_us: i64,
     target: &str,
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "ObserveOptions | undefined | null")] options: JsValue,
+    ut1: Option<String>,
 ) -> Result<JsValue, JsValue> {
     let station = parse_station(station)?;
-    let target = match target {
-        "sun" => Target::Sun,
-        "moon" => Target::Moon,
-        other => {
-            return Err(type_error(&format!(
-                "invalid target {other:?}: expected \"sun\" or \"moon\""
-            )))
-        }
-    };
+    let validated = core_observe_with_validity(
+        &station,
+        UtcInstant::from_unix_microseconds(epoch_unix_us),
+        sun_or_moon(target)?,
+        parse_options(options)?,
+        ut1_validity(ut1)?,
+    )
+    .map_err(crate::astro_error::observe_error)?;
+    validated_object(&observation_to_js(validated.value)?, validated.degraded)
+}
+
+/// [`observeSpkBody`] under a UT1 validity policy, as [`observeWithValidity`].
+#[wasm_bindgen(js_name = observeSpkBodyWithValidity, unchecked_return_type = "Ut1Validated<ObserveResult>")]
+pub fn observe_spk_body_with_validity(
+    #[wasm_bindgen(unchecked_param_type = "ObserveStation")] station: JsValue,
+    epoch_unix_us: i64,
+    spk: &Spk,
+    naif_id: i32,
+    ut1: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let station = parse_station(station)?;
+    let validated = core_observe_spk_body_with_validity(
+        &station,
+        UtcInstant::from_unix_microseconds(epoch_unix_us),
+        spk.core(),
+        naif_id,
+        ut1_validity(ut1)?,
+    )
+    .map_err(crate::astro_error::observe_error)?;
+    validated_object(&observation_to_js(validated.value)?, validated.degraded)
+}
+
+/// Observe `"sun"` or `"moon"` from a geodetic station at a UTC unix microsecond epoch.
+#[wasm_bindgen(js_name = observe, unchecked_return_type = "ObserveResult")]
+pub fn observe(
+    #[wasm_bindgen(unchecked_param_type = "ObserveStation")] station: JsValue,
+    epoch_unix_us: i64,
+    target: &str,
+    #[wasm_bindgen(unchecked_optional_param_type = "ObserveOptions")] options: JsValue,
+) -> Result<JsValue, JsValue> {
+    let station = parse_station(station)?;
+    let target = sun_or_moon(target)?;
     let observation = core_observe(
         &station,
         UtcInstant::from_unix_microseconds(epoch_unix_us),
         target,
         parse_options(options)?,
     )
-    .map_err(engine_error)?;
+    .map_err(crate::astro_error::observe_error)?;
     observation_to_js(observation)
 }
 
 /// Observe an SPK target body by NAIF id using default full-chain options.
-#[wasm_bindgen(js_name = observeSpkBody)]
+#[wasm_bindgen(js_name = observeSpkBody, unchecked_return_type = "ObserveResult")]
 pub fn observe_spk_body(
-    station: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "ObserveStation")] station: JsValue,
     epoch_unix_us: i64,
     spk: &Spk,
     naif_id: i32,
@@ -321,7 +368,7 @@ pub fn observe_spk_body(
         spk.core(),
         naif_id,
     )
-    .map_err(engine_error)?;
+    .map_err(crate::astro_error::observe_error)?;
     observation_to_js(observation)
 }
 
@@ -348,6 +395,6 @@ pub fn observe_barycentric_state(
         },
         parse_options(options)?,
     )
-    .map_err(engine_error)?;
+    .map_err(crate::astro_error::observe_error)?;
     observation_to_js(observation)
 }

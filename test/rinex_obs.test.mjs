@@ -70,6 +70,15 @@ test("rinex obs header and epochs parse from the fixture", () => {
   assert.equal(epoch0.epoch.second, 0.0);
   assert.ok(epoch0.satellites.includes("G05"));
   assert.equal(obs.epoch(1).epoch.second, 30.0);
+
+  assert.equal(epoch0.declaredRecordCount, 43);
+  assert.deepEqual(epoch0.specialRecords, []);
+  assert.deepEqual(epoch0.cycleSlips, []);
+  assert.equal(epoch0.observations.length, 43);
+  assert.equal(obs.skippedRecords, 0);
+  assert.deepEqual(header.declaredObsCodes(GnssSystem.Gps), header.obsCodes(GnssSystem.Gps));
+  assert.deepEqual(header.rinex2Types, []);
+  assert.equal(header.rinex2System, undefined);
 });
 
 test("pseudoranges are float64 series, exact to the fixture", () => {
@@ -118,6 +127,9 @@ test("raw values and carrier-phase rows are filtered float64 series", () => {
   assert.equal(phase.frequencyHz[p], 1575420000.0);
   assert.ok(Math.abs(phase.valueM[p] - phase.valueCycles[p] * phase.wavelengthM[p]) < 1e-9);
   assert.equal(phase.phaseShiftCycles[p], 0.0);
+  assert.equal(phase.phaseShiftAvailable[p], 1);
+  assert.equal(phase.phaseShiftStatus[p], "available");
+  assert.deepEqual(phase.phaseShiftCorrections[p], { status: "available", cycles: 0 });
 });
 
 test("load accepts bytes and errors are typed", () => {
@@ -155,6 +167,8 @@ test("RINEX OBS convenience assembles and solves SPP through broadcast NAV", () 
   const rinexOptions = {
     corrections: { ionosphere: false, troposphere: false },
     signalPolicy: { G: ["C1C"], E: ["C1C"], C: ["C2I"], R: ["C1C"] },
+    qzssClock: "separate",
+    troposphereModel: "saastamoinenNiell",
   };
 
   const inputs = sppInputsFromRinexObs(nav, obs, rinexOptions);
@@ -163,6 +177,8 @@ test("RINEX OBS convenience assembles and solves SPP through broadcast NAV", () 
   assert.equal(inputs[0].epoch.second, 0);
   assert.ok(inputs[0].observations.length >= 20);
   assert.ok(inputs[0].observations.some((row) => row.satelliteId === "G05"));
+  assert.equal(inputs[0].qzssClock, "separate");
+  assert.equal(inputs[0].troposphereModel, "saastamoinenNiell");
 
   const batch = solveSppFromRinexObs(nav, obs, rinexOptions, { withGeodetic: true });
   assert.equal(batch.count, 2);

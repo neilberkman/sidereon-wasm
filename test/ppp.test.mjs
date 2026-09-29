@@ -13,7 +13,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { loadSp3, solvePppFloat, solvePppFixed } from "../pkg-node/sidereon.js";
-import { f64Bits, fixture, fixtureJson } from "./helpers.mjs";
+import { coreGoldens, f64Bits, fixture, fixtureJson } from "./helpers.mjs";
+
+// Bit patterns ("0x...") the golden generator (test/golden-gen) computed
+// natively through the same core entry points for the same inputs.
+const hexBits = (values) => values.map((text) => BigInt(text));
+const PPP = () => coreGoldens().ppp;
 
 const POS_TOL = 1e-6; // metres
 const AMB_TOL = 1e-9; // metres
@@ -132,10 +137,13 @@ test("PPP float exposes covariance, residual, and temporal-correlation surfaces"
   const sp3 = loadSp3Fixture(fx);
   const sol = solvePppFloat(sp3, mapEpochs(fx), mapState(fx), mapFloatConfig(fx));
 
-  assert.equal(sol.status, "StateTolerance");
-  assert.equal(sol.epochClocksM.length, fx.epochs.length);
-  assert.equal(sol.residuals.length, 1282);
+  const golden = PPP().float;
+  assert.equal(sol.status, golden.status);
+  assert.equal(sol.epochClocksM.length, golden.epochClockCount);
+  assert.equal(sol.solvedEpochIndices.length, golden.solvedEpochCount);
+  assert.equal(sol.residuals.length, golden.residualCount);
   assert.deepEqual(Object.keys(sol.residuals[0]).sort(), [
+    "ambiguityId",
     "codeM",
     "codeWeight",
     "epochIndex",
@@ -155,28 +163,15 @@ test("PPP float exposes covariance, residual, and temporal-correlation surfaces"
   assert.equal(sol.formalPositionCovarianceEnuM2.length, 9);
   assert.equal(sol.temporalPositionCovarianceEcefM2.length, 9);
   assert.equal(sol.temporalPositionCovarianceEnuM2.length, 9);
-  assert.deepEqual(Array.from(sol.positionCovarianceEcefM2, f64Bits), [
-    4590517292634130647n,
-    4578482196578072829n,
-    4572802777262634589n,
-    4578482196578072829n,
-    4586874534299914772n,
-    13779057109705650780n,
-    4572802777262634589n,
-    13779057109705650780n,
-    4587002875255672439n,
-  ]);
-  assert.deepEqual(Array.from(sol.temporalPositionCovarianceEcefM2, f64Bits), [
-    4619080960802279813n,
-    4607308545278299410n,
-    4601445456370031809n,
-    4607308545278299410n,
-    4615665010415894763n,
-    13807936042986440555n,
-    4601445456370031809n,
-    13807936042986440555n,
-    4615827165675205843n,
-  ]);
+  assert.deepEqual(
+    Array.from(sol.positionCovarianceEcefM2, f64Bits),
+    hexBits(golden.positionCovarianceEcefM2),
+  );
+  assert.deepEqual(
+    Array.from(sol.temporalPositionCovarianceEcefM2, f64Bits),
+    hexBits(golden.temporalPositionCovarianceEcefM2),
+  );
+  const temporal = golden.temporalCorrelation;
   assert.deepEqual(
     [
       sol.temporalCorrelation.lag1Autocorrelation,
@@ -185,16 +180,19 @@ test("PPP float exposes covariance, residual, and temporal-correlation surfaces"
       sol.temporalCorrelation.effectiveSampleCount,
       sol.temporalCorrelation.varianceInflationFactor,
     ].map(f64Bits),
-    [
-      4607092346807469998n,
-      4636702048046853910n,
-      4658782444239332389n,
-      4629618296680096500n,
-      4635390590904316913n,
-    ],
+    hexBits([
+      temporal.lag1Autocorrelation,
+      temporal.decorrelationTimeEpochs,
+      temporal.decorrelationTimeS,
+      temporal.effectiveSampleCount,
+      temporal.varianceInflationFactor,
+    ]),
   );
-  assert.equal(sol.temporalCorrelation.nominalSampleCount, 2564);
-  assert.equal(sol.temporalCorrelation.arcsUsed, 24);
+  assert.equal(sol.temporalCorrelation.nominalSampleCount, temporal.nominalSampleCount);
+  assert.equal(sol.temporalCorrelation.arcsUsed, temporal.arcsUsed);
+  // The solve reports the controls it ran with, as given.
+  assert.deepEqual(sol.solveOptions, mapOptions(fx.config.opts));
+  assert.equal(sol.residualScreen, fx.config.residual_screen);
 });
 
 test("PPP fixed position and integer fix match the engine reference", () => {
@@ -219,11 +217,12 @@ test("PPP fixed position and integer fix match the engine reference", () => {
   // Integer cycle counts are exact.
   assert.deepEqual(sol.fixedAmbiguitiesCycles, exp.fixed_ambiguities_cycles);
   assertMapClose(sol.fixedAmbiguitiesM, exp.fixed_ambiguities_m, AMB_TOL, "fixed ambiguities m");
-  assert.equal(sol.status, "StateTolerance");
-  assert.equal(sol.residuals.length, 1282);
+  const golden = PPP().fixed;
+  assert.equal(sol.status, golden.status);
+  assert.equal(sol.residuals.length, golden.residualCount);
   assert.equal(sol.positionCovarianceEcefM2.length, 9);
   assert.equal(sol.temporalPositionCovarianceEcefM2.length, 9);
-  assert.equal(sol.temporalCorrelation.nominalSampleCount, 2564);
+  assert.equal(sol.temporalCorrelation.nominalSampleCount, golden.nominalSampleCount);
 });
 
 test("PPP elevation cutoff filters observations before solving", () => {
@@ -236,7 +235,7 @@ test("PPP elevation cutoff filters observations before solving", () => {
   const cutoff = solvePppFloat(sp3, epochs, state, { ...config, elevationCutoffDeg: 30 });
 
   assert.ok(cutoff.converged);
-  assert.equal(cutoff.usedSats.length, 6);
+  assert.equal(cutoff.usedSats.length, PPP().cutoff30.usedSatCount);
   assert.ok(cutoff.usedSats.length < base.usedSats.length);
   assert.ok(cutoff.residuals.length < base.residuals.length);
   assert.notDeepEqual(Array.from(cutoff.positionM, f64Bits), Array.from(base.positionM, f64Bits));
@@ -253,22 +252,71 @@ test("PPP troposphere gradients expose state and covariance outputs", () => {
     tropo: { ...config.tropo, estimateTropoGradients: true },
   });
 
-  assert.deepEqual([grad.tropoGradientNorthM, grad.tropoGradientEastM].map(f64Bits), [
-    4586155387479286271n,
-    4581396053300541918n,
+  const golden = PPP().gradients;
+  assert.deepEqual(
+    [grad.tropoGradientNorthM, grad.tropoGradientEastM].map(f64Bits),
+    hexBits([golden.northM, golden.eastM]),
+  );
+  assert.deepEqual(
+    Array.from(grad.tropoGradientCovarianceM2, f64Bits),
+    hexBits(golden.covarianceM2),
+  );
+  assert.deepEqual(
+    Array.from(grad.formalTropoGradientCovarianceM2, f64Bits),
+    hexBits(golden.formalCovarianceM2),
+  );
+});
+
+test("a PPP observation with a non-positive code is left out and reported", () => {
+  const fx = fixtureJson("ppp_esbc.json");
+  const sp3 = loadSp3Fixture(fx);
+  const epochs = mapEpochs(fx);
+  const base = solvePppFloat(sp3, epochs, mapState(fx), mapFloatConfig(fx));
+  assert.deepEqual(base.unplacedObservations, []);
+
+  const [first] = epochs[0].observations;
+  const edited = epochs.map((epoch, index) =>
+    index === 0
+      ? {
+          ...epoch,
+          observations: epoch.observations.map((obs, j) => (j === 0 ? { ...obs, codeM: 0 } : obs)),
+        }
+      : epoch,
+  );
+  const sol = solvePppFloat(sp3, edited, mapState(fx), mapFloatConfig(fx));
+  assert.deepEqual(sol.unplacedObservations, [
+    {
+      epochIndex: 0,
+      satelliteId: first.satelliteId,
+      ambiguityId: first.ambiguityId,
+      reason: "codeNotPositive",
+    },
   ]);
-  assert.deepEqual(Array.from(grad.tropoGradientCovarianceM2, f64Bits), [
-    4513194251217481223n,
-    4508095322312819751n,
-    4508095322312819751n,
-    4516470258699158978n,
-  ]);
-  assert.deepEqual(Array.from(grad.formalTropoGradientCovarianceM2, f64Bits), [
-    4465329674133088067n,
-    4460040126213447646n,
-    4460040126213447646n,
-    4468627182330646986n,
-  ]);
+  assert.equal(sol.residuals.length, base.residuals.length - 1);
+  assert.ok(sol.converged);
+});
+
+test("PPP observation signals are read as RINEX 3 codes and change no bias-free solve", () => {
+  const fx = fixtureJson("ppp_esbc.json");
+  const sp3 = loadSp3Fixture(fx);
+  const epochs = mapEpochs(fx);
+  const signals = { code1: "C1C", code2: "C2W", phase1: "L1C", phase2: "L2W" };
+  const withSignals = epochs.map((epoch) => ({
+    ...epoch,
+    observations: epoch.observations.map((obs) => ({ ...obs, signals })),
+  }));
+  const base = solvePppFloat(sp3, epochs, mapState(fx), mapFloatConfig(fx));
+  const sol = solvePppFloat(sp3, withSignals, mapState(fx), mapFloatConfig(fx));
+  assert.deepEqual(Array.from(sol.positionM, f64Bits), Array.from(base.positionM, f64Bits));
+
+  const bad = epochs.map((epoch) => ({
+    ...epoch,
+    observations: epoch.observations.map((obs) => ({
+      ...obs,
+      signals: { ...signals, code2: "not a code" },
+    })),
+  }));
+  assert.throws(() => solvePppFloat(sp3, bad, mapState(fx), mapFloatConfig(fx)), TypeError);
 });
 
 test("PPP float accepts a VMF1 site series and converges (B1 correction option)", () => {

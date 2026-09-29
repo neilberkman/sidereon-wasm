@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 
 import {
   Tle,
+  Constellation,
   GroundStation,
   visibleFromSatellites,
   temeToGcrs,
@@ -50,6 +51,111 @@ const EPOCH = BigInt(Date.UTC(2026, 5, 17, 12, 0, 0)) * 1000n;
 const sats = (mode = "improved") => [ISS, NAVSTAR, GALAXY].map((s) => new Tle(s.l1, s.l2, mode));
 const ids = () => [ISS, NAVSTAR, GALAXY].map((s) => s.id);
 const linesById = { [ISS.id]: ISS, [NAVSTAR.id]: NAVSTAR, [GALAXY.id]: GALAXY };
+
+test("constellation detailed outcomes retain indexed station and UT1 failures", () => {
+  const fleet = new Constellation(sats());
+  const invalidStation = new GroundStation(91, -0.1278, 11.0);
+  const legacyAngles = fleet.lookAngleArcs(invalidStation, BigInt64Array.from([EPOCH]));
+  assert.equal(legacyAngles.length, 3);
+  assert.deepEqual(
+    legacyAngles.map((row) => row.epochCount),
+    [0, 0, 0],
+  );
+  const angleOutcomes = fleet.lookAngleArcOutcomes(invalidStation, BigInt64Array.from([EPOCH]));
+  assert.deepEqual(
+    angleOutcomes.map((row) => row.satelliteIndex),
+    [0, 1, 2],
+  );
+  assert.ok(angleOutcomes.every((row) => row.value === null));
+  assert.ok(angleOutcomes.every((row) => row.error.detail.family === "lookAngle"));
+  assert.ok(angleOutcomes.every((row) => row.error.detail.cause.kind === "invalidInput"));
+  assert.ok(
+    angleOutcomes.every((row) => row.error.detail.cause.field === "ground_station.latitude_deg"),
+  );
+  assert.ok(angleOutcomes.every((row) => row.error.detail.cause.reason === "out of range"));
+
+  const emptyArcOutcomes = fleet.lookAngleArcOutcomes(
+    new GroundStation(51.5074, -0.1278, 11.0),
+    new BigInt64Array(),
+  );
+  assert.deepEqual(
+    emptyArcOutcomes.map((row) => row.satelliteIndex),
+    [0, 1, 2],
+  );
+  assert.ok(emptyArcOutcomes.every((row) => row.error === null));
+  assert.ok(emptyArcOutcomes.every((row) => row.value.azimuthDeg.length === 0));
+  assert.ok(emptyArcOutcomes.every((row) => row.value.elevationDeg.length === 0));
+  assert.ok(emptyArcOutcomes.every((row) => row.value.rangeKm.length === 0));
+
+  const outsideUt1 = BigInt64Array.from([-2208988800000000n]);
+  const legacyTracks = fleet.groundTracks(outsideUt1);
+  assert.deepEqual(
+    legacyTracks.map((row) => row.epochCount),
+    [0, 0, 0],
+  );
+  const trackOutcomes = fleet.groundTrackOutcomes(outsideUt1);
+  assert.deepEqual(
+    trackOutcomes.map((row) => row.satelliteIndex),
+    [0, 1, 2],
+  );
+  assert.ok(trackOutcomes.every((row) => row.value === null));
+  assert.ok(trackOutcomes.every((row) => row.error.detail.family === "lookAngle"));
+  assert.ok(trackOutcomes.every((row) => row.error.detail.cause.kind === "frameTransform"));
+  assert.ok(
+    trackOutcomes.every((row) => row.error.detail.cause.cause.kind === "ut1OutsideCoverage"),
+  );
+  assert.ok(trackOutcomes.every((row) => row.error.detail.cause.cause.reason === "beforeCoverage"));
+
+  const start = EPOCH;
+  const end = start + 60n * 1000000n;
+  assert.deepEqual(fleet.passes(invalidStation, start, end, 0, 30, 1e-3), []);
+  const passOutcomes = fleet.passOutcomes(invalidStation, start, end, 0, 30, 1e-3);
+  assert.deepEqual(
+    passOutcomes.map((row) => row.satelliteIndex),
+    [0, 1, 2],
+  );
+  assert.ok(passOutcomes.every((row) => row.value === null));
+  assert.ok(passOutcomes.every((row) => row.error.detail.family === "pass"));
+  assert.ok(passOutcomes.every((row) => row.error.detail.cause.kind === "invalidInput"));
+  assert.ok(
+    passOutcomes.every((row) => row.error.detail.cause.field === "ground_station.latitude_deg"),
+  );
+  assert.ok(passOutcomes.every((row) => row.error.detail.cause.reason === "out of range"));
+
+  const validStation = new GroundStation(37.7749, -122.4194, 10.0);
+  const validEnd = start + 24n * 60n * 60n * 1000000n;
+  const emptyPassOutcomes = fleet.passOutcomes(validStation, start, start + 1n, 0, 30, 1e-3);
+  assert.deepEqual(
+    emptyPassOutcomes.map((row) => row.satelliteIndex),
+    [0, 1, 2],
+  );
+  assert.ok(emptyPassOutcomes.every((row) => row.error === null && row.value.length === 0));
+
+  const successfulOutcomes = fleet.passOutcomes(validStation, start, validEnd, 0, 30, 1e-3);
+  assert.deepEqual(
+    successfulOutcomes.map((row) => row.satelliteIndex),
+    [0, 1, 2],
+  );
+  const passRows = successfulOutcomes.flatMap((row) => row.value ?? []);
+  assert.ok(passRows.length > 0, "valid fleet control should produce pass rows");
+  for (const row of passRows) {
+    assert.equal(typeof row.aosUnixUs, "bigint");
+    assert.equal(typeof row.losUnixUs, "bigint");
+    assert.equal(typeof row.culminationUnixUs, "bigint");
+    assert.ok(row.losUnixUs >= row.aosUnixUs);
+  }
+  const legacyRows = fleet.passes(validStation, start, validEnd, 0, 30, 1e-3).map((pass) => ({
+    satelliteIndex: pass.satelliteIndex,
+    aosUnixUs: pass.aosUnixUs,
+    losUnixUs: pass.losUnixUs,
+    maxElevationDeg: pass.maxElevationDeg,
+    culminationUnixUs: pass.culminationUnixUs,
+  }));
+  const detailedRows = successfulOutcomes.flatMap((outcome) =>
+    (outcome.value ?? []).map((pass) => ({ satelliteIndex: outcome.satelliteIndex, ...pass })),
+  );
+  assert.deepEqual(detailedRows, legacyRows);
+});
 
 // ── groundTrack ───────────────────────────────────────────────────────────────
 

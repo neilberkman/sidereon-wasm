@@ -83,6 +83,10 @@ test("0.14 rank-deficient SPP fixture throws singular geometry error", () => {
       assert.ok(err instanceof Error);
       assert.match(err.message, /SPP solve failed: degenerate geometry/i);
       assert.match(err.message, /singular/i);
+      assert.equal(err.name, "PositioningError");
+      assert.equal(err.detail.kind, "SINGULAR");
+      assert.equal(err.detail.solveError, "SINGULAR_JACOBIAN");
+      assert.equal(err.detail.message, err.message);
       return true;
     },
   );

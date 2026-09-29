@@ -22,7 +22,8 @@ use sidereon_core::{GnssSatelliteId, GnssSystem};
 
 use crate::error::{engine_error, range_error, type_error};
 use crate::force_model_input::{
-    force_model_kind, integrator_kind, DragInput, ForceModelInput, IntegratorOptionsInput,
+    force_model_kind, integrator_kind, reject_force_model_property, DragInput, ForceModelInput,
+    IntegratorOptionsInput,
 };
 use crate::geometry_quality::GeometryQualityJs;
 use crate::precise_samples::decode_core_samples;
@@ -95,6 +96,7 @@ fn orbit_options(input: JsValue) -> Result<OrbitFitOptions, JsValue> {
     let input: OrbitFitOptionsInput = if input.is_undefined() || input.is_null() {
         OrbitFitOptionsInput::default()
     } else {
+        reject_force_model_property(&input, "forceModel")?;
         serde_wasm_bindgen::from_value(input)
             .map_err(|e| type_error(&format!("invalid orbit-fit options: {e}")))?
     };

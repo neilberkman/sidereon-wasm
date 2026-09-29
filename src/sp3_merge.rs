@@ -8,22 +8,27 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::{prelude::*, JsCast};
 
-use sidereon_core::astro::time::{Instant, InstantRepr};
-use sidereon_core::constants::{J2000_JD, SECONDS_PER_DAY};
 use sidereon_core::data::{
     AnalysisCenter, ArchiveCompression, DistributionSource, ProductCampaign, ProductDate,
     ProductFormat, ProductIdentity, ProductPublisher, ProductType, SolutionClass,
 };
 use sidereon_core::ephemeris::{
-    merge, AgreementMetric, EpochWindow, MergeCombine, MergeContinuityReport, MergeFlag,
-    MergeOptions, MergePrecedenceScope, MergeReport, OutlierRejectOptions, Sp3ArtifactIdentity,
-    Sp3FrameLabelSet, Sp3FrameReconciliation, Sp3MergeInputIdentity as CoreSp3MergeInputIdentity,
-    StencilExtent,
+    merge, AgreementMetric, CellProvenance, ClockOmission, ClockOmissionReason,
+    ContributorCoverage, DroppedEpochReason, DroppedInputEpoch, EpochAgreement, EpochWindow,
+    MergeCombine, MergeContinuityReport, MergeFlag, MergeOptions, MergePrecedenceScope,
+    MergeProvenance, MergeReport, OutlierRejectOptions, PrecedenceTransition, ProvenanceMode,
+    Sp3ArtifactIdentity, Sp3FrameLabelSet, Sp3FrameReconciliation,
+    Sp3MergeInputIdentity as CoreSp3MergeInputIdentity, Sp3MergeInputIdentityError,
+    TransitionReason,
 };
 use sidereon_core::GnssSystem;
 
 use crate::error::{engine_error, range_error, type_error};
-use crate::sp3::{continuity_options, continuity_verdict_to_js, Sp3};
+use crate::sp3::{
+    continuity_options, continuity_options_error_js, continuity_verdict_to_js,
+    instant_to_j2000_seconds, merge_continuity_report_to_js, merge_tolerance_error_js, parse_sat,
+    sp3_core_error_js, sp3_epoch_interval_error_js, CellSelectionJs, Sp3,
+};
 
 /// Merge controls. All fields optional; defaults match the core `MergeOptions`
 /// (2-of-3 majority agreement, mean combine).
@@ -42,6 +47,7 @@ struct MergeOptionsInput {
     asserted_frame_label_sets: Option<Vec<Vec<String>>>,
     helmert: Option<bool>,
     verify_continuity: Option<ContinuityOptionsInput>,
+    provenance: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -227,7 +233,7 @@ impl ProductIdentityInput {
             _ => {
                 return Err(type_error(
                     "identity.publisher must be IGS, COD, ESA, or GFZ",
-                ))
+                ));
             }
         };
         let solution = match self.solution_class.as_str() {
@@ -247,7 +253,7 @@ impl ProductIdentityInput {
             _ => {
                 return Err(type_error(
                     "identity.campaign must be OPS, MGN, MGX, or BRD",
-                ))
+                ));
             }
         };
         let format = match self.format.as_str() {
@@ -294,7 +300,7 @@ impl Sp3ArtifactIdentityInput {
             _ => {
                 return Err(type_error(
                     "compression must be none, gzip, or unix_compress",
-                ))
+                ));
             }
         };
         Ok(Sp3ArtifactIdentity {
@@ -355,6 +361,7 @@ const MERGE_OPTION_FIELDS: &[&str] = &[
     "assertedFrameLabelSets",
     "helmert",
     "verifyContinuity",
+    "provenance",
 ];
 
 const JS_MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
@@ -456,6 +463,16 @@ fn combine_kind(label: &str) -> Result<MergeCombine, JsValue> {
     }
 }
 
+fn provenance_mode(label: &str) -> Result<ProvenanceMode, JsValue> {
+    match label {
+        "summary" => Ok(ProvenanceMode::Summary),
+        "full" => Ok(ProvenanceMode::Full),
+        other => Err(type_error(&format!(
+            "unknown SP3 merge provenance mode {other:?}: expected \"summary\" or \"full\""
+        ))),
+    }
+}
+
 fn precedence_scope(label: &str) -> Result<MergePrecedenceScope, JsValue> {
     match label {
         "cell" => Ok(MergePrecedenceScope::Cell),
@@ -485,19 +502,9 @@ impl MergeOptionsInput {
     fn to_core(&self) -> Result<MergeOptions, JsValue> {
         let mut opts = MergeOptions::default();
         if let Some(value) = self.position_tolerance_m {
-            if !(value.is_finite() && value >= 0.0) {
-                return Err(range_error(
-                    "positionToleranceM must be non-negative and finite",
-                ));
-            }
             opts.position_tolerance_m = value;
         }
         if let Some(value) = self.clock_tolerance_s {
-            if !(value.is_finite() && value >= 0.0) {
-                return Err(range_error(
-                    "clockToleranceS must be non-negative and finite",
-                ));
-            }
             opts.clock_tolerance_s = value;
         }
         if let Some(value) = self.min_agree {
@@ -519,32 +526,15 @@ impl MergeOptionsInput {
             opts.precedence_scope = precedence_scope(label)?;
         }
         if let Some(guard) = &self.outlier_reject {
-            if !(guard.position_tolerance_m.is_finite() && guard.position_tolerance_m >= 0.0) {
-                return Err(range_error(
-                    "outlierReject.positionToleranceM must be non-negative and finite",
-                ));
-            }
-            if !(guard.clock_tolerance_s.is_finite() && guard.clock_tolerance_s >= 0.0) {
-                return Err(range_error(
-                    "outlierReject.clockToleranceS must be non-negative and finite",
-                ));
-            }
             opts.outlier_reject = Some(OutlierRejectOptions::new(
                 guard.position_tolerance_m,
                 guard.clock_tolerance_s,
             ));
         }
         if let Some(value) = self.target_epoch_interval_s {
-            if !(value.is_finite() && value > 0.0) {
-                return Err(range_error(
-                    "targetEpochIntervalS must be positive and finite",
-                ));
-            }
-            if (value - value.round()).abs() > 1.0e-6 {
-                return Err(range_error(
-                    "targetEpochIntervalS must be a positive whole number of seconds",
-                ));
-            }
+            // The engine applies its one exact interval-tick rule to merges
+            // and their identities; retain the supplied value for typed error
+            // reporting instead of approximating it here.
             opts.target_epoch_interval_s = Some(value);
         }
         if let Some(labels) = &self.systems {
@@ -568,6 +558,9 @@ impl MergeOptionsInput {
                 continuity.residual_tolerance_m,
                 continuity.gap_threshold_factor,
             )?);
+        }
+        if let Some(label) = &self.provenance {
+            opts.provenance = Some(provenance_mode(label)?);
         }
         Ok(opts)
     }
@@ -603,13 +596,6 @@ fn parse_asserted_frame_label_sets(
         .collect()
 }
 
-fn instant_to_j2000_seconds(epoch: &Instant) -> f64 {
-    match epoch.repr {
-        InstantRepr::JulianDate(jd) => ((jd.jd_whole - J2000_JD) + jd.fraction) * SECONDS_PER_DAY,
-        InstantRepr::Nanos(_) => f64::NAN,
-    }
-}
-
 fn merge_options_from_js(options: JsValue) -> Result<MergeOptions, JsValue> {
     let input: MergeOptionsInput = if options.is_undefined() || options.is_null() {
         MergeOptionsInput::default()
@@ -618,6 +604,17 @@ fn merge_options_from_js(options: JsValue) -> Result<MergeOptions, JsValue> {
             .map_err(|error| type_error(&format!("invalid SP3 merge options: {error}")))?
     };
     input.to_core()
+}
+
+fn sp3_merge_identity_error_js(error: Sp3MergeInputIdentityError) -> JsValue {
+    match error {
+        Sp3MergeInputIdentityError::InvalidTolerance(error) => merge_tolerance_error_js(error),
+        Sp3MergeInputIdentityError::TargetEpochInterval(error) => {
+            sp3_epoch_interval_error_js(error)
+        }
+        Sp3MergeInputIdentityError::ContinuityOptions(error) => continuity_options_error_js(error),
+        other => engine_error(other),
+    }
 }
 
 /// Canonical identity of a complete exact SP3 input set and full merge policy.
@@ -681,7 +678,8 @@ pub fn sp3_merge_input_identity(
         .map(Sp3ArtifactIdentityInput::to_core)
         .collect::<Result<Vec<_>, JsValue>>()?;
     let options = merge_options_from_js(options)?;
-    let identity = CoreSp3MergeInputIdentity::new(&contributors, &options).map_err(engine_error)?;
+    let identity = CoreSp3MergeInputIdentity::new(&contributors, &options)
+        .map_err(sp3_merge_identity_error_js)?;
     let contributors_output = serde_wasm_bindgen::to_value(
         &identity
             .contributors
@@ -722,18 +720,21 @@ pub fn sp3_merge_input_identity(
 /// precedence; the handles are consumed. `options` is an optional plain object
 /// (see the `Sp3MergeOptions` TypeScript type). Returns an [`Sp3MergeResult`]
 /// carrying the merged product and the audit report. Throws a `TypeError` for an
-/// empty source list or bad options, and an `Error` for incompatible inputs
-/// (mismatched time systems or coordinate frames).
+/// empty source list, an unknown option field or a bad option type. Core policy
+/// refusals use typed errors with `detail` fields for tolerance and interval
+/// field, decimal value, and reason. Target intervals use the same exact
+/// 10-nanosecond rule for merges and merge input identities.
 #[wasm_bindgen(js_name = mergeSp3)]
 pub fn merge_sp3(sources: Vec<Sp3>, options: JsValue) -> Result<Sp3MergeResult, JsValue> {
     if sources.is_empty() {
         return Err(type_error("mergeSp3 requires at least one SP3 product"));
     }
 
+    validate_merge_option_fields(&options)?;
     let opts = merge_options_from_js(options)?;
 
     let core_sources: Vec<_> = sources.into_iter().map(|s| s.inner).collect();
-    let (merged, report) = merge(&core_sources, &opts).map_err(engine_error)?;
+    let (merged, report) = merge(&core_sources, &opts).map_err(sp3_core_error_js)?;
 
     Ok(Sp3MergeResult {
         merged,
@@ -805,6 +806,137 @@ impl From<MergeFlag> for Sp3MergeFlag {
     }
 }
 
+/// One source's clock for a merged cell that the merge did not write.
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct Sp3ClockOmission {
+    epoch_j2000_seconds: f64,
+    satellite: String,
+    source: usize,
+    reason: String,
+    preferred: Option<usize>,
+    cell_has_clock: bool,
+}
+
+#[wasm_bindgen]
+impl Sp3ClockOmission {
+    /// Cell epoch as seconds since J2000 in the product time scale.
+    #[wasm_bindgen(getter, js_name = epochJ2000Seconds)]
+    pub fn epoch_j2000_seconds(&self) -> f64 {
+        self.epoch_j2000_seconds
+    }
+
+    /// Satellite token, e.g. `"G01"`.
+    #[wasm_bindgen(getter)]
+    pub fn satellite(&self) -> String {
+        self.satellite.clone()
+    }
+
+    /// Index into the input array of the source whose clock was not written.
+    #[wasm_bindgen(getter)]
+    pub fn source(&self) -> usize {
+        self.source
+    }
+
+    /// Why it was not written: `"datum_not_observable"` (the source's datum
+    /// offset to source 0 could not be estimated at this epoch and is never
+    /// extrapolated), `"preferred_source_without_clock"` (precedence writes a
+    /// clock only from the preferred source, which had none for the cell) or
+    /// `"no_consensus"` (no agreeing subset of clocks met the consensus rule).
+    #[wasm_bindgen(getter)]
+    pub fn reason(&self) -> String {
+        self.reason.clone()
+    }
+
+    /// The preferred source for `"preferred_source_without_clock"`, when the
+    /// merge had one for the satellite; `undefined` otherwise.
+    #[wasm_bindgen(getter)]
+    pub fn preferred(&self) -> Option<usize> {
+        self.preferred
+    }
+
+    /// Whether the merged cell carries a clock from other sources.
+    #[wasm_bindgen(getter, js_name = cellHasClock)]
+    pub fn cell_has_clock(&self) -> bool {
+        self.cell_has_clock
+    }
+}
+
+impl From<ClockOmission> for Sp3ClockOmission {
+    fn from(value: ClockOmission) -> Self {
+        let (reason, preferred) = match value.reason {
+            ClockOmissionReason::DatumNotObservable => ("datum_not_observable", None),
+            ClockOmissionReason::PreferredSourceWithoutClock { preferred } => {
+                ("preferred_source_without_clock", preferred)
+            }
+            ClockOmissionReason::NoConsensus => ("no_consensus", None),
+        };
+        Self {
+            epoch_j2000_seconds: instant_to_j2000_seconds(&value.epoch),
+            satellite: value.satellite.to_string(),
+            source: value.source,
+            reason: reason.to_string(),
+            preferred,
+            cell_has_clock: value.cell_has_clock,
+        }
+    }
+}
+
+/// An input epoch that took no part in a merge.
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct Sp3DroppedInputEpoch {
+    source: usize,
+    epoch_index: usize,
+    epoch_j2000_seconds: f64,
+    reason: String,
+}
+
+#[wasm_bindgen]
+impl Sp3DroppedInputEpoch {
+    /// Index into the input array.
+    #[wasm_bindgen(getter)]
+    pub fn source(&self) -> usize {
+        self.source
+    }
+
+    /// Index into that source's epochs.
+    #[wasm_bindgen(getter, js_name = epochIndex)]
+    pub fn epoch_index(&self) -> usize {
+        self.epoch_index
+    }
+
+    /// The epoch as seconds since J2000 in the product time scale.
+    #[wasm_bindgen(getter, js_name = epochJ2000Seconds)]
+    pub fn epoch_j2000_seconds(&self) -> f64 {
+        self.epoch_j2000_seconds
+    }
+
+    /// Why it took no part: `"off_target_grid"` (not on the explicit
+    /// `targetEpochIntervalS` grid, which is anchored at the earliest input
+    /// epoch) or `"not_on_tick_axis"` (no SP3 epoch record states the instant
+    /// exactly).
+    #[wasm_bindgen(getter)]
+    pub fn reason(&self) -> String {
+        self.reason.clone()
+    }
+}
+
+impl From<DroppedInputEpoch> for Sp3DroppedInputEpoch {
+    fn from(value: DroppedInputEpoch) -> Self {
+        Self {
+            source: value.source,
+            epoch_index: value.epoch_index,
+            epoch_j2000_seconds: instant_to_j2000_seconds(&value.epoch),
+            reason: match value.reason {
+                DroppedEpochReason::OffTargetGrid => "off_target_grid",
+                DroppedEpochReason::NotOnTickAxis => "not_on_tick_axis",
+            }
+            .to_string(),
+        }
+    }
+}
+
 /// Per-(epoch, satellite) agreement statistics for one accepted merged cell:
 /// how tightly the consensus sources clustered about the combined value.
 #[wasm_bindgen]
@@ -813,8 +945,8 @@ pub struct Sp3AgreementMetric {
     epoch_j2000_seconds: f64,
     satellite: String,
     position_members: usize,
-    position_rms_m: f64,
-    position_max_m: f64,
+    position_rms_m: Option<f64>,
+    position_max_m: Option<f64>,
     clock_members: usize,
     clock_rms_s: Option<f64>,
     clock_max_s: Option<f64>,
@@ -834,23 +966,26 @@ impl Sp3AgreementMetric {
         self.satellite.clone()
     }
 
-    /// Number of sources in the accepted position consensus (>= 1).
+    /// Number of sources in the accepted position consensus (0 when the cell
+    /// carries no position, as a clock-only record does).
     #[wasm_bindgen(getter, js_name = positionMembers)]
     pub fn position_members(&self) -> usize {
         self.position_members
     }
 
     /// RMS of the consensus members' 3D distance from the combined position,
-    /// metres (zero for a single-source cell).
+    /// metres (zero for a single-source cell); `undefined` when the cell carries
+    /// no position. An absent orbit has no dispersion, so none is reported
+    /// rather than a zero that would read as perfect agreement.
     #[wasm_bindgen(getter, js_name = positionRmsM)]
-    pub fn position_rms_m(&self) -> f64 {
+    pub fn position_rms_m(&self) -> Option<f64> {
         self.position_rms_m
     }
 
     /// Largest 3D distance of any consensus member from the combined position,
-    /// metres.
+    /// metres; `undefined` when the cell carries no position.
     #[wasm_bindgen(getter, js_name = positionMaxM)]
-    pub fn position_max_m(&self) -> f64 {
+    pub fn position_max_m(&self) -> Option<f64> {
         self.position_max_m
     }
 
@@ -1108,6 +1243,17 @@ pub struct Sp3MergeReport {
     clock_outliers: Vec<Sp3MergeFlag>,
     agreement: Vec<Sp3AgreementMetric>,
     continuity: Option<MergeContinuityReport>,
+    provenance: Option<MergeProvenance>,
+    per_epoch_agreement: Vec<Sp3EpochAgreement>,
+    position_agreement_rms_m: Option<f64>,
+    position_agreement_max_m: Option<f64>,
+    clock_agreement_rms_s: Option<f64>,
+    clock_agreement_max_s: Option<f64>,
+    single_source_fraction: Option<f64>,
+    omitted_epochs_j2000_seconds: Vec<f64>,
+    arc_withheld: Vec<Sp3MergeFlag>,
+    clock_omissions: Vec<Sp3ClockOmission>,
+    dropped_input_epochs: Vec<Sp3DroppedInputEpoch>,
 }
 
 #[wasm_bindgen]
@@ -1180,30 +1326,360 @@ impl Sp3MergeReport {
         self.agreement.len()
     }
 
-    /// Decide whether this merge's optional continuity post-condition can
-    /// influence an inclusive evaluation window through `merged`'s derived
-    /// interpolation stencil.
+    /// Per-epoch aggregates of the agreement statistics over each epoch's
+    /// multi-source cells, one per output epoch in epoch order, including
+    /// epochs whose cells were all single-source.
+    #[wasm_bindgen(getter, js_name = perEpochAgreement)]
+    pub fn per_epoch_agreement(&self) -> Vec<Sp3EpochAgreement> {
+        self.per_epoch_agreement.clone()
+    }
+
+    /// RMS of every member-to-combined position distance over the
+    /// multi-source consensus cells, metres; `undefined` when no cell had more
+    /// than one position member. Single-source cells are not in it; see
+    /// `singleSourceFraction`.
+    #[wasm_bindgen(getter, js_name = positionAgreementRmsM)]
+    pub fn position_agreement_rms_m(&self) -> Option<f64> {
+        self.position_agreement_rms_m
+    }
+
+    /// Largest position dispersion over every accepted position cell, metres
+    /// (zero for single-source cells); `undefined` when no accepted cell
+    /// carries a position.
+    #[wasm_bindgen(getter, js_name = positionAgreementMaxM)]
+    pub fn position_agreement_max_m(&self) -> Option<f64> {
+        self.position_agreement_max_m
+    }
+
+    /// RMS clock dispersion over every multi-source clock consensus, seconds;
+    /// `undefined` when no cell had more than one clock member.
+    #[wasm_bindgen(getter, js_name = clockAgreementRmsS)]
+    pub fn clock_agreement_rms_s(&self) -> Option<f64> {
+        self.clock_agreement_rms_s
+    }
+
+    /// Largest clock dispersion over every clock-bearing accepted cell,
+    /// seconds; `undefined` when no accepted cell carries a clock.
+    #[wasm_bindgen(getter, js_name = clockAgreementMaxS)]
+    pub fn clock_agreement_max_s(&self) -> Option<f64> {
+        self.clock_agreement_max_s
+    }
+
+    /// Fraction of accepted cells carried from a single source, in
+    /// `0..=1`; `undefined` when no cell was accepted.
+    #[wasm_bindgen(getter, js_name = singleSourceFraction)]
+    pub fn single_source_fraction(&self) -> Option<f64> {
+        self.single_source_fraction
+    }
+
+    /// Epochs of the merged product's position nodes that some interpolation
+    /// of `satellite` in the inclusive window selects, ascending, seconds since
+    /// J2000: the nodes a continuity verdict for that window reads. `undefined`
+    /// when `verifyContinuity` was not requested.
+    #[wasm_bindgen(js_name = continuitySelectedNodes)]
+    pub fn continuity_selected_nodes(
+        &self,
+        satellite: &str,
+        from_j2000_s: f64,
+        through_j2000_s: f64,
+    ) -> Result<Option<Vec<f64>>, JsValue> {
+        let sat = parse_sat(satellite)?;
+        let window = EpochWindow::new(from_j2000_s, through_j2000_s).map_err(engine_error)?;
+        Ok(self
+            .continuity
+            .as_ref()
+            .map(|report| report.nodes.selected_nodes(sat, window)))
+    }
+
+    /// Continuity verification of the merged product, `null` when
+    /// `verifyContinuity` was not requested: `{ attested, defects,
+    /// pairsChecked, residualsChecked, residualsSkipped, violations, splices }`,
+    /// where each violation names the contributors whose records it rests on
+    /// and `splices` holds the violations that cross a contributor change.
+    #[wasm_bindgen(getter)]
+    pub fn continuity(&self) -> Result<JsValue, JsValue> {
+        match self.continuity.as_ref() {
+            Some(report) => merge_continuity_report_to_js(report),
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Per-epoch provenance, `null` when the merge's `provenance` option was
+    /// not set: `{ mode, cells, transitions, coverage }`. `cells` has one entry
+    /// per accepted cell under `"full"` and none under `"summary"`; the
+    /// transitions and coverage are the same under both.
+    #[wasm_bindgen(getter)]
+    pub fn provenance(&self) -> Result<JsValue, JsValue> {
+        match self.provenance.as_ref() {
+            Some(provenance) => serde_wasm_bindgen::to_value(&MergeProvenanceJs::from(provenance))
+                .map_err(|error| engine_error(format!("failed to serialize provenance: {error}"))),
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Union-grid epochs at which the merge accepted no cell, as seconds since
+    /// J2000 in the product time scale, in time order. None is written to the
+    /// merged product; each position a source carried there is in
+    /// `quarantined` or `arcWithheld`, and each source's clock in
+    /// `clockOmissions`.
+    #[wasm_bindgen(getter, js_name = omittedEpochsJ2000Seconds)]
+    pub fn omitted_epochs_j2000_seconds(&self) -> Vec<f64> {
+        self.omitted_epochs_j2000_seconds.clone()
+    }
+
+    /// Cells whose position some source carried but precedence did not write,
+    /// because the preferred source carried none there (under
+    /// `precedenceScope: "satellite_arc"`, each cell outside the arc owner's
+    /// coverage that a later source fills). `sources` lists the sources whose
+    /// positions were withheld.
+    #[wasm_bindgen(getter, js_name = arcWithheld)]
+    pub fn arc_withheld(&self) -> Vec<Sp3MergeFlag> {
+        self.arc_withheld.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = arcWithheldCount)]
+    pub fn arc_withheld_count(&self) -> usize {
+        self.arc_withheld.len()
+    }
+
+    /// Each source's clock that the merge did not write, with the reason, in
+    /// (epoch, satellite, source) order, including a clock left out of a cell
+    /// that got its clock from other sources.
+    #[wasm_bindgen(getter, js_name = clockOmissions)]
+    pub fn clock_omissions(&self) -> Vec<Sp3ClockOmission> {
+        self.clock_omissions.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = clockOmissionCount)]
+    pub fn clock_omission_count(&self) -> usize {
+        self.clock_omissions.len()
+    }
+
+    /// Input epochs that took no part in the merge, with the reason, in
+    /// (source, epoch) order.
+    #[wasm_bindgen(getter, js_name = droppedInputEpochs)]
+    pub fn dropped_input_epochs(&self) -> Vec<Sp3DroppedInputEpoch> {
+        self.dropped_input_epochs.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = droppedInputEpochCount)]
+    pub fn dropped_input_epoch_count(&self) -> usize {
+        self.dropped_input_epochs.len()
+    }
+
+    /// Decide whether this merge's optional continuity post-condition
+    /// influences an inclusive evaluation window. The report holds the merged
+    /// product's interpolation nodes, so a violation influences the window when
+    /// the nodes its interpolations select include the violation's held-out,
+    /// repeated or pair-end record or straddle a handover between its records.
     ///
     /// Returns `null` when `verifyContinuity` was not requested for the merge.
     #[wasm_bindgen(js_name = continuityVerdict)]
     pub fn continuity_verdict(
         &self,
-        merged: &Sp3,
         from_j2000_s: f64,
         through_j2000_s: f64,
     ) -> Result<JsValue, JsValue> {
         let window = EpochWindow::new(from_j2000_s, through_j2000_s).map_err(engine_error)?;
-        let stencil = StencilExtent::for_sp3(&merged.inner).map_err(engine_error)?;
         match self.continuity.as_ref() {
-            Some(report) => continuity_verdict_to_js(report.verdict_for_window(window, stencil)),
+            Some(report) => continuity_verdict_to_js(report.verdict_for_window(window)),
             None => Ok(JsValue::NULL),
+        }
+    }
+}
+
+/// Per-epoch merge provenance, as the `provenance` getter returns it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MergeProvenanceJs {
+    mode: &'static str,
+    cells: Vec<CellProvenanceJs>,
+    transitions: Vec<PrecedenceTransitionJs>,
+    coverage: Vec<ContributorCoverageJs>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CellProvenanceJs {
+    epoch_j2000_seconds: f64,
+    satellite: String,
+    position: Option<CellSelectionJs>,
+    clock: Option<CellSelectionJs>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PrecedenceTransitionJs {
+    satellite: String,
+    epoch_j2000_seconds: f64,
+    from_source: Option<usize>,
+    to_source: Option<usize>,
+    reason: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContributorCoverageJs {
+    source: usize,
+    cells_contributed: usize,
+    cells_selected: usize,
+    first_epoch_j2000_seconds: Option<f64>,
+    last_epoch_j2000_seconds: Option<f64>,
+    cells_absent: usize,
+}
+
+impl From<&MergeProvenance> for MergeProvenanceJs {
+    fn from(value: &MergeProvenance) -> Self {
+        Self {
+            mode: match value.mode {
+                ProvenanceMode::Summary => "summary",
+                ProvenanceMode::Full => "full",
+            },
+            cells: value.cells.iter().map(CellProvenanceJs::from).collect(),
+            transitions: value
+                .transitions
+                .iter()
+                .map(PrecedenceTransitionJs::from)
+                .collect(),
+            coverage: value
+                .coverage
+                .iter()
+                .map(ContributorCoverageJs::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<&CellProvenance> for CellProvenanceJs {
+    fn from(value: &CellProvenance) -> Self {
+        Self {
+            epoch_j2000_seconds: instant_to_j2000_seconds(&value.epoch),
+            satellite: value.satellite.to_string(),
+            position: value.position.as_ref().map(CellSelectionJs::from),
+            clock: value.clock.as_ref().map(CellSelectionJs::from),
+        }
+    }
+}
+
+impl From<&PrecedenceTransition> for PrecedenceTransitionJs {
+    fn from(value: &PrecedenceTransition) -> Self {
+        Self {
+            satellite: value.satellite.to_string(),
+            epoch_j2000_seconds: instant_to_j2000_seconds(&value.epoch),
+            from_source: value.from_source,
+            to_source: value.to_source,
+            reason: match value.reason {
+                TransitionReason::SoleAvailability => "sole_availability",
+                TransitionReason::Precedence => "precedence",
+                TransitionReason::OutlierRejection => "outlier_rejection",
+                TransitionReason::ConsensusChange => "consensus_change",
+            },
+        }
+    }
+}
+
+impl From<&ContributorCoverage> for ContributorCoverageJs {
+    fn from(value: &ContributorCoverage) -> Self {
+        Self {
+            source: value.source,
+            cells_contributed: value.cells_contributed,
+            cells_selected: value.cells_selected,
+            first_epoch_j2000_seconds: value.first_epoch.as_ref().map(instant_to_j2000_seconds),
+            last_epoch_j2000_seconds: value.last_epoch.as_ref().map(instant_to_j2000_seconds),
+            cells_absent: value.cells_absent,
+        }
+    }
+}
+
+/// Per-epoch aggregate of the agreement statistics over the epoch's
+/// multi-source cells.
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct Sp3EpochAgreement {
+    epoch_j2000_seconds: f64,
+    satellites: usize,
+    position_rms_m: Option<f64>,
+    position_max_m: Option<f64>,
+    clock_rms_s: Option<f64>,
+    clock_max_s: Option<f64>,
+}
+
+#[wasm_bindgen]
+impl Sp3EpochAgreement {
+    /// Epoch as seconds since J2000 in the product time scale.
+    #[wasm_bindgen(getter, js_name = epochJ2000Seconds)]
+    pub fn epoch_j2000_seconds(&self) -> f64 {
+        self.epoch_j2000_seconds
+    }
+
+    /// Satellites at the epoch with a multi-source position consensus; zero
+    /// when every cell there was carried from one source.
+    #[wasm_bindgen(getter)]
+    pub fn satellites(&self) -> usize {
+        self.satellites
+    }
+
+    /// RMS position dispersion over the epoch's multi-source cells, metres;
+    /// `undefined` when it has none.
+    #[wasm_bindgen(getter, js_name = positionRmsM)]
+    pub fn position_rms_m(&self) -> Option<f64> {
+        self.position_rms_m
+    }
+
+    /// Largest position dispersion over the epoch's multi-source cells,
+    /// metres; `undefined` when it has none.
+    #[wasm_bindgen(getter, js_name = positionMaxM)]
+    pub fn position_max_m(&self) -> Option<f64> {
+        self.position_max_m
+    }
+
+    /// RMS clock dispersion over the epoch's multi-source clock cells,
+    /// seconds; `undefined` when it has none.
+    #[wasm_bindgen(getter, js_name = clockRmsS)]
+    pub fn clock_rms_s(&self) -> Option<f64> {
+        self.clock_rms_s
+    }
+
+    /// Largest clock dispersion over the epoch's multi-source clock cells,
+    /// seconds; `undefined` when it has none.
+    #[wasm_bindgen(getter, js_name = clockMaxS)]
+    pub fn clock_max_s(&self) -> Option<f64> {
+        self.clock_max_s
+    }
+}
+
+impl From<EpochAgreement> for Sp3EpochAgreement {
+    fn from(value: EpochAgreement) -> Self {
+        Self {
+            epoch_j2000_seconds: instant_to_j2000_seconds(&value.epoch),
+            satellites: value.satellites,
+            position_rms_m: value.position_rms_m,
+            position_max_m: value.position_max_m,
+            clock_rms_s: value.clock_rms_s,
+            clock_max_s: value.clock_max_s,
         }
     }
 }
 
 impl From<MergeReport> for Sp3MergeReport {
     fn from(value: MergeReport) -> Self {
+        let per_epoch_agreement = value
+            .per_epoch_agreement()
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        let position_agreement_rms_m = value.position_agreement_rms_m();
+        let position_agreement_max_m = value.position_agreement_max_m();
+        let clock_agreement_rms_s = value.clock_agreement_rms_s();
+        let clock_agreement_max_s = value.clock_agreement_max_s();
+        let single_source_fraction = value.single_source_fraction();
         Self {
+            per_epoch_agreement,
+            position_agreement_rms_m,
+            position_agreement_max_m,
+            clock_agreement_rms_s,
+            clock_agreement_max_s,
+            single_source_fraction,
             frame_reconciliations: value
                 .frame_reconciliations
                 .into_iter()
@@ -1219,6 +1695,19 @@ impl From<MergeReport> for Sp3MergeReport {
             clock_outliers: value.clock_outliers.into_iter().map(Into::into).collect(),
             agreement: value.agreement.into_iter().map(Into::into).collect(),
             continuity: value.continuity,
+            provenance: value.provenance,
+            omitted_epochs_j2000_seconds: value
+                .omitted_epochs
+                .iter()
+                .map(instant_to_j2000_seconds)
+                .collect(),
+            arc_withheld: value.arc_withheld.into_iter().map(Into::into).collect(),
+            clock_omissions: value.clock_omissions.into_iter().map(Into::into).collect(),
+            dropped_input_epochs: value
+                .dropped_input_epochs
+                .into_iter()
+                .map(Into::into)
+                .collect(),
         }
     }
 }

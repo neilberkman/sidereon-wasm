@@ -8,9 +8,14 @@ import assert from "node:assert/strict";
 
 import {
   Instant,
+  ExactEpoch,
+  ExactEpochQuery,
+  exactEpochAttosecondsPerSecond,
   GnssWeekTow,
   TimeScale,
   timeScaleAbbrev,
+  timescaleOffsetS,
+  timescaleOffsetAtS,
   leapSeconds,
   leapSecondsBatch,
   leapSecondTableInfo,
@@ -42,6 +47,30 @@ const tile = (vec, n) => {
   for (let i = 0; i < n; i++) out.set(vec, i * 3);
   return out;
 };
+
+test("exact epoch and query retain decimal labels and binary offsets", () => {
+  const decimalLabel = ExactEpoch.fromCivil(2000, 1, 1, 12, 0, 0.1);
+  assert.equal(ExactEpoch.j2000().equals(new ExactEpoch(0n, 0n)), true);
+  assert.equal(exactEpochAttosecondsPerSecond(), 1_000_000_000_000_000_000n);
+  assert.equal(decimalLabel.compare(ExactEpoch.j2000()), 1);
+  assert.equal(ExactEpoch.j2000().checkedAddSeconds(0.1).equals(decimalLabel), true);
+  assert.equal(decimalLabel.checkedSubtractSeconds(0.1).equals(ExactEpoch.j2000()), true);
+  assert.equal(decimalLabel.wholeSeconds, 0n);
+  assert.equal(decimalLabel.attoseconds, 100_000_000_000_000_000n);
+
+  const subAttosecondLabel = ExactEpoch.fromCivil(2000, 1, 1, 12, 0, 1.0e-19);
+  assert.equal(subAttosecondLabel.subAttosecondDigits, 1n);
+  assert.equal(subAttosecondLabel.subAttosecondPlaces, 1);
+
+  const decimalQuery = decimalLabel.asQuery();
+  const binaryQuery = ExactEpochQuery.fromEpoch(decimalLabel).addBinarySeconds(0.1);
+  assert.equal(binaryQuery.secondsSince(decimalQuery), 0.1);
+  assert.equal(binaryQuery.secondsSinceEpoch(decimalLabel), 0.1);
+  assert.equal(binaryQuery.equals(decimalQuery), false);
+  assert.equal(binaryQuery.epoch.wholeSeconds, decimalLabel.wholeSeconds);
+  assert.throws(() => binaryQuery.addBinarySeconds(Number.NaN));
+  assert.throws(() => new ExactEpoch(0n, 1_000_000_000_000_000_000n));
+});
 
 test("instant scales match reference bits", () => {
   for (const e of FX.epochs) {
@@ -246,4 +275,65 @@ test("transform shape errors throw", () => {
   assert.throws(() => gcrsToItrs(new Float64Array(0), new BigInt64Array(0)));
   assert.throws(() => gcrsToItrs(tile(SAMPLE_POS, n + 1), epochs));
   assert.throws(() => Instant.fromUtc(2020, 13, 1));
+});
+
+test("time-scale offset refusals retain their complete TimeOffsetError variant", () => {
+  const cases = [
+    [
+      () => timescaleOffsetS(TimeScale.Gpst, TimeScale.Utc),
+      "EPOCH_REQUIRED",
+      "UTC",
+      "time-scale UTC is UTC-based; its offset is epoch-dependent, use timescale_offset_at_s",
+    ],
+    [
+      () => timescaleOffsetS(TimeScale.Gpst, TimeScale.Tdb),
+      "UNSUPPORTED",
+      "TDB",
+      "time-scale TDB has no fixed/constant offset; resolve it through TimeScales",
+    ],
+    [
+      () => timescaleOffsetS(TimeScale.Gpst, TimeScale.Tcg),
+      "UNSUPPORTED",
+      "TCG",
+      "time-scale TCG has no fixed/constant offset; resolve it through TimeScales",
+    ],
+    [
+      () => timescaleOffsetS(TimeScale.Gpst, TimeScale.Tcb),
+      "UNSUPPORTED",
+      "TCB",
+      "time-scale TCB has no fixed/constant offset; resolve it through TimeScales",
+    ],
+    [
+      () => timescaleOffsetS(TimeScale.Gpst, TimeScale.Glonasst),
+      "EPOCH_REQUIRED",
+      "GLONASST",
+      "time-scale GLONASST is UTC-based; its offset is epoch-dependent, use timescale_offset_at_s",
+    ],
+    [
+      () => timescaleOffsetAtS(TimeScale.Utc, TimeScale.Tai, Number.NaN),
+      "NON_FINITE_EPOCH",
+      "UTC",
+      "utc_jd must be finite to resolve leap seconds for scale UTC",
+    ],
+    [
+      () => timescaleOffsetAtS(TimeScale.Glonasst, TimeScale.Tai, Number.POSITIVE_INFINITY),
+      "NON_FINITE_EPOCH",
+      "GLONASST",
+      "utc_jd must be finite to resolve leap seconds for scale GLONASST",
+    ],
+  ];
+
+  for (const [produce, kind, scale, message] of cases) {
+    assert.throws(produce, (error) => {
+      assert.equal(error.name, "RangeError");
+      assert.equal(error.message, message);
+      assert.deepEqual(error.detail, {
+        family: "TimeOffsetError",
+        kind,
+        message,
+        scale,
+      });
+      return true;
+    });
+  }
 });

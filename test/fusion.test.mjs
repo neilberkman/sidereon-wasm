@@ -12,7 +12,7 @@ import {
   smoothFusionRts,
   velocityMatchOutage,
 } from "../pkg-node/sidereon.js";
-import { fixture, f64Bits } from "./helpers.mjs";
+import { coreGoldens, fixture, f64Bits } from "./helpers.mjs";
 
 const WGS84_A_M = 6378137.0;
 const OMEGA_E = 7.2921151467e-5;
@@ -412,9 +412,11 @@ test("fusion tight SP3 observation update matches reference bits", () => {
   });
   const clock = filter.tightClockState();
 
-  assert.equal(update.applied, true);
-  assert.equal(update.rows, 1);
-  eqBits(update.nis, "0x4021FFF5A609DA6D");
-  eqBits(clock.biasM, "0x40DD4BF764C1C30C");
-  eqBits(clock.covariance[0], "0x4032FFFFC36F2BC8");
+  // The same filter and update run natively by test/golden-gen.
+  const ref = coreGoldens().fusionTight;
+  assert.equal(update.applied, ref.applied);
+  assert.equal(update.rows, ref.rows);
+  eqBits(update.nis, ref.nis);
+  eqBits(clock.biasM, ref.clockBiasM);
+  eqBits(clock.covariance[0], ref.clockCovariance0);
 });

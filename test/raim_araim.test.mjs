@@ -12,8 +12,18 @@ import {
   raim,
   raimForSolution,
 } from "../pkg-node/sidereon.js";
+import { coreGoldens, f64Bits, hexToF64 } from "./helpers.mjs";
 
 const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
+
+function thrownBy(fn) {
+  try {
+    fn();
+  } catch (error) {
+    return error;
+  }
+  assert.fail("expected function to throw");
+}
 
 const close = (actual, expected, tol, label) =>
   assert.ok(Math.abs(actual - expected) <= tol, `${label}: ${actual} vs ${expected}`);
@@ -23,15 +33,43 @@ test("direct raim runs over post-fit residual lists", () => {
     usedSats: ["G01", "G02", "G03", "G04", "G05", "G06"],
     residualsM: [0.2, -0.1, 0.3, 0.2, 9.0, -0.2],
   };
-  const result = raim(input, { pFa: 1e-3 });
+  const result = raim(input, { pFa: 1e-3, weights: { isUnit: true } });
 
   assert.equal(result.faultDetected, true);
   close(result.testStatistic, 81.22, 1e-12, "test statistic");
   assert.equal(result.dof, 2);
+  assert.equal(result.testable, true);
   assert.equal(result.worstSat, "G05");
   close(result.reducedChiSquare, 40.61, 1e-12, "reduced chi-square");
   close(result.rmsM, Math.sqrt(81.22 / 6), 1e-12, "RMS residual");
   assert.equal(result.normalizedResiduals.G05, 9.0);
+});
+
+test("raw RAIM reports typed variance errors and accepts all explicit weight modes", () => {
+  const input = {
+    usedSats: ["G01", "G02", "G03", "G04", "G05", "G06"],
+    residualsM: [0.2, -0.1, 0.3, 0.2, 9.0, -0.2],
+  };
+  const missing = thrownBy(() => raim(input));
+  assert.equal(missing.detail.kind, "MISSING_VARIANCES");
+  const invalid = thrownBy(() => raim({ ...input, variancesM2: [1] }));
+  assert.equal(invalid.detail.kind, "INVALID_VARIANCE");
+  const invalidWeight = thrownBy(() => raim(input, { weights: { G01: 0 } }));
+  assert.equal(invalidWeight.detail.kind, "INVALID_WEIGHT");
+  const result = raim(input, { weights: { isUnit: true } });
+  assert.equal(result.faultDetected, true);
+  assert.equal(result.normalizedResiduals.G05, 9.0);
+  assert.equal(raim(input, { weightsMode: "unit" }).faultDetected, true);
+  assert.equal(raim(input, { weights: "unit" }).faultDetected, true);
+  assert.equal(raim(input, { weights: "bySatellite" }).faultDetected, true);
+  assert.equal(raim(input, { weights: {} }).faultDetected, true);
+  assert.equal(raim({ ...input, variancesM2: [1, 1, 1, 1, 1, 1] }).testable, true);
+  assert.equal(
+    raim({ ...input, variancesM2: [1, 1, 1, 1, 1, 1] }, { weights: "solution" }).testable,
+    true,
+  );
+  const invalidProbability = thrownBy(() => raim(input, { weightsMode: "unit", pFa: 0 }));
+  assert.equal(invalidProbability.detail.kind, "INVALID_PROBABILITY");
 });
 
 test("direct raim builds weights from elevation and cn0 entries", () => {
@@ -62,23 +100,31 @@ test("direct raim builds weights from elevation and cn0 entries", () => {
   });
   close(weighted.testStatistic, 16.22, 1e-12, "class weight statistic");
   assert.equal(weighted.normalizedResiduals.G05, 4.0);
+  const solutionMode = RaimWeights.solution();
+  assert.equal(solutionMode.isSolution, true);
+  const solutionWeighted = raim(
+    { ...input, variancesM2: [4, 4, 4, 4, 4, 4] },
+    { weights: solutionMode },
+  );
+  assert.equal(solutionWeighted.testable, true);
+  close(solutionWeighted.testStatistic, 4.22 / 4, 1e-12, "solution variance weights");
 });
 
 test("raimForSolution runs over a real SPP solution", () => {
+  // Geometric ranges without light time or the relativistic clock term at a
+  // real receiver, and the engine's RAIM result over their SPP solve, all
+  // reproduced natively by test/golden-gen.
+  const ref = coreGoldens().raimSolution;
   const sp3 = loadSp3(
     readFileSync(here("./fixtures/sp3/GBM0MGXRAP_20201770000_01D_05M_ORB_120epoch.sp3")),
   );
   const tRx = sp3.epochsJ2000Seconds()[12];
+  assert.equal(f64Bits(tRx), BigInt(ref.tRxJ2000S));
   const rx = [3582105.291, 532589.7313, 5232754.8054];
-  const observations = ["G05", "G07", "G08", "G10", "G13", "G15"].map((satelliteId) => {
-    const state = sp3.interpolate(satelliteId, Float64Array.of(tRx));
-    const range = Math.hypot(
-      state.positionM[0] - rx[0],
-      state.positionM[1] - rx[1],
-      state.positionM[2] - rx[2],
-    );
-    return { satelliteId, pseudorangeM: range - 299792458.0 * state.clockS[0] };
-  });
+  const observations = ref.observations.map((o) => ({
+    satelliteId: o.satelliteId,
+    pseudorangeM: hexToF64(o.pseudorangeM),
+  }));
   const solution = sp3.solveSpp({
     observations,
     tRxJ2000S: tRx,
@@ -87,12 +133,36 @@ test("raimForSolution runs over a real SPP solution", () => {
     initialGuess: [rx[0], rx[1], rx[2], 0],
     corrections: { ionosphere: false, troposphere: false },
   });
+  assert.equal(solution.usedSats.length, ref.usedSatCount);
 
   const result = raimForSolution(solution, { pFa: 1e-3 });
-  assert.equal(result.faultDetected, true);
+  assert.equal(result.faultDetected, ref.faultDetected);
+  assert.equal(result.dof, ref.dof);
   assert.equal(result.dof, solution.usedSats.length - 4);
-  assert.equal(result.worstSat, "G08");
-  close(result.testStatistic, 19.00967387255123, 1e-9, "solution RAIM statistic");
+  assert.equal(result.worstSat, ref.worstSat);
+  assert.equal(f64Bits(result.testStatistic), BigInt(ref.testStatistic));
+  assert.equal(raimForSolution(solution, { weights: RaimWeights.unit() }).testable, true);
+  assert.equal(raimForSolution(solution, { weightsMode: "unit" }).testable, true);
+  assert.equal(raimForSolution(solution, { weightsMode: "bySatellite" }).testable, true);
+  assert.equal(raimForSolution(solution).testable, true);
+});
+
+test("RaimWeights rejects invalid entries with a typed core quality kind", () => {
+  assert.throws(
+    () => RaimWeights.bySatellite(["G01"], Float64Array.from([0])),
+    (error) => error instanceof RangeError && error.detail.kind === "INVALID_WEIGHT",
+  );
+  assert.throws(
+    () =>
+      raim(
+        {
+          usedSats: ["G01", "G02", "G03", "G04", "G05", "G06"],
+          residualsM: [0.2],
+        },
+        { weightsMode: "unit" },
+      ),
+    (error) => error instanceof TypeError && error.detail.kind === "INVALID_RESIDUALS",
+  );
 });
 
 const WG_C_ROWS = [

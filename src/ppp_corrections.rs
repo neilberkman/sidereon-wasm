@@ -17,31 +17,118 @@ use wasm_bindgen::prelude::*;
 
 use sidereon_core::bias::ClockReferenceObservables;
 use sidereon_core::ppp_corrections::{
-    build, CivilDateTime, CodeBiasOptions, OceanLoadingBlq, PoleTideOptions, PppCorrectionEpoch,
-    PppCorrectionObservation, PppCorrectionsError, PppCorrectionsOptions, SatelliteAntenna,
-    SatelliteAntennaFrequency, SatelliteAntennaOptions, NUM_OCEAN_CONSTITUENTS,
+    build_with_validity_and_tide_constants, CivilDateTime, CodeBiasOptions, OceanLoadingBlq,
+    PoleTideOptions, PppCorrectionEpoch, PppCorrectionObservation, PppCorrectionsError,
+    PppCorrectionsOptions, SatelliteAntenna, SatelliteAntennaFrequency, SatelliteAntennaOptions,
+    NUM_OCEAN_CONSTITUENTS,
 };
 use sidereon_core::{GnssSatelliteId, GnssSystem};
 
 use crate::bias::BiasSet;
-use crate::error::{engine_error, range_error, type_error};
+use crate::error::{engine_error, error_with_detail, range_error, type_error};
 use crate::marshal::vec3_finite;
 use crate::sp3::Sp3;
+use crate::tides::StationTideConstants;
 
-/// Map a core correction-build failure to the JS error kind the binding promises:
-/// a caller-supplied non-finite/out-of-domain number is a `RangeError`; a genuine
-/// coverage or tide-evaluation failure is an `Error`.
+/// Preserve the core failure's complete typed cause while retaining the old
+/// JavaScript Error versus RangeError class and message.
 fn ppp_err(err: PppCorrectionsError) -> JsValue {
-    match err {
+    let message = err.to_string();
+    let name = match &err {
         PppCorrectionsError::InvalidInput { .. }
         | PppCorrectionsError::WindupFrequency { .. }
         | PppCorrectionsError::SatelliteAntennaFrequency { .. }
-        | PppCorrectionsError::CodeBiasObservable { .. } => range_error(&err.to_string()),
+        | PppCorrectionsError::CodeBiasObservable { .. } => "RangeError",
         PppCorrectionsError::Epoch { .. }
         | PppCorrectionsError::Tide { .. }
         | PppCorrectionsError::PoleTide { .. }
         | PppCorrectionsError::OceanLoading { .. }
-        | PppCorrectionsError::Bias { .. } => engine_error(err),
+        | PppCorrectionsError::Bias { .. } => "Error",
+    };
+    error_with_detail(name, &message, &ppp_error_detail(&err))
+}
+
+fn ppp_error_detail(err: &PppCorrectionsError) -> serde_json::Value {
+    use sidereon_core::astro::time::CoverageError;
+    use PppCorrectionsError as Error;
+
+    let message = err.to_string();
+    match err {
+        Error::InvalidInput { field, reason } => serde_json::json!({
+            "family": "PppCorrectionsError", "kind": "INVALID_INPUT",
+            "field": field, "reason": reason, "message": message,
+        }),
+        Error::Epoch {
+            epoch_index,
+            source,
+        } => {
+            let cause = match source {
+                CoverageError::InvalidInput { field, kind } => serde_json::json!({
+                    "kind": "INVALID_INPUT", "field": field,
+                    "reason": crate::tides::time_input_kind(kind),
+                }),
+                CoverageError::OutsideCoverage(reason) => serde_json::json!({
+                    "kind": "OUTSIDE_COVERAGE",
+                    "reason": crate::tides::degrade_reason(*reason),
+                }),
+            };
+            serde_json::json!({
+                "family": "PppCorrectionsError", "kind": "EPOCH",
+                "epochIndex": epoch_index, "cause": cause, "message": message,
+            })
+        }
+        Error::Tide {
+            epoch_index,
+            source,
+        } => serde_json::json!({
+            "family": "PppCorrectionsError", "kind": "TIDE",
+            "epochIndex": epoch_index, "cause": crate::tides::tide_error_json(source),
+            "message": message,
+        }),
+        Error::PoleTide {
+            epoch_index,
+            source,
+        } => serde_json::json!({
+            "family": "PppCorrectionsError", "kind": "POLE_TIDE",
+            "epochIndex": epoch_index, "cause": crate::tides::tide_error_json(source),
+            "message": message,
+        }),
+        Error::OceanLoading {
+            epoch_index,
+            source,
+        } => serde_json::json!({
+            "family": "PppCorrectionsError", "kind": "OCEAN_LOADING",
+            "epochIndex": epoch_index, "cause": crate::tides::tide_error_json(source),
+            "message": message,
+        }),
+        Error::WindupFrequency {
+            epoch_index,
+            sat,
+            field,
+            reason,
+        } => serde_json::json!({
+            "family": "PppCorrectionsError", "kind": "WINDUP_FREQUENCY",
+            "epochIndex": epoch_index, "satellite": sat.to_string(),
+            "field": field, "reason": reason, "message": message,
+        }),
+        Error::SatelliteAntennaFrequency { field, reason } => serde_json::json!({
+            "family": "PppCorrectionsError", "kind": "SATELLITE_ANTENNA_FREQUENCY",
+            "field": field, "reason": reason, "message": message,
+        }),
+        Error::Bias { source } => serde_json::json!({
+            "family": "PppCorrectionsError", "kind": "BIAS",
+            "cause": crate::bias::bias_error_payload(source), "message": message,
+        }),
+        Error::CodeBiasObservable {
+            epoch_index,
+            sat,
+            field,
+            reason,
+        } => serde_json::json!({
+            "family": "PppCorrectionsError", "kind": "CODE_BIAS_OBSERVABLE",
+            "epochIndex": epoch_index, "satellite": sat.to_string(),
+            "field": field, "reason": reason, "message": message,
+        }),
     }
 }
 
@@ -274,6 +361,11 @@ struct OptionsInput {
     satellite_antenna: Option<SatelliteAntennaOptionsInput>,
     pole_tide: Option<PoleTideInput>,
     ocean_loading: Option<OceanLoadingInput>,
+    /// UT1 validity policy of the tide evaluation: `"strict"` (the default)
+    /// refuses an epoch outside the UT1 table, `"permissive"` accepts it and
+    /// reports the departure in the result's `ut1Degraded`.
+    ut1_validity: Option<String>,
+    station_tide_constants: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -377,6 +469,22 @@ impl OptionsInput {
     }
 }
 
+fn station_tide_constants_from_input(
+    value: Option<u32>,
+) -> Result<sidereon_core::tides::StationTideConstants, JsValue> {
+    match value.unwrap_or(StationTideConstants::Conventions as u32) {
+        value if value == StationTideConstants::Conventions as u32 => {
+            Ok(sidereon_core::tides::StationTideConstants::Conventions)
+        }
+        value if value == StationTideConstants::IersRoutine as u32 => {
+            Ok(sidereon_core::tides::StationTideConstants::IersRoutine)
+        }
+        other => Err(type_error(&format!(
+            "stationTideConstants has unknown tag {other}"
+        ))),
+    }
+}
+
 fn parse_sat(token: &str) -> Result<GnssSatelliteId, JsValue> {
     GnssSatelliteId::from_str(token)
         .map_err(|_| type_error(&format!("invalid satellite token: {token}")))
@@ -421,6 +529,16 @@ struct PppCorrectionsJs {
     sat_pco_ecef: Vec<SatVectorJs>,
     sat_pcv_m: Vec<SatScalarJs>,
     code_bias_m: Vec<SatScalarJs>,
+    /// The first UT1 departure accepted under the `"permissive"` policy, or
+    /// `null`.
+    ut1_degraded: Option<&'static str>,
+    /// Non-fatal findings of the build, each as the engine states it: an
+    /// observation whose code bias could not be placed on the product's time
+    /// scale, conflicting bias records, and the like.
+    warnings: Vec<String>,
+    /// Structured equivalent of the legacy warning strings, with every record
+    /// reference and format diagnostic field retained.
+    diagnostics: crate::nmea::DiagnosticsJs,
 }
 
 // --- entry point ------------------------------------------------------------
@@ -432,10 +550,13 @@ struct PppCorrectionsJs {
 /// selects which corrections to compute: `solidEarthTide` / `phaseWindup`
 /// booleans, plus optional `satelliteAntenna` (a `PppSatelliteAntennaOptions`),
 /// `poleTide` (a `PoleTideOptions`, the IERS polar motion of the date), and
-/// `oceanLoading` (an `OceanLoadingBlq`, the station's BLQ block). Returns a
-/// `PppCorrections` whose fields are each keyed by the input epoch index. Throws a
-/// `TypeError` on a malformed shape or an invalid satellite token, and an `Error`
-/// on an invalid epoch or a tide/coverage failure.
+/// `oceanLoading` (an `OceanLoadingBlq`, the station's BLQ block). `ut1Validity`
+/// selects strict or permissive UT1 coverage handling, and
+/// `stationTideConstants` selects the station-tide convention used by the core
+/// (default `Conventions`). Returns a `PppCorrections` whose fields are keyed by
+/// input epoch and whose `ut1Degraded` reports permissive coverage departures.
+/// Throws a `TypeError` on malformed input and an `Error` on an invalid epoch or
+/// a tide/coverage failure.
 #[wasm_bindgen(js_name = pppCorrections)]
 pub fn ppp_corrections(
     sp3: &Sp3,
@@ -457,9 +578,18 @@ pub fn ppp_corrections(
         .iter()
         .map(EpochInput::to_core)
         .collect::<Result<_, _>>()?;
+    let mode = crate::error::ut1_validity(opts.ut1_validity.clone())?;
     let core_options = opts.to_core()?;
+    let tide_constants = station_tide_constants_from_input(opts.station_tide_constants)?;
 
-    build_to_js(sp3, &core_epochs, receiver, core_options)
+    build_to_js(
+        sp3,
+        &core_epochs,
+        receiver,
+        core_options,
+        mode,
+        tide_constants,
+    )
 }
 
 #[wasm_bindgen(js_name = pppCorrectionsWithCodeBias)]
@@ -486,9 +616,18 @@ pub fn ppp_corrections_with_code_bias(
         .iter()
         .map(EpochInput::to_core)
         .collect::<Result<_, _>>()?;
+    let mode = crate::error::ut1_validity(opts.ut1_validity.clone())?;
     let mut core_options = opts.to_core()?;
     core_options.code_bias = Some(code_bias.to_core(bias_set)?);
-    build_to_js(sp3, &core_epochs, receiver, core_options)
+    let tide_constants = station_tide_constants_from_input(opts.station_tide_constants)?;
+    build_to_js(
+        sp3,
+        &core_epochs,
+        receiver,
+        core_options,
+        mode,
+        tide_constants,
+    )
 }
 
 fn build_to_js(
@@ -496,8 +635,19 @@ fn build_to_js(
     core_epochs: &[PppCorrectionEpoch],
     receiver: [f64; 3],
     core_options: PppCorrectionsOptions,
+    mode: sidereon_core::astro::time::ValidityMode,
+    tide_constants: sidereon_core::tides::StationTideConstants,
 ) -> Result<JsValue, JsValue> {
-    let corrections = build(&sp3.inner, core_epochs, receiver, &core_options).map_err(ppp_err)?;
+    let validated = build_with_validity_and_tide_constants(
+        &sp3.inner,
+        core_epochs,
+        receiver,
+        &core_options,
+        mode,
+        tide_constants,
+    )
+    .map_err(ppp_err)?;
+    let corrections = validated.value;
 
     let out = PppCorrectionsJs {
         tide: corrections
@@ -560,7 +710,83 @@ fn build_to_js(
                 value_m: c.value_m,
             })
             .collect(),
+        ut1_degraded: validated.degraded.map(crate::spp::degrade_reason_label),
+        warnings: corrections
+            .diagnostics
+            .warnings
+            .iter()
+            .map(|warning| format!("{warning:?}"))
+            .chain(
+                corrections
+                    .diagnostics
+                    .skips
+                    .iter()
+                    .map(|skip| format!("{skip:?}")),
+            )
+            .collect(),
+        diagnostics: crate::nmea::diagnostics_js(&corrections.diagnostics),
     };
 
-    serde_wasm_bindgen::to_value(&out).map_err(|e| engine_error(e.to_string()))
+    // `ut1Degraded` is documented and declared as `null` when no departure was
+    // accepted, so `None` serializes as `null`, not `undefined`.
+    out.serialize(
+        &serde_wasm_bindgen::Serializer::new()
+            .serialize_maps_as_objects(true)
+            .serialize_missing_as_null(true),
+    )
+    .map_err(|e| engine_error(e.to_string()))
+}
+
+#[cfg(test)]
+mod ppp_detail_tests {
+    use super::ppp_error_detail;
+    use serde_json::json;
+    use sidereon_core::astro::time::{CoverageError, DegradeReason};
+    use sidereon_core::bias::BiasError;
+    use sidereon_core::ppp_corrections::PppCorrectionsError;
+    use sidereon_core::tides::TideError;
+
+    #[test]
+    fn nested_epoch_tide_and_bias_causes_retain_typed_fields() {
+        let epoch = PppCorrectionsError::Epoch {
+            epoch_index: 2,
+            source: CoverageError::OutsideCoverage(DegradeReason::BeforeCoverage),
+        };
+        let epoch_detail = ppp_error_detail(&epoch);
+        assert_eq!(epoch_detail["kind"], "EPOCH");
+        assert_eq!(epoch_detail["epochIndex"], 2);
+        assert_eq!(
+            epoch_detail["cause"],
+            json!({
+                "kind": "OUTSIDE_COVERAGE", "reason": "BEFORE_COVERAGE"
+            })
+        );
+
+        let tide = PppCorrectionsError::Tide {
+            epoch_index: 3,
+            source: TideError::MissingInput {
+                field: "polar motion",
+            },
+        };
+        let tide_detail = ppp_error_detail(&tide);
+        assert_eq!(tide_detail["kind"], "TIDE");
+        assert_eq!(tide_detail["epochIndex"], 3);
+        assert_eq!(tide_detail["cause"]["kind"], "MISSING_INPUT");
+        assert_eq!(tide_detail["cause"]["field"], "polar motion");
+        assert_eq!(
+            tide_detail["cause"]["message"],
+            "missing station displacement input polar motion"
+        );
+
+        let bias = PppCorrectionsError::Bias {
+            source: BiasError::InvalidEpoch,
+        };
+        let bias_detail = ppp_error_detail(&bias);
+        assert_eq!(bias_detail["kind"], "BIAS");
+        assert_eq!(bias_detail["cause"], json!({"kind": "invalidEpoch"}));
+        assert_eq!(
+            bias_detail["message"],
+            "code-bias correction failed: invalid bias epoch"
+        );
+    }
 }

@@ -70,3 +70,40 @@ test("coverageLookAngles rejects empty satellite or station lists", () => {
   assert.throws(() => coverageLookAngles([], [new GroundStation(0, 0, 0)], EPOCH_US));
   assert.throws(() => coverageLookAngles([new Tle(ISS_L1, ISS_L2)], [], EPOCH_US));
 });
+
+test("cellError retains the indexed invalid-station cause", () => {
+  const grid = coverageLookAngles(
+    [new Tle(ISS_L1, ISS_L2)],
+    [new GroundStation(51.5, -0.1, 11.0), new GroundStation(91.0, 0.0, 0.0)],
+    EPOCH_US,
+  );
+
+  assert.equal(grid.cellError(0, 0), undefined);
+  const error = grid.cellError(0, 1);
+  assert.ok(error instanceof Error);
+  assert.equal(error.detail.family, "lookAngle");
+  assert.deepEqual(error.detail.cause, {
+    kind: "invalidInput",
+    field: "ground_station.latitude_deg",
+    reason: "out of range",
+  });
+  assert.equal(grid.cellError(0, 99), undefined);
+});
+
+test("cellError retains the strict UT1 refusal cause", () => {
+  const epoch = BigInt(Date.UTC(1900, 0, 1)) * 1000n;
+  const grid = coverageLookAngles(
+    [new Tle(ISS_L1, ISS_L2)],
+    [new GroundStation(51.5, -0.1, 11.0)],
+    epoch,
+  );
+
+  const error = grid.cellError(0, 0);
+  assert.ok(error instanceof Error);
+  assert.equal(error.detail.family, "lookAngle");
+  assert.deepEqual(error.detail.cause, {
+    kind: "frameTransform",
+    message: "frame transform reads UT1, but the instant precedes the UT1 table coverage",
+    cause: { kind: "ut1OutsideCoverage", reason: "beforeCoverage" },
+  });
+});

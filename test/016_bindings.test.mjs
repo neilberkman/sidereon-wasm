@@ -129,7 +129,9 @@ test("016 TDM: annex E KVN parses and re-encodes canonically", () => {
   assert.equal(first.unit, "Hz");
 
   const encoded = message.toKvnString();
-  assert.equal(encoded.length, 2217);
+  // CCSDS 503.0-B-2 4.2.11 terminates every line, the last one included.
+  assert.equal(encoded.length, 2218);
+  assert.ok(encoded.endsWith("DATA_STOP\n"));
   assert.equal(parseTdmKvn(encoded).toKvnString(), encoded);
 });
 

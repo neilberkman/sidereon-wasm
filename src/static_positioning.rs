@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::positioning::{
-    solve_static as core_solve_static, RobustConfig as CoreRobustConfig,
+    solve_static as core_solve_static, QzssClock, RobustConfig as CoreRobustConfig,
     StaticInfluenceStatus as CoreInfluenceStatus, StaticSolution as CoreStaticSolution,
-    StaticSolveOptions as CoreStaticSolveOptions, DEFAULT_HUBER_K, DEFAULT_ROBUST_MAX_OUTER,
-    DEFAULT_ROBUST_OUTER_TOL_M, DEFAULT_ROBUST_SCALE_FLOOR_M,
+    StaticSolveOptions as CoreStaticSolveOptions, TroposphereModel, DEFAULT_HUBER_K,
+    DEFAULT_ROBUST_MAX_OUTER, DEFAULT_ROBUST_OUTER_TOL_M, DEFAULT_ROBUST_SCALE_FLOOR_M,
 };
 use sidereon_core::positioning::{EphemerisSource, StaticEpoch as CoreStaticEpoch};
 use sidereon_core::{GnssSystem, Wgs84Geodetic};
@@ -20,6 +20,7 @@ use sidereon_core::{GnssSystem, Wgs84Geodetic};
 use crate::error::{engine_error, range_error, type_error};
 use crate::geometry_quality::GeometryQuality;
 use crate::marshal::mat3_flat;
+use crate::positioning_error::{positioning_error, static_detail};
 use crate::sp3::Sp3;
 use crate::spp;
 
@@ -52,15 +53,6 @@ fn influence_status_name(status: StaticInfluenceStatus) -> &'static str {
         StaticInfluenceStatus::InvalidInput => "invalidInput",
         StaticInfluenceStatus::EphemerisUnavailable => "ephemerisUnavailable",
         StaticInfluenceStatus::SolveFailed => "solveFailed",
-    }
-}
-
-fn rejection_reason_label(reason: sidereon_core::positioning::RejectionReason) -> &'static str {
-    match reason {
-        sidereon_core::positioning::RejectionReason::NoEphemeris => "noEphemeris",
-        sidereon_core::positioning::RejectionReason::LowElevation => "lowElevation",
-        sidereon_core::positioning::RejectionReason::SbasWithdrawn => "sbasWithdrawn",
-        sidereon_core::positioning::RejectionReason::SbasIonoUncovered => "sbasIonoUncovered",
     }
 }
 
@@ -107,6 +99,10 @@ fn static_options(
     options: JsValue,
     first_initial_guess: Option<[f64; 4]>,
     first_robust: Option<CoreRobustConfig>,
+    first_qzss_clock: Option<QzssClock>,
+    first_troposphere_model: Option<TroposphereModel>,
+    qzss_clock_consistent: bool,
+    troposphere_model_consistent: bool,
 ) -> Result<CoreStaticSolveOptions, JsValue> {
     let input: StaticSolveOptionsInput = if options.is_undefined() || options.is_null() {
         StaticSolveOptionsInput::default()
@@ -122,10 +118,30 @@ fn static_options(
         Some(robust) => Some(robust_config(&robust)?),
         None => first_robust,
     };
+    if !qzss_clock_consistent && input.qzss_clock.is_none() {
+        return Err(type_error(
+            "static epochs select different qzssClock values; set static options.qzssClock",
+        ));
+    }
+    if !troposphere_model_consistent && input.troposphere_model.is_none() {
+        return Err(type_error(
+            "static epochs select different troposphereModel values; set static options.troposphereModel",
+        ));
+    }
     let mut options = CoreStaticSolveOptions::default();
     options.initial_position_m = initial_position_m;
     options.with_geodetic = input.with_geodetic.unwrap_or(true);
     options.robust = robust;
+    options.qzss_clock = input
+        .qzss_clock
+        .map(Into::into)
+        .or(first_qzss_clock)
+        .unwrap_or_default();
+    options.troposphere_model = input
+        .troposphere_model
+        .map(Into::into)
+        .or(first_troposphere_model)
+        .unwrap_or_default();
     Ok(options)
 }
 
@@ -137,18 +153,37 @@ where
     let mut core_epochs = Vec::with_capacity(epoch_values.len());
     let mut first_initial_guess = None;
     let mut first_robust = None;
+    let mut first_qzss_clock = None;
+    let mut first_troposphere_model = None;
+    let mut qzss_clock_consistent = true;
+    let mut troposphere_model_consistent = true;
 
     for value in epoch_values {
         let (inputs, _with_geodetic) = spp::build_inputs(value)?;
         if first_initial_guess.is_none() {
             first_initial_guess = Some(inputs.initial_guess);
             first_robust = inputs.robust;
+            first_qzss_clock = Some(inputs.qzss_clock);
+            first_troposphere_model = Some(inputs.troposphere_model);
+        } else {
+            qzss_clock_consistent &= first_qzss_clock == Some(inputs.qzss_clock);
+            troposphere_model_consistent &=
+                first_troposphere_model == Some(inputs.troposphere_model);
         }
         core_epochs.push(CoreStaticEpoch::from_solve_inputs(inputs));
     }
 
-    let options = static_options(options, first_initial_guess, first_robust)?;
-    let inner = core_solve_static(eph, &core_epochs, options).map_err(engine_error)?;
+    let options = static_options(
+        options,
+        first_initial_guess,
+        first_robust,
+        first_qzss_clock,
+        first_troposphere_model,
+        qzss_clock_consistent,
+        troposphere_model_consistent,
+    )?;
+    let inner = core_solve_static(eph, &core_epochs, options)
+        .map_err(|e| positioning_error(&static_detail(&e)))?;
     Ok(StaticSolution { inner })
 }
 
@@ -158,6 +193,8 @@ struct StaticSolveOptionsInput {
     initial_position_m: Option<[f64; 3]>,
     with_geodetic: Option<bool>,
     robust: Option<RobustInput>,
+    qzss_clock: Option<spp::QzssClockInput>,
+    troposphere_model: Option<spp::TroposphereModelInput>,
 }
 
 #[derive(Deserialize, Default)]
@@ -186,13 +223,6 @@ struct StaticResidualJs {
     base_weight: f64,
     effective_weight: f64,
     robust_weight_ratio: f64,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RejectedSatJs {
-    satellite_id: String,
-    reason: &'static str,
 }
 
 #[derive(Serialize)]
@@ -239,7 +269,7 @@ struct StaticSatelliteBatchInfluenceJs {
 struct StaticMetadataJs {
     iterations: usize,
     converged: bool,
-    status: String,
+    status: &'static str,
     outer_iterations: usize,
     final_robust_scale_m: Option<f64>,
     used_measurements: usize,
@@ -411,8 +441,16 @@ impl StaticSolution {
         to_js(&used)
     }
 
-    /// Rejected satellites grouped by input epoch.
-    #[wasm_bindgen(getter, js_name = rejectedSats)]
+    /// Rejected satellites grouped by input epoch, each as
+    /// `{ satelliteId, reason }` with the reasons `SppSolution.rejectedSats`
+    /// reports. An ionosphere-corrected epoch leaves out a satellite with no
+    /// resolvable carrier as `"ionosphereCarrierUnresolved"` and keeps its
+    /// other satellites.
+    #[wasm_bindgen(
+        getter,
+        js_name = rejectedSats,
+        unchecked_return_type = "SppRejectedSatellite[][]"
+    )]
     pub fn rejected_sats(&self) -> Result<JsValue, JsValue> {
         let rejected = self
             .inner
@@ -421,10 +459,7 @@ impl StaticSolution {
             .map(|epoch| {
                 epoch
                     .iter()
-                    .map(|row| RejectedSatJs {
-                        satellite_id: row.satellite_id.to_string(),
-                        reason: rejection_reason_label(row.reason),
-                    })
+                    .map(spp::RejectedSatJs::from)
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
@@ -437,13 +472,15 @@ impl StaticSolution {
         self.inner.geometry_quality.into()
     }
 
-    /// Solver iteration, convergence, and redundancy metadata.
-    #[wasm_bindgen(getter)]
+    /// Solver iteration, convergence, and redundancy metadata. `status` is
+    /// `"SelectionSettled"` when the solve converged; `"OuterBudgetExhausted"`
+    /// and `"OuterOscillation"` identify robust solves that did not settle.
+    #[wasm_bindgen(getter, unchecked_return_type = "StaticSolveMetadata")]
     pub fn metadata(&self) -> Result<JsValue, JsValue> {
         to_js(&StaticMetadataJs {
             iterations: self.inner.metadata.iterations,
             converged: self.inner.metadata.converged,
-            status: format!("{:?}", self.inner.metadata.status),
+            status: crate::spp::solve_status_label(self.inner.metadata.status),
             outer_iterations: self.inner.metadata.outer_iterations,
             final_robust_scale_m: self.inner.metadata.final_robust_scale_m,
             used_measurements: self.inner.metadata.used_measurements,

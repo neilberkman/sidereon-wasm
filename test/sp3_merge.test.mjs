@@ -122,6 +122,24 @@ test("degenerate single source reports single-source cells", () => {
     ),
   );
 
+  // Whole-product aggregates: no cell had a second member, so there is no
+  // pooled dispersion, the maxima are the single-source zeros, and every
+  // accepted cell was carried from one source.
+  assert.equal(report.positionAgreementRmsM, undefined);
+  assert.equal(report.clockAgreementRmsS, undefined);
+  assert.equal(report.positionAgreementMaxM, 0);
+  assert.equal(report.clockAgreementMaxS, 0);
+  assert.equal(report.singleSourceFraction, 1);
+  const perEpoch = report.perEpochAgreement;
+  assert.equal(perEpoch.length, epochCount);
+  const axis0 = ref.epochsJ2000Seconds();
+  perEpoch.forEach((epoch, i) => {
+    assert.equal(epoch.epochJ2000Seconds, axis0[i]);
+    assert.equal(epoch.satellites, 0);
+    assert.equal(epoch.positionRmsM, undefined);
+    assert.equal(epoch.clockRmsS, undefined);
+  });
+
   const axis = ref.epochsJ2000Seconds();
   const query = Float64Array.from([(axis[0] + axis[1]) / 2.0]);
   const expected = ref.interpolate("G01", query);
@@ -260,4 +278,161 @@ test("SP3 prediction summary exposes the observed-through boundary", () => {
   assert.equal(summary.epochs.length, sp3.epochCount);
   assert.ok(summary.epochs.every((epoch) => epoch.observed));
   assert.equal(summary.observedThroughJ2000Seconds, axis[axis.length - 1]);
+});
+
+test("a clock-only merged cell reports no position dispersion rather than zero", () => {
+  // Source 1 carries G02 with an all-zero position, which SP3 reads as an
+  // absent orbit, beside a valid clock.
+  const a = miniSp3("IGS14", [["G01", [15000.0, -20000.0, 5000.0], 100.0]]);
+  const b = miniSp3("IGS14", [
+    ["G01", [15000.0002, -20000.0, 5000.0], 100.0],
+    ["G02", [0.0, 0.0, 0.0], 250.0],
+  ]);
+  const { report } = mergeSp3([a, b], { clockMinCommon: 1 });
+
+  const g02 = report.agreement.find((metric) => metric.satellite === "G02");
+  assert.ok(g02, "the clock-only cell has an agreement metric");
+  assert.equal(g02.positionMembers, 0);
+  assert.equal(g02.positionRmsM, undefined);
+  assert.equal(g02.positionMaxM, undefined);
+  assert.equal(g02.clockMembers, 1);
+  assert.equal(g02.clockRmsS, 0);
+  assert.equal(g02.clockMaxS, 0);
+
+  const g01 = report.agreement.find((metric) => metric.satellite === "G01");
+  assert.equal(g01.positionMembers, 2);
+  assert.ok(Number.isFinite(g01.positionRmsM));
+  assert.ok(g01.positionRmsM <= g01.positionMaxM);
+});
+
+// Six GPS satellites on circular trajectories on a 300 s grid from 2020-06-25
+// 00:00, the engine's merge-coverage fixture: `first` and `count` pick the
+// epochs, in 300 s steps from 00:00.
+function coverageSp3(first, count) {
+  const pad = (value, width) => String(value).padStart(width);
+  const epochFields = (index) =>
+    `2020  6 25 ${pad(Math.floor(index / 12), 2)}${pad((index % 12) * 5, 3)}  0.00000000`;
+  const lines = [
+    `#cP${epochFields(first)}     ${pad(count, 3)} ORBIT IGS14 FIT  TST`,
+    `## 2111 ${pad((345_600 + first * 300).toFixed(8), 14)}   300.00000000 59025 ${((first * 300) / 86_400).toFixed(13)}`,
+    "+    6   G01G02G03G04G05G06  0  0  0  0  0  0  0  0  0  0  0",
+    "++         0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0",
+    "%c G  cc GPS ccc cccc cccc cccc cccc ccccc ccccc ccccc ccccc",
+    "%c cc cc ccc ccc cccc cccc cccc cccc ccccc ccccc ccccc ccccc",
+    "%f  1.2500000  1.025000000  0.00000000000  0.000000000000000",
+    "%f  0.0000000  0.000000000  0.00000000000  0.000000000000000",
+    "%i    0    0    0    0      0      0      0      0         0",
+    "%i    0    0    0    0      0      0      0      0         0",
+    "/* SYNTHETIC SP3 COVERAGE FIXTURE",
+  ];
+  for (let index = first; index < first + count; index++) {
+    const seconds = index * 300;
+    lines.push(`*  ${epochFields(index)}`);
+    for (let prn = 1; prn <= 6; prn++) {
+      const angle = (seconds * 2 * Math.PI) / 43_200 + prn * 0.3;
+      const fields = [
+        26_560 * Math.cos(angle),
+        26_560 * Math.sin(angle) * 0.6,
+        26_560 * Math.sin(angle) * 0.8,
+        10 + prn,
+      ];
+      lines.push(`PG0${prn}${fields.map((value) => pad(value.toFixed(6), 14)).join("")}`);
+    }
+  }
+  lines.push("EOF");
+  return loadSp3(encode.encode(`${lines.join("\n")}\n`));
+}
+
+const coveragePrecedence = (precedenceScope) => ({
+  combine: "precedence",
+  precedenceScope,
+  minAgree: 1,
+  positionToleranceM: 5,
+});
+
+test("satellite-arc precedence omits empty epochs and reports withheld cells and clocks", () => {
+  // Source A carries epochs 0-71 and source B epochs 60-83. A owns every
+  // satellite arc, so B's twelve epochs past A's end hold no cell: they are
+  // not written, and the report lists each of them, each withheld position
+  // and each of B's clocks there, whose datum offset to A is not observable
+  // past the overlap and is never extrapolated.
+  const a = coverageSp3(0, 72);
+  const b = coverageSp3(60, 24);
+  const aAxis = a.epochsJ2000Seconds();
+  const bAxis = b.epochsJ2000Seconds();
+
+  const { sp3: merged, report } = mergeSp3([a, b], coveragePrecedence("satellite_arc"));
+
+  assert.deepEqual(merged.epochsJ2000Seconds(), aAxis);
+  const omitted = report.omittedEpochsJ2000Seconds;
+  assert.ok(omitted instanceof Float64Array);
+  assert.deepEqual(Array.from(omitted), Array.from(bAxis.slice(12)));
+
+  assert.equal(report.arcWithheldCount, 6 * 12);
+  assert.equal(report.arcWithheld.length, 6 * 12);
+  for (const flag of report.arcWithheld) {
+    assert.deepEqual(Array.from(flag.sources), [1]);
+    assert.ok(omitted.includes(flag.epochJ2000Seconds));
+  }
+
+  assert.equal(report.clockOmissionCount, 6 * 12);
+  for (const omission of report.clockOmissions) {
+    assert.equal(omission.reason, "datum_not_observable");
+    assert.equal(omission.source, 1);
+    assert.equal(omission.preferred, undefined);
+    assert.equal(omission.cellHasClock, false);
+    assert.ok(omitted.includes(omission.epochJ2000Seconds));
+  }
+  assert.equal(report.droppedInputEpochCount, 0);
+});
+
+test("cell precedence writes positions past the overlap and names each clock it left out", () => {
+  const a = coverageSp3(0, 72);
+  const b = coverageSp3(60, 24);
+  const bAxis = b.epochsJ2000Seconds();
+
+  const { sp3: merged, report } = mergeSp3([a, b], coveragePrecedence("cell"));
+
+  assert.equal(merged.epochCount, 84);
+  assert.equal(report.omittedEpochsJ2000Seconds.length, 0);
+  assert.equal(report.arcWithheldCount, 0);
+
+  // B's positions fill epochs 72-83; its clocks there are not written.
+  const past = Array.from(bAxis.slice(12));
+  assert.equal(report.clockOmissionCount, 6 * 12);
+  for (const omission of report.clockOmissions) {
+    assert.equal(omission.reason, "datum_not_observable");
+    assert.equal(omission.source, 1);
+    assert.equal(omission.cellHasClock, false);
+    assert.ok(past.includes(omission.epochJ2000Seconds));
+  }
+});
+
+test("an explicit fractional target interval merges on its grid and lists the input epochs off it", () => {
+  // 450.5 s is a whole number of the 10 ns ticks an SP3 interval states.
+  // Anchored at 00:00, its grid meets the 300 s input grid again only after
+  // 270,300 s, so every input epoch after the first is off it.
+  const a = coverageSp3(0, 72);
+  const axis = a.epochsJ2000Seconds();
+
+  const { sp3: merged, report } = mergeSp3([a], {
+    minAgree: 1,
+    targetEpochIntervalS: 450.5,
+  });
+
+  assert.equal(merged.epochCount, 1);
+  assert.deepEqual(Array.from(merged.epochsJ2000Seconds()), [axis[0]]);
+  assert.equal(report.droppedInputEpochCount, 71);
+  report.droppedInputEpochs.forEach((dropped, i) => {
+    assert.equal(dropped.source, 0);
+    assert.equal(dropped.epochIndex, i + 1);
+    assert.equal(dropped.epochJ2000Seconds, axis[i + 1]);
+    assert.equal(dropped.reason, "off_target_grid");
+  });
+
+  // A target no whole number of ticks states is refused by the engine.
+  assert.throws(
+    () => mergeSp3([coverageSp3(0, 2)], { minAgree: 1, targetEpochIntervalS: 1e-9 }),
+    /10-nanosecond ticks/,
+  );
 });

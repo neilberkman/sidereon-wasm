@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 
 import {
   buildDualFrequencyRinexRtkArc,
+  ExactEpoch,
   buildRinexRtkArc,
   fixWideLaneRtkArc,
   loadSp3,
@@ -21,7 +22,7 @@ import {
   solveStaticRtkArc,
   solveWideLaneFixedRinexRtkBaseline,
 } from "../pkg-node/sidereon.js";
-import { f64Bits, fixture, fixtureJson, norm } from "./helpers.mjs";
+import { coreGoldens, f64Bits, fixture, fixtureJson, norm } from "./helpers.mjs";
 
 // GPS L1 wavelength (metres) the fixture's ambiguities use.
 const L1_WAVELENGTH_M = 0.19029367279836487;
@@ -238,7 +239,11 @@ function arpPosition(markerM, obs) {
   const [heightM, eastM, northM] = obs.header.antennaDeltaHenM;
   assert.equal(eastM, 0.0);
   assert.equal(northM, 0.0);
-  const radiusM = norm(markerM);
+  // The radius is formed as the golden generator forms it, sqrt(x*x + y*y + z*z)
+  // summed left to right, so the ARP matches its reference position to the bit
+  // (Math.hypot rounds differently).
+  const [x, y, z] = markerM;
+  const radiusM = Math.sqrt(x * x + y * y + z * z);
   return markerM.map((component) => component + (component / radiusM) * heightM);
 }
 
@@ -300,6 +305,54 @@ test("solveRtkArc reports one solution per epoch and carries the filter state", 
   assert.equal(sol.finalState.information.length, n * n);
   assert.equal(sol.finalState.epochCount, fx.epochs.length);
   assert.equal(sol.finalState.baselineM.length, 3);
+});
+
+test("RTK arc input accepts lossless exact prediction epochs", () => {
+  const with_exact_epochs = arcEpochs.map((epoch, index) => ({
+    ...epoch,
+    predictionEpoch: new ExactEpoch(BigInt(index), 123n).checkedAddSeconds(1e-19),
+  }));
+  assert.doesNotThrow(() => solveRtkArc(with_exact_epochs, config));
+  assert.equal(with_exact_epochs[0].predictionEpoch.subAttosecondDigits, 1n);
+  assert.equal(with_exact_epochs[0].predictionEpoch.subAttosecondPlaces, 1);
+  assert.equal(with_exact_epochs[0].predictionEpoch.attoseconds, 123n);
+});
+
+test("wide-lane arc preserves exact gap and prediction epochs", () => {
+  const exact_epochs = dualArcEpochs.map((epoch, index) => ({
+    ...epoch,
+    gapEpoch: new ExactEpoch(BigInt(index), 3n).checkedAddSeconds(1e-19),
+    predictionEpoch: new ExactEpoch(BigInt(index + 10), 7n).checkedAddSeconds(1e-19),
+  }));
+  const solution = fixWideLaneRtkArc(exact_epochs, wideLaneConfig);
+  assert.equal(solution.epochs[0].gapEpoch.equals(exact_epochs[0].gapEpoch), true);
+  assert.equal(solution.epochs[0].predictionEpoch.equals(exact_epochs[0].predictionEpoch), true);
+  assert.equal(solution.epochs[0].gapEpoch.subAttosecondDigits, 1n);
+  assert.equal(solution.epochs[0].predictionEpoch.subAttosecondDigits, 1n);
+});
+
+test("wide-lane arc preserves BigInt epochs beyond Number precision", () => {
+  const whole_seconds = 9_007_199_254_740_993n;
+  const gap_epoch = new ExactEpoch(whole_seconds, 123n).checkedAddSeconds(1e-19);
+  const prediction_epoch = new ExactEpoch(whole_seconds + 11n, 456n).checkedAddSeconds(1e-19);
+  const exact_epochs = dualArcEpochs.map((epoch, index) => ({
+    ...epoch,
+    gapEpoch: index === 0 ? gap_epoch : new ExactEpoch(BigInt(index), 3n),
+    predictionEpoch: index === 0 ? prediction_epoch : new ExactEpoch(BigInt(index + 10), 7n),
+  }));
+
+  const solution = fixWideLaneRtkArc(exact_epochs, wideLaneConfig);
+  const returned_gap_epoch = solution.epochs[0].gapEpoch;
+  const returned_prediction_epoch = solution.epochs[0].predictionEpoch;
+
+  assert.equal(gap_epoch.wholeSeconds, whole_seconds);
+  assert.equal(gap_epoch.attoseconds, 123n);
+  assert.equal(gap_epoch.subAttosecondDigits, 1n);
+  assert.equal(gap_epoch.equals(returned_gap_epoch), true);
+  assert.equal(prediction_epoch.wholeSeconds, whole_seconds + 11n);
+  assert.equal(prediction_epoch.attoseconds, 456n);
+  assert.equal(prediction_epoch.subAttosecondDigits, 1n);
+  assert.equal(prediction_epoch.equals(returned_prediction_epoch), true);
 });
 
 test("solveRtkArc exposes preprocessing metadata and covariance", () => {
@@ -389,6 +442,7 @@ test("buildRinexRtkArc and solveStaticRinexRtkBaseline solve the real WTZR/WTZZ 
   const arc = buildRinexRtkArc(sp3, baseObs, roverObs, arcOptions);
   assert.equal(arc.epochs.length, 120);
   assert.equal(arc.skippedEpochCount, 0);
+  assert.deepEqual(arc.unresolvedCarriers, []);
   assert.ok(Object.keys(arc.wavelengthsM).length > 0);
   assert.ok(Object.values(arc.offsetsM).every((value) => value === 0.0));
 
@@ -420,9 +474,17 @@ test("buildRinexRtkArc and solveStaticRinexRtkBaseline solve the real WTZR/WTZZ 
 
 test("solveStaticReferenceStationRinex solves the real WTZR/WTZZ static coordinate", () => {
   const { sp3, baseObs, roverObs, baseArpM, truthBaselineM } = wettzellRinexInputs();
+  // The golden generator (test/golden-gen) solved this configuration natively
+  // from the same ARP, formed with the same operations.
+  const golden = coreGoldens().rtkStaticReference;
+  assert.deepEqual(
+    baseArpM.map(f64Bits),
+    golden.referencePositionM.map((text) => BigInt(text)),
+  );
+  const referencePositionM = baseArpM;
   const maxEpochs = 24;
   const sol = solveStaticReferenceStationRinex(sp3, baseObs, roverObs, {
-    referencePositionM: baseArpM,
+    referencePositionM,
     enableCodeDgnss: false,
     enableCarrierRtk: true,
     withGeodetic: true,
@@ -452,28 +514,17 @@ test("solveStaticReferenceStationRinex solves the real WTZR/WTZZ static coordina
   assert.equal(sol.modeReports[0].status, "solved");
   assert.equal(sol.modeReports[0].usedEpochs, maxEpochs);
   assert.equal(sol.modeReports[0].skippedEpochs, 0);
-  assert.equal(sol.modeReports[0].usedMeasurements, 432);
+  assert.equal(sol.modeReports[0].usedMeasurements, golden.usedMeasurements);
   assert.ok(vectorErrorM(sol.baselineVectorM, truthBaselineM) < 0.005);
   assert.ok(sol.carrierSolution.integerRatio > 3.0);
-  assert.deepEqual(sol.positionM.map(f64Bits), [
-    0x414f181daf5efc9bn,
-    0x412c701ad3584625n,
-    0x4152510859bc4563n,
-  ]);
-  assert.deepEqual(sol.baselineVectorM.map(f64Bits), [
-    0xbfef911d96f93d53n,
-    0xbfe4dc7081330552n,
-    0x3ff1159562cca4a5n,
-  ]);
+  const bits = (values) => values.map((text) => BigInt(text));
+  assert.deepEqual(sol.positionM.map(f64Bits), bits(golden.positionM));
+  assert.deepEqual(sol.baselineVectorM.map(f64Bits), bits(golden.baselineVectorM));
   assert.deepEqual(
     sol.covariance.positionEcefM2.map((row) => row.map(f64Bits)),
-    [
-      [0x3f04acaf48e915f5n, 0x3edf5da71e914413n, 0x3ef32e401d0c7caen],
-      [0x3edf5da71e914413n, 0x3eec4a84fc5f2788n, 0x3ed882c671817361n],
-      [0x3ef32e401d0c7cadn, 0x3ed882c671817361n, 0x3f08fce97d368dedn],
-    ],
+    golden.positionCovarianceEcefM2.map(bits),
   );
-  assert.deepEqual(sol.geodetic.heightM, 666.1751900247245);
+  assert.equal(f64Bits(sol.geodetic.heightM), BigInt(golden.heightM));
 });
 
 test("buildDualFrequencyRinexRtkArc and solveWideLaneFixedRinexRtkBaseline fix the real WTZR/WTZZ arc", () => {
@@ -483,6 +534,8 @@ test("buildDualFrequencyRinexRtkArc and solveWideLaneFixedRinexRtkBaseline fix t
   const arc = buildDualFrequencyRinexRtkArc(sp3, baseObs, roverObs, arcOptions);
   assert.equal(arc.epochs.length, 120);
   assert.equal(arc.skippedEpochCount, 0);
+  assert.deepEqual(arc.unresolvedCarriers, []);
+  assert.ok(arc.epochs[1].gapEpoch instanceof ExactEpoch);
 
   const sol = solveWideLaneFixedRinexRtkBaseline(sp3, baseObs, roverObs, {
     baseM: baseArpM,
@@ -535,4 +588,63 @@ test("prepareIonosphereFreeRtkArc prepares single-frequency RTK arc inputs", () 
 
 test("solveRtkArc rejects an empty arc", () => {
   assert.throws(() => solveRtkArc([], config));
+});
+
+// WTZR and WTZZ both give R01 channel 1. Restated as channel 7, outside the
+// -7..=6 FDMA allocation (the channel real IGS headers give R28), R01's L1C has
+// no carrier frequency, so R01 is left out of each epoch and reported, and the
+// rest of the arc is built.
+function withR01OnChannel7(name) {
+  const text = fixture(`obs/${name}`).toString("utf8");
+  const patched = text.replace(" 24 R01  1 R02", " 24 R01  7 R02");
+  assert.notEqual(patched, text, `${name} states R01 on channel 1`);
+  return parseRinexObs(Buffer.from(patched, "utf8"));
+}
+
+test("buildRinexRtkArc reports a GLONASS slot with no carrier and builds the rest", () => {
+  const sp3 = loadSp3(fixture(`sp3/${WTZR_WTZZ_SP3}`));
+  const baseObs = withR01OnChannel7(WTZR_OBS);
+  const roverObs = withR01OnChannel7(WTZZ_OBS);
+  // A channel outside the allocation is kept as the header states it.
+  assert.deepEqual(Array.from(baseObs.header.glonassSlots.slice(0, 2)), [1, 7]);
+  const maxEpochs = 2;
+  const arc = buildRinexRtkArc(sp3, baseObs, roverObs, {
+    maxEpochs,
+    includePredictionTime: false,
+    signalPairs: [
+      { system: "G", codeObservable: "C1C", phaseObservable: "L1C" },
+      { system: "R", codeObservable: "C1C", phaseObservable: "L1C" },
+    ],
+  });
+  assert.equal(arc.epochs.length, maxEpochs);
+
+  // R01 is the only slot without a carrier; every report names it and L1C.
+  assert.ok(arc.unresolvedCarriers.length > 0);
+  for (const row of arc.unresolvedCarriers) {
+    assert.deepEqual(Object.keys(row).sort(), [
+      "epochIndex",
+      "observableCode",
+      "receiver",
+      "satelliteId",
+    ]);
+    assert.equal(row.satelliteId, "R01");
+    assert.equal(row.observableCode, "L1C");
+    assert.ok(row.receiver === "base" || row.receiver === "rover");
+    assert.ok(Number.isInteger(row.epochIndex) && row.epochIndex >= 0);
+  }
+  // Both receivers observe R01 in their first epoch.
+  for (const receiver of ["base", "rover"]) {
+    assert.ok(
+      arc.unresolvedCarriers.some((row) => row.receiver === receiver && row.epochIndex === 0),
+      `${receiver} reports R01 at its first epoch`,
+    );
+  }
+  for (const epoch of arc.epochs) {
+    assert.ok(!epoch.base.some((obs) => obs.satelliteId === "R01"));
+    assert.ok(!epoch.rover.some((obs) => obs.satelliteId === "R01"));
+    assert.ok(
+      epoch.base.some((obs) => obs.satelliteId.startsWith("R")),
+      "other GLONASS kept",
+    );
+  }
 });

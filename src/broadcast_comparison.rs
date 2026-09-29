@@ -132,7 +132,10 @@ fn j2000_to_split(t_j2000_s: f64) -> Result<JulianDateSplit, JsValue> {
     let days = t_j2000_s / SECONDS_PER_DAY;
     let whole = J2000_JD + days.floor();
     let fraction = days - days.floor();
-    JulianDateSplit::new(whole, fraction).map_err(engine_error)
+    JulianDateSplit::new(whole, fraction).map_err(|error| {
+        let message = error.to_string();
+        crate::tropo::time_model_error_with(error, "Error", &message)
+    })
 }
 
 #[wasm_bindgen]

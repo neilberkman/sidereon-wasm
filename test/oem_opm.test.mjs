@@ -138,8 +138,19 @@ test("parse OEM KVN is forgiving and round-trips", () => {
   const oem = parseOemKvn(OEM_KVN);
   assert.equal(oem.ccsdsOemVers, "2.0");
   assert.equal(oem.segmentCount, 1);
-  // The two-token middle line is skipped and counted, not fatal.
-  assert.equal(oem.skippedStates, 1);
+  // The two-token middle line is skipped and reported, not fatal.
+  assert.equal(oem.skippedStateCount, 1);
+  assert.deepEqual(oem.skippedStates, [
+    {
+      line: 16,
+      segment: 0,
+      text: "2026-06-28T00:05:00 1 2",
+      reason: "itemCount",
+      itemCount: 3,
+      field: null,
+      issue: null,
+    },
+  ]);
   const seg = oem.segments[0];
   assert.equal(seg.metadata.objectName, "TEST");
   assert.equal(seg.metadata.interpolation, "LAGRANGE");
@@ -182,7 +193,8 @@ test("build an OEM with a covariance and re-parse it", () => {
 
   const parsed = parseOemKvn(oem.toKvnString());
   assert.equal(parsed.originator, "BUILDER");
-  assert.equal(parsed.skippedStates, 0);
+  assert.deepEqual(parsed.skippedStates, []);
+  assert.equal(parsed.skippedStateCount, 0);
   const pseg = parsed.segments[0];
   assert.equal(pseg.metadata.interpolationDegree, 5);
   assert.equal(pseg.covariances[0].covRefFrame, "RTN");
@@ -190,10 +202,158 @@ test("build an OEM with a covariance and re-parse it", () => {
   assert.equal(pseg.covariances[0].matrix[35], 6e-6);
 });
 
-test("an OEM covariance must be positive semidefinite", () => {
+test("an OEM covariance keeps its values as stated and validates on request", () => {
+  // A message holds the matrix as printed; a matrix that is not positive
+  // semidefinite is kept, and only toValidatedMatrix refuses it.
   const bad = new Float64Array(36);
   bad[0] = -1;
-  assert.throws(() => new OemCovariance("e", bad, undefined), RangeError);
+  const cov = new OemCovariance("e", bad, undefined);
+  assert.equal(cov.lowerTriangle.length, 21);
+  assert.equal(cov.lowerTriangle[0], -1);
+  assert.equal(cov.matrix[0], -1);
+  assert.throws(() => cov.toValidatedMatrix(), RangeError);
+
+  // The 21 lower-triangle values build the same block as the full matrix.
+  const lower = new Float64Array(21).map((_, i) => i + 1);
+  const fromLower = new OemCovariance("e", lower, undefined);
+  assert.deepEqual(Array.from(fromLower.lowerTriangle), Array.from(lower));
+  assert.equal(fromLower.matrix[1], 2);
+  assert.equal(fromLower.matrix[6], 2);
+  const again = new OemCovariance("e", fromLower.matrix, undefined);
+  assert.deepEqual(Array.from(again.lowerTriangle), Array.from(lower));
+
+  // An asymmetric full matrix is refused: only one of the two values could be kept.
+  const asym = new Float64Array(36);
+  asym[1] = 1;
+  assert.throws(() => new OemCovariance("e", asym, undefined), RangeError);
+  assert.throws(() => new OemCovariance("e", new Float64Array(20), undefined), TypeError);
+});
+
+test("OEM and OPM retain header, metadata and data comments", () => {
+  const kvn = `CCSDS_OEM_VERS = 2.0
+COMMENT header note
+CLASSIFICATION = UNCLASSIFIED
+CREATION_DATE = 2026-06-28T00:00:00
+ORIGINATOR = SIDEREON
+MESSAGE_ID = OEM-1
+META_START
+COMMENT metadata note
+OBJECT_NAME = TEST
+OBJECT_ID = 2026-001A
+CENTER_NAME = EARTH
+REF_FRAME = EME2000
+REF_FRAME_EPOCH = 2000-01-01T12:00:00
+TIME_SYSTEM = UTC
+START_TIME = 2026-06-28T00:00:00
+STOP_TIME = 2026-06-28T00:10:00
+META_STOP
+COMMENT before the first state
+2026-06-28T00:00:00 1 2 3 0.1 0.2 0.3
+COMMENT between states
+2026-06-28T00:10:00 4 5 6 0.4 0.5 0.6
+`;
+  const oem = parseOemKvn(kvn);
+  assert.deepEqual(oem.comments, ["header note"]);
+  assert.equal(oem.classification, "UNCLASSIFIED");
+  assert.equal(oem.messageId, "OEM-1");
+  const seg = oem.segments[0];
+  assert.deepEqual(seg.metadata.comments, ["metadata note"]);
+  assert.equal(seg.metadata.refFrameEpoch, "2000-01-01T12:00:00");
+  assert.deepEqual(seg.dataComments, [
+    { position: 0, text: "before the first state" },
+    { position: 1, text: "between states" },
+  ]);
+  assert.equal(parseOemKvn(oem.toKvnString()).toKvnString(), oem.toKvnString());
+
+  const md = new OemMetadata(
+    "SAT",
+    "2026-9Z",
+    "EARTH",
+    "EME2000",
+    "UTC",
+    "2026-06-28T00:00:00",
+    "2026-06-28T00:10:00",
+    { comments: ["built"], refFrameEpoch: "2000-01-01T12:00:00" },
+  );
+  // A segment takes ownership of the states it is given, so each segment gets
+  // its own.
+  const state0 = () =>
+    new OemState(
+      "2026-06-28T00:00:00",
+      Float64Array.from([1, 2, 3]),
+      Float64Array.from([0.1, 0.2, 0.3]),
+      undefined,
+    );
+  const built = new Oem(
+    [new OemSegment(md, [state0()], [], [{ position: 1, text: "after" }], [])],
+    {
+      comments: ["top"],
+      messageId: "M",
+    },
+  );
+  const round = parseOemKvn(built.toKvnString());
+  assert.deepEqual(round.comments, ["top"]);
+  assert.equal(round.messageId, "M");
+  assert.deepEqual(round.segments[0].metadata.comments, ["built"]);
+  assert.deepEqual(round.segments[0].dataComments, [{ position: 1, text: "after" }]);
+  assert.throws(() => new Oem([new OemSegment(md, [state0()], [])], { originatr: "x" }), TypeError);
+
+  const opmKvn = `${OPM_KVN.replace(
+    "CCSDS_OPM_VERS = 2.0\n",
+    "CCSDS_OPM_VERS = 2.0\nCOMMENT opm header\n",
+  )
+    .replace("ORIGINATOR = SIDEREON\n", "ORIGINATOR = SIDEREON\nMESSAGE_ID = OPM-1\n")
+    .replace(
+      "OBJECT_NAME = OSPREY\n",
+      "COMMENT metadata\nOBJECT_NAME = OSPREY\n",
+    )}USER_DEFINED_FOO = bar baz\n`;
+  const opm = parseOpmKvn(opmKvn);
+  assert.deepEqual(opm.comments, ["opm header"]);
+  assert.equal(opm.messageId, "OPM-1");
+  assert.deepEqual(opm.metadata.comments, ["metadata"]);
+  assert.deepEqual(opm.userDefined, [{ parameter: "FOO", value: "bar baz" }]);
+  assert.equal(parseOpmKvn(opm.toKvnString()).toKvnString(), opm.toKvnString());
+});
+
+test("OEM and OPM refuse with typed errors naming the field", () => {
+  let caught;
+  try {
+    parseOpmKvn(OPM_KVN.replace("MASS = 425", "MASS = 425\nMASS = 426"));
+  } catch (e) {
+    caught = e;
+  }
+  assert.equal(caught.name, "OpmError");
+  assert.equal(caught.detail.kind, "DUPLICATE_FIELD");
+  assert.equal(caught.detail.field, "MASS");
+  assert.equal(caught.detail.first, "425");
+  assert.equal(caught.detail.second, "426");
+
+  const md = new OpmMetadata("SAT\nX", "2026-9Z", "EARTH", "EME2000", "UTC");
+  const st = new OpmState(
+    "2026-06-28T00:00:00",
+    Float64Array.from([7000, 0, 0]),
+    Float64Array.from([0, 7.5, 1]),
+  );
+  const opm = new Opm(md, st, undefined, undefined, undefined, [], undefined);
+  try {
+    opm.toKvnString();
+    assert.fail("expected a refusal");
+  } catch (e) {
+    assert.equal(e.name, "OpmError");
+    assert.equal(e.detail.kind, "UNWRITABLE_TEXT");
+    assert.equal(e.detail.field, "OBJECT_NAME");
+    assert.equal(e.detail.issue, "lineBreak");
+  }
+
+  try {
+    parseOemKvn(
+      OEM_KVN.replace("INTERPOLATION = LAGRANGE", "INTERPOLATION = LAGRANGE\nBOGUS_KEY = 1"),
+    );
+    assert.fail("expected a refusal");
+  } catch (e) {
+    assert.equal(e.name, "OemError");
+    assert.equal(e.detail.kind, "UNKNOWN_FIELD");
+  }
 });
 
 test("constructing an OEM with no segments throws", () => {

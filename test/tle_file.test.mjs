@@ -70,3 +70,49 @@ test("parseTleFile strips the CelesTrak '0 ' name marker", () => {
 test("parseTleFile rejects an invalid opsMode", () => {
   assert.throws(() => parseTleFile(`${L1}\n${L2}`, "bogus"));
 });
+
+test("parseTleFile reports every rejected record with its line and reason", () => {
+  const parsed = parseTleFile(FILE);
+  const sats = parsed.satellites;
+  assert.equal(sats[0].lineNumber, 2);
+  assert.equal(sats[1].lineNumber, 5);
+  assert.deepEqual(sats[0].checksumWarnings, []);
+
+  const rejected = parsed.rejected;
+  assert.equal(rejected.length, parsed.skipped);
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].lineNumber, 7);
+  assert.equal(rejected[0].name, "BROKENSAT");
+  assert.equal(rejected[0].issue, "invalid");
+  assert.equal(typeof rejected[0].message, "string");
+});
+
+test("parseTleFile lists stray lines and orphan names instead of dropping them", () => {
+  const text = [L2, "ORPHAN NAME", "", "LONE", L1].join("\n");
+  const parsed = parseTleFile(text);
+  assert.equal(parsed.count, 0);
+  assert.deepEqual(
+    parsed.rejected.map((r) => [r.lineNumber, r.issue]),
+    [
+      [1, "orphanLine2"],
+      [2, "orphanName"],
+      [4, "missingLine2"],
+    ],
+  );
+  assert.equal(parsed.rejected[2].name, "LONE");
+});
+
+test("parseTleFile reads a mismatched checksum only under the lenient policy", () => {
+  const badChecksumL1 = `${L1.slice(0, 68)}0`;
+  const strict = parseTleFile([badChecksumL1, L2].join("\n"));
+  assert.equal(strict.count, 0);
+  assert.equal(strict.rejected[0].issue, "invalid");
+
+  const lenient = parseTleFile([badChecksumL1, L2].join("\n"), undefined, "lenient");
+  assert.equal(lenient.count, 1);
+  const [warning] = lenient.satellites[0].checksumWarnings;
+  assert.equal(warning.kind, "mismatch");
+  assert.equal(warning.expected, 0);
+  assert.equal(warning.computed, 3);
+  assert.equal(lenient.satellites[0].tle.checksumWarnings.length, 1);
+});

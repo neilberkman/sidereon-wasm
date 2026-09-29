@@ -6,6 +6,12 @@
 //! queries are ORTHOMETRIC heights `H` in metres above the EGM96 mean sea level
 //! geoid. Ellipsoidal height is exposed only through explicit `h = H + N`
 //! conversion APIs.
+//!
+//! A DTED null posting is stored as `-32767`, the value the null has under
+//! DTED signed magnitude. A lookup that weights such a posting is refused with
+//! a `TerrainLookupError` whose `detail` is `UNKNOWN_TERRAIN_ELEVATION`, never
+//! returned as a height; a store written before the null was typed reads the
+//! same way.
 
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -24,6 +30,7 @@ use sidereon_core::terrain_store::{
 use sidereon_core::DigestProvenance as CoreDigestProvenance;
 
 use crate::error::{engine_error, type_error, u64_bigint};
+use crate::terrain::{terrain_lookup_error, DtedHorizontalDatumJs, TerrainLookupErrorDetailJs};
 
 const MISSING_EGM96_DAC_REMEDIATION: &str =
     "load WW15MGH.DAC with Egm96FifteenMinuteGeoid.fromWw15mghDacBytes or use fromWw15mghDacPath where host I/O is available";
@@ -63,6 +70,7 @@ struct TerrainStoreHeightBatchResult {
     ok: bool,
     height_m: Option<f64>,
     error: Option<String>,
+    detail: Option<TerrainLookupErrorDetailJs>,
 }
 
 #[derive(Serialize)]
@@ -77,6 +85,7 @@ struct TerrainStoreOrthometricBatchResult {
     ok: bool,
     orthometric_height_m: Option<OrthometricHeightObject>,
     error: Option<String>,
+    detail: Option<TerrainLookupErrorDetailJs>,
 }
 
 #[derive(Serialize)]
@@ -100,6 +109,13 @@ struct TerrainStoreErrorDetail {
     expected: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     found: Option<String>,
+    /// Index field whose value disagrees with the tile id, for
+    /// `TileBoundsMismatch`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<&'static str>,
+    /// Horizontal datum a DTED input states, for `NonWgs84Tile`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    datum: Option<DtedHorizontalDatumJs>,
 }
 
 impl TerrainStoreErrorDetail {
@@ -115,6 +131,8 @@ impl TerrainStoreErrorDetail {
             lon_index: None,
             expected: None,
             found: None,
+            field: None,
+            datum: None,
         }
     }
 }
@@ -128,6 +146,9 @@ struct TerrainDatumErrorDetail {
     path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     remediation: Option<&'static str>,
+    /// Why the terrain lookup gave no height, for `Terrain`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terrain: Option<TerrainLookupErrorDetailJs>,
 }
 
 fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
@@ -193,6 +214,7 @@ fn missing_egm96_dac_error(path: String) -> JsValue {
         message: format!("{path} is missing; {MISSING_EGM96_DAC_REMEDIATION}"),
         path: Some(path),
         remediation: Some(MISSING_EGM96_DAC_REMEDIATION),
+        terrain: None,
     };
     let value = typed_error(detail.name, detail.message.clone(), &detail);
     if let Some(path) = &detail.path {
@@ -265,6 +287,37 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
             detail.found = Some(format!("{found:#x}"));
             detail
         }
+        CoreTerrainStoreError::TileIdOutOfRange {
+            lat_index,
+            lon_index,
+        } => {
+            let mut detail = TerrainStoreErrorDetail::new("TileIdOutOfRange", message.clone());
+            detail.lat_index = Some(lat_index);
+            detail.lon_index = Some(lon_index);
+            detail
+        }
+        CoreTerrainStoreError::TileBoundsMismatch {
+            lat_index,
+            lon_index,
+            field,
+        } => {
+            let mut detail = TerrainStoreErrorDetail::new("TileBoundsMismatch", message.clone());
+            detail.lat_index = Some(lat_index);
+            detail.lon_index = Some(lon_index);
+            detail.field = Some(field);
+            detail
+        }
+        CoreTerrainStoreError::NonWgs84Tile { path, datum } => {
+            let mut detail = TerrainStoreErrorDetail::new("NonWgs84Tile", message.clone());
+            detail.path = Some(path.display().to_string());
+            detail.datum = Some(DtedHorizontalDatumJs::from(&datum));
+            detail
+        }
+        _ => {
+            let mut detail = TerrainStoreErrorDetail::new("Unknown", message.clone());
+            detail.reason = Some(message.clone());
+            detail
+        }
     };
     detail.message = message.clone();
     typed_error(detail.name, message, &detail)
@@ -273,29 +326,33 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
 fn terrain_datum_error(error: CoreTerrainDatumError) -> JsValue {
     let message = error.to_string();
     let detail = match error {
-        CoreTerrainDatumError::Terrain(_) => TerrainDatumErrorDetail {
+        CoreTerrainDatumError::Terrain(err) => TerrainDatumErrorDetail {
             name: "Terrain",
             message,
             path: None,
             remediation: None,
+            terrain: Some(TerrainLookupErrorDetailJs::from_core(&err)),
         },
         CoreTerrainDatumError::Geoid(_) => TerrainDatumErrorDetail {
             name: "Geoid",
             message,
             path: None,
             remediation: None,
+            terrain: None,
         },
         CoreTerrainDatumError::Io { path, message: _ } => TerrainDatumErrorDetail {
             name: "Io",
             message,
             path: Some(path.display().to_string()),
             remediation: None,
+            terrain: None,
         },
         CoreTerrainDatumError::MissingEgm96Dac { path, remediation } => TerrainDatumErrorDetail {
             name: "MissingEgm96Dac",
             message,
             path: Some(path.display().to_string()),
             remediation: Some(remediation),
+            terrain: None,
         },
     };
     let value = typed_error(detail.name, detail.message.clone(), &detail);
@@ -340,6 +397,17 @@ pub enum TerrainStoreError {
     Checksum,
     /// A caller-attested full-store checksum did not match the bytes opened.
     AttestedChecksumMismatch,
+    /// A tile index record names a tile id outside the coordinate domain
+    /// (latitude ids `-90..=89`, longitude ids `-180..=179`).
+    TileIdOutOfRange,
+    /// A tile index bound is not the edge of the one-degree cell its tile id
+    /// names.
+    TileBoundsMismatch,
+    /// A DTED input states a horizontal datum other than WGS84; the store
+    /// records no datum, so such a tile is refused.
+    NonWgs84Tile,
+    /// A future core terrain-store error not yet mapped by this binding.
+    Unknown,
 }
 
 /// Terrain datum conversion and optional geoid-grid loading error variants.
@@ -612,7 +680,10 @@ impl TerrainStoreTileIndex {
 /// Convert a DTED tile tree into canonical memory-mappable terrain store bytes.
 ///
 /// The returned `Uint8Array` can be passed to [`MmapTerrain.fromBytes`] or
-/// [`MmapTerrain.fromVec`]. Posting payloads are decoded orthometric metres.
+/// [`MmapTerrain.fromVec`]. Posting payloads are decoded orthometric metres,
+/// with a DTED null stored as `-32767`. A tile whose DSI states a horizontal
+/// datum other than WGS84 is refused with a `NonWgs84Tile` error, since the
+/// store records no datum.
 #[wasm_bindgen(js_name = dtedTreeToMmapStore)]
 pub fn dted_tree_to_mmap_store(root: &str) -> Result<Vec<u8>, JsValue> {
     core_dted_tree_to_mmap_store(root).map_err(terrain_store_error)
@@ -697,18 +768,23 @@ impl MmapTerrain {
     /// Terrain height in ORTHOMETRIC metres at `(longitudeDeg, latitudeDeg)`.
     ///
     /// Longitude and latitude are degrees. The lookup uses bilinear
-    /// interpolation. Missing tiles evaluate to `0.0`.
+    /// interpolation. A point no stored tile covers, or a lookup that weights a
+    /// null posting, throws a `TerrainLookupError` (`MISSING_TERRAIN_TILE`,
+    /// `UNKNOWN_TERRAIN_ELEVATION`).
     #[wasm_bindgen(js_name = heightM)]
     pub fn height_m(&mut self, longitude_deg: f64, latitude_deg: f64) -> Result<f64, JsValue> {
         self.inner
             .height_m(longitude_deg, latitude_deg)
-            .map_err(engine_error)
+            .map_err(terrain_lookup_error)
     }
 
     /// Terrain height in ORTHOMETRIC metres at `(longitudeDeg, latitudeDeg)`.
     ///
     /// `options.interpolation` is `"bilinear"`, `"nearest"`, or
-    /// `"nearestPosting"`.
+    /// `"nearestPosting"`. A null posting given nonzero weight is refused as
+    /// `UNKNOWN_TERRAIN_ELEVATION` unless a neighbouring stored tile knows the
+    /// height at the same place; a query exactly on a known posting next to a
+    /// null returns that posting.
     #[wasm_bindgen(js_name = heightMWithOptions)]
     pub fn height_m_with_options(
         &mut self,
@@ -719,7 +795,7 @@ impl MmapTerrain {
         let options = lookup_options(options)?;
         self.inner
             .height_m_with_options(longitude_deg, latitude_deg, options)
-            .map_err(engine_error)
+            .map_err(terrain_lookup_error)
     }
 
     /// Typed ORTHOMETRIC terrain height `H` at `(longitudeDeg, latitudeDeg)`.
@@ -732,7 +808,7 @@ impl MmapTerrain {
         let inner = self
             .inner
             .orthometric_height_m(longitude_deg, latitude_deg)
-            .map_err(engine_error)?;
+            .map_err(terrain_lookup_error)?;
         Ok(OrthometricHeightM { inner })
     }
 
@@ -749,7 +825,7 @@ impl MmapTerrain {
         let inner = self
             .inner
             .orthometric_height_m_with_options(longitude_deg, latitude_deg, options)
-            .map_err(engine_error)?;
+            .map_err(terrain_lookup_error)?;
         Ok(OrthometricHeightM { inner })
     }
 
@@ -757,8 +833,10 @@ impl MmapTerrain {
     ///
     /// `points` is an array of `[longitudeDeg, latitudeDeg]` pairs or
     /// `{ longitudeDeg, latitudeDeg }` objects. Each entry is
-    /// `{ ok: true, heightM }` or `{ ok: false, error }`.
-    #[wasm_bindgen(js_name = heightBatch)]
+    /// `{ ok: true, heightM, error: null, detail: null }` or
+    /// `{ ok: false, heightM: null, error, detail }` with `detail` a
+    /// `TerrainLookupErrorDetail`.
+    #[wasm_bindgen(js_name = heightBatch, unchecked_return_type = "TerrainHeightBatchEntry[]")]
     pub fn height_batch(&mut self, points: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
         let points = parse_points(points)?;
         let options = lookup_options(options)?;
@@ -771,11 +849,13 @@ impl MmapTerrain {
                     ok: true,
                     height_m: Some(height_m),
                     error: None,
+                    detail: None,
                 },
                 Err(err) => TerrainStoreHeightBatchResult {
                     ok: false,
                     height_m: None,
                     error: Some(err.to_string()),
+                    detail: Some(TerrainLookupErrorDetailJs::from_core(&err)),
                 },
             })
             .collect();
@@ -784,8 +864,10 @@ impl MmapTerrain {
 
     /// Batch typed ORTHOMETRIC terrain heights for longitude-first points.
     ///
-    /// Each entry is `{ ok: true, orthometricHeightM: { valueM } }` or
-    /// `{ ok: false, error }`.
+    /// Each entry is
+    /// `{ ok: true, orthometricHeightM: { valueM }, error: null, detail: null }`
+    /// or `{ ok: false, orthometricHeightM: null, error, detail }` with
+    /// `detail` a `TerrainLookupErrorDetail`.
     #[wasm_bindgen(js_name = orthometricHeightBatch)]
     pub fn orthometric_height_batch(
         &self,
@@ -805,11 +887,13 @@ impl MmapTerrain {
                         value_m: height.metres(),
                     }),
                     error: None,
+                    detail: None,
                 },
                 Err(err) => TerrainStoreOrthometricBatchResult {
                     ok: false,
                     orthometric_height_m: None,
                     error: Some(err.to_string()),
+                    detail: Some(TerrainLookupErrorDetailJs::from_core(&err)),
                 },
             })
             .collect();

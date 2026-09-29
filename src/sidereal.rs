@@ -16,7 +16,7 @@ use sidereon_core::sidereal::{
 };
 use sidereon_core::GnssSatelliteId;
 
-use crate::error::{engine_error, range_error, type_error};
+use crate::error::{engine_error, type_error};
 use crate::gnss::GnssSystem;
 use crate::rinex_nav::BroadcastEphemeris;
 
@@ -27,7 +27,10 @@ fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
 }
 
 fn duration_from_seconds(value: f64, field: &str) -> Result<Duration, JsValue> {
-    Duration::from_seconds(value).map_err(|e| range_error(&format!("{field}: {e}")))
+    Duration::from_seconds(value).map_err(|error| {
+        let message = format!("{field}: {error}");
+        crate::tropo::time_model_error_with(error, "RangeError", &message)
+    })
 }
 
 fn parse_satellite(token: &str) -> Result<GnssSatelliteId, JsValue> {

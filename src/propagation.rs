@@ -13,10 +13,11 @@ use sidereon_core::astro::propagator::api::PropagationContext;
 use sidereon_core::astro::propagator::StatePropagator;
 use sidereon_core::astro::state::CartesianState;
 
-use crate::error::{engine_error, range_error, type_error};
+use crate::domain_error::propagation_error;
+use crate::error::{range_error, type_error};
 use crate::force_model_input::{
-    force_model_kind, force_model_requires_body_fixed_frame, integrator_kind, DragInput,
-    ForceModelInput, IntegratorOptionsInput,
+    force_model_kind, force_model_requires_body_fixed_frame, integrator_kind,
+    reject_force_model_property, DragInput, ForceModelInput, IntegratorOptionsInput,
 };
 
 /// Numerical propagation request:
@@ -63,6 +64,7 @@ fn fixed3(values: &[f64], field: &str) -> Result<[f64; 3], JsValue> {
 /// propagation fails.
 #[wasm_bindgen(js_name = propagateState)]
 pub fn propagate_state(request: JsValue) -> Result<Ephemeris, JsValue> {
+    reject_force_model_property(&request, "forceModel")?;
     let req: PropagateRequest = serde_wasm_bindgen::from_value(request)
         .map_err(|e| type_error(&format!("invalid propagation request: {e}")))?;
 
@@ -93,9 +95,11 @@ pub fn propagate_state(request: JsValue) -> Result<Ephemeris, JsValue> {
             .with_body_fixed_frame_provider(Arc::new(TdbEarthOrientationProvider::new()));
         propagator
             .ephemeris_with_context(&req.times_s, &ctx)
-            .map_err(engine_error)?
+            .map_err(propagation_error)?
     } else {
-        propagator.ephemeris(&req.times_s).map_err(engine_error)?
+        propagator
+            .ephemeris(&req.times_s)
+            .map_err(propagation_error)?
     };
 
     let mut positions = Vec::with_capacity(states.len() * 3);

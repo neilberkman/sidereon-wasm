@@ -54,6 +54,50 @@ test("iodGibbs recovers the circular speed at the middle position", () => {
   assert.ok(Number.isFinite(out.coplanarityRad));
 });
 
+test("IOD failures preserve Error text and expose the core variant", () => {
+  assert.throws(
+    () => iodGibbs(Float64Array.from([0, 0, 0]), pos(90), pos(180)),
+    (error) => {
+      assert.equal(error instanceof Error, true);
+      assert.equal(error.message, "position vector has near-zero magnitude");
+      assert.deepEqual(error.detail, { family: "IodError", kind: "zero_vector" });
+      return true;
+    },
+  );
+
+  assert.throws(
+    () => iodHerrickGibbs(pos(0), pos(1), pos(2), 1, 1, 1),
+    (error) => {
+      assert.equal(error instanceof Error, true);
+      assert.equal(error.message, "observation times are equal or near-equal");
+      assert.deepEqual(error.detail, { family: "IodError", kind: "invalid_time_geometry" });
+      return true;
+    },
+  );
+
+  assert.throws(
+    () =>
+      iodGaussAngles(
+        Float64Array.from([0, 0, 0]),
+        Float64Array.from([0, 0, 0]),
+        Float64Array.from([2456159.5, 2456159.5, 2456159.5]),
+        Float64Array.from([0.1, 0.2, 0.3]),
+        Float64Array.from([
+          4054.881, 2748.195, 4074.237, 3956.224, 2888.232, 4074.364, 3905.073, 2956.935, 4074.43,
+        ]),
+      ),
+    (error) => {
+      assert.equal(error instanceof Error, true);
+      assert.equal(error.message, "line-of-sight determinant too small");
+      assert.deepEqual(error.detail, {
+        family: "IodError",
+        kind: "determinant_too_small",
+      });
+      return true;
+    },
+  );
+});
+
 test("iodGibbs rejects a zero-magnitude position via the engine", () => {
   assert.throws(() => iodGibbs(Float64Array.from([0, 0, 0]), pos(0), pos(10)));
 });

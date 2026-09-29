@@ -17,7 +17,7 @@ use sidereon_core::quality::{
     WeightEntry as CoreWeightEntry,
 };
 
-use crate::error::{engine_error, range_error, type_error};
+use crate::error::{engine_error, type_error};
 use crate::spp::SppSolution;
 
 fn serializer() -> serde_wasm_bindgen::Serializer {
@@ -26,20 +26,14 @@ fn serializer() -> serde_wasm_bindgen::Serializer {
         .serialize_missing_as_null(true)
 }
 
-fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
+pub(crate) fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     value
         .serialize(&serializer())
         .map_err(|e| engine_error(format!("failed to serialize result: {e}")))
 }
 
 fn quality_error(error: QualityError) -> JsValue {
-    match error {
-        QualityError::InvalidProbability
-        | QualityError::InvalidSystemCount
-        | QualityError::InvalidWeight => range_error(&error.to_string()),
-        QualityError::InvalidResiduals => type_error(&error.to_string()),
-        _ => engine_error(error),
-    }
+    crate::positioning_error::quality_error(error)
 }
 
 #[derive(Deserialize)]
@@ -47,6 +41,8 @@ fn quality_error(error: QualityError) -> JsValue {
 struct RaimInput {
     used_sats: Vec<String>,
     residuals_m: Vec<f64>,
+    #[serde(default)]
+    variances_m2: Option<Vec<f64>>,
 }
 
 impl RaimInput {
@@ -54,6 +50,7 @@ impl RaimInput {
         CoreRaimInput {
             used_sats: self.used_sats.clone(),
             residuals_m: self.residuals_m.clone(),
+            variances_m2: self.variances_m2.clone(),
         }
     }
 }
@@ -62,44 +59,119 @@ impl RaimInput {
 #[serde(rename_all = "camelCase", default)]
 struct RaimOptionsInput {
     p_fa: Option<f64>,
-    weights: Option<RaimWeightsInput>,
+    weights_mode: Option<String>,
     weight_entries: Option<Vec<WeightEntryInput>>,
     variance_options: Option<PseudorangeVarianceOptionsInput>,
-    n_systems: Option<isize>,
+    n_systems: Option<i64>,
 }
 
-impl RaimOptionsInput {
-    fn to_core(
-        &self,
-        explicit_weights: Option<CoreRaimWeights>,
-    ) -> Result<CoreRaimOptions, JsValue> {
-        if (explicit_weights.is_some() || self.weights.is_some()) && self.weight_entries.is_some() {
-            return Err(type_error("set either weights or weightEntries, not both"));
-        }
-        let defaults = CoreRaimOptions::default();
-        let weights = match (explicit_weights, &self.weights, &self.weight_entries) {
-            (Some(weights), _, None) => weights,
-            (None, Some(weights), None) => weights.to_core()?,
-            (None, None, Some(entries)) => {
-                let entries: Vec<CoreWeightEntry> =
-                    entries.iter().map(WeightEntryInput::to_core).collect();
-                let variance_options = self
-                    .variance_options
-                    .as_ref()
-                    .map(PseudorangeVarianceOptionsInput::to_core)
-                    .transpose()?
-                    .unwrap_or_default();
-                CoreRaimWeights::BySatellite(quality::weight_vector(&entries, variance_options))
-            }
-            (None, None, None) => defaults.weights,
-            _ => unreachable!(),
-        };
-        let mut options = CoreRaimOptions::default();
-        options.p_fa = self.p_fa.unwrap_or(defaults.p_fa);
-        options.weights = weights;
-        options.n_systems = self.n_systems;
-        Ok(options)
+fn raim_weight_entries(input: &RaimOptionsInput) -> Result<Option<CoreRaimWeights>, JsValue> {
+    let Some(entries) = &input.weight_entries else {
+        return Ok(None);
+    };
+    let entries: Vec<CoreWeightEntry> = entries.iter().map(WeightEntryInput::to_core).collect();
+    let variance_options = input
+        .variance_options
+        .as_ref()
+        .map(PseudorangeVarianceOptionsInput::to_core)
+        .transpose()?
+        .unwrap_or_default();
+    Ok(Some(CoreRaimWeights::BySatellite(quality::weight_vector(
+        &entries,
+        variance_options,
+    ))))
+}
+
+fn resolve_raim_weights(
+    mode: Option<&str>,
+    explicit: Option<CoreRaimWeights>,
+    entries: Option<CoreRaimWeights>,
+    empty_weights_as_unit: bool,
+    empty_array: bool,
+) -> Result<CoreRaimWeights, JsValue> {
+    if explicit.is_some() && entries.is_some() {
+        return Err(type_error("set either weights or weightEntries, not both"));
     }
+    let supplied = explicit.or(entries);
+    match mode {
+        None => Ok(if empty_weights_as_unit && empty_array {
+            CoreRaimWeights::Unit
+        } else {
+            supplied.unwrap_or_else(|| CoreRaimOptions::default().weights)
+        }),
+        Some("solution") => match supplied {
+            None | Some(CoreRaimWeights::Solution) => Ok(CoreRaimWeights::Solution),
+            Some(_) => Err(type_error(
+                "weightsMode solution conflicts with supplied weights",
+            )),
+        },
+        Some("unit") => match supplied {
+            None | Some(CoreRaimWeights::Unit) => Ok(CoreRaimWeights::Unit),
+            Some(_) => Err(type_error(
+                "weightsMode unit conflicts with supplied weights",
+            )),
+        },
+        Some("bySatellite") => match supplied {
+            None => Ok(CoreRaimWeights::BySatellite(BTreeMap::new())),
+            Some(weights @ CoreRaimWeights::BySatellite(_)) => Ok(weights),
+            Some(_) => Err(type_error(
+                "weightsMode bySatellite requires satellite weights",
+            )),
+        },
+        Some(other) => Err(type_error(&format!(
+            "invalid weightsMode {other:?}: expected solution, unit, or bySatellite"
+        ))),
+    }
+}
+
+/// Parse common raw-RAIM options for both `raim` and `raimForSolution`.
+/// An explicitly empty legacy array can retain the FDE API's Unit convention.
+pub(crate) fn options_from_js(
+    options: &JsValue,
+    empty_weights_as_unit: bool,
+) -> Result<CoreRaimOptions, JsValue> {
+    let input: RaimOptionsInput = if options.is_undefined() || options.is_null() {
+        RaimOptionsInput::default()
+    } else {
+        serde_wasm_bindgen::from_value(options.clone())
+            .map_err(|e| type_error(&format!("invalid RAIM options: {e}")))?
+    };
+    let explicit = if options.is_undefined() || options.is_null() {
+        None
+    } else {
+        parse_weights_option(options)?
+    };
+    let entries = raim_weight_entries(&input)?;
+    let empty_array = !options.is_undefined()
+        && !options.is_null()
+        && optional_property(options, "weights")?.is_some_and(|weights| {
+            js_sys::Array::is_array(&weights) && js_sys::Array::from(&weights).length() == 0
+        });
+    let weights = resolve_raim_weights(
+        input.weights_mode.as_deref(),
+        explicit,
+        entries,
+        empty_weights_as_unit,
+        empty_array,
+    )?;
+
+    let defaults = CoreRaimOptions::default();
+    let p_fa = input.p_fa.unwrap_or(defaults.p_fa);
+    if !p_fa.is_finite() || !(0.0 < p_fa && p_fa < 1.0) {
+        return Err(crate::positioning_error::quality_error(
+            QualityError::InvalidProbability,
+        ));
+    }
+    let n_systems = input
+        .n_systems
+        .map(isize::try_from)
+        .transpose()
+        .map_err(|_| crate::positioning_error::quality_error(QualityError::InvalidSystemCount))?;
+    let mut core = CoreRaimOptions::default();
+    core.p_fa = p_fa;
+    core.weights = weights;
+    core.n_systems = n_systems;
+    Ok(core)
 }
 
 fn property(value: &JsValue, name: &str) -> Result<JsValue, JsValue> {
@@ -126,8 +198,54 @@ fn parse_weights_option(options: &JsValue) -> Result<Option<CoreRaimWeights>, Js
 }
 
 fn parse_weights_value(value: JsValue) -> Result<CoreRaimWeights, JsValue> {
+    if let Some(mode) = value.as_string() {
+        return match mode.as_str() {
+            "solution" => Ok(CoreRaimWeights::Solution),
+            "unit" => Ok(CoreRaimWeights::Unit),
+            "bySatellite" => Ok(CoreRaimWeights::BySatellite(BTreeMap::new())),
+            other => Err(type_error(&format!(
+                "invalid RAIM weights mode {other:?}: expected solution, unit, or bySatellite"
+            ))),
+        };
+    }
+    if let Some(mode) = optional_property(&value, "mode")? {
+        let mode = mode
+            .as_string()
+            .ok_or_else(|| type_error("weights.mode must be a string"))?;
+        return match mode.as_str() {
+            "solution" => Ok(CoreRaimWeights::Solution),
+            "unit" => Ok(CoreRaimWeights::Unit),
+            "bySatellite" => {
+                if let Some(satellite_ids) = optional_property(&value, "satelliteIds")? {
+                    let satellite_ids: Vec<String> = serde_wasm_bindgen::from_value(satellite_ids)
+                        .map_err(|e| {
+                            type_error(&format!("invalid RAIM weight satelliteIds: {e}"))
+                        })?;
+                    let weights = optional_property(&value, "weights")?
+                        .or(optional_property(&value, "values")?);
+                    let weights: Vec<f64> = match weights {
+                        Some(values) => serde_wasm_bindgen::from_value(values)
+                            .map_err(|e| type_error(&format!("invalid RAIM weight values: {e}")))?,
+                        None if satellite_ids.is_empty() => Vec::new(),
+                        None => return Err(type_error("weights must include weights values")),
+                    };
+                    weights_from_vectors(&satellite_ids, &weights)
+                } else {
+                    Err(type_error(
+                        "bySatellite weights require satelliteIds and values",
+                    ))
+                }
+            }
+            other => Err(type_error(&format!(
+                "invalid weights.mode {other:?}: expected solution, unit, or bySatellite"
+            ))),
+        };
+    }
     if property(&value, "isUnit")?.as_bool().unwrap_or(false) {
         return Ok(CoreRaimWeights::Unit);
+    }
+    if property(&value, "isSolution")?.as_bool().unwrap_or(false) {
+        return Ok(CoreRaimWeights::Solution);
     }
     if let Some(satellite_ids) = optional_property(&value, "satelliteIds")? {
         let satellite_ids: Vec<String> = serde_wasm_bindgen::from_value(satellite_ids)
@@ -202,7 +320,9 @@ where
     let mut map = BTreeMap::new();
     for (satellite_id, weight) in pairs {
         if !weight.is_finite() || weight <= 0.0 {
-            return Err(range_error("RAIM weights must be positive finite values"));
+            return Err(crate::positioning_error::quality_error(
+                QualityError::InvalidWeight,
+            ));
         }
         map.insert(satellite_id, weight);
     }
@@ -272,12 +392,13 @@ impl PseudorangeVarianceOptionsInput {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-struct RaimResultObject {
+pub(crate) struct RaimResultObject {
     fault_detected: bool,
     test_statistic: f64,
     threshold: Option<f64>,
+    testable: bool,
     worst_sat: Option<String>,
     reduced_chi_square: Option<f64>,
     normalized_residuals: BTreeMap<String, f64>,
@@ -285,7 +406,7 @@ struct RaimResultObject {
     dof: isize,
 }
 
-fn result_from_core(result: CoreRaimResult, input: &CoreRaimInput) -> RaimResultObject {
+pub(crate) fn result_from_core(result: CoreRaimResult, input: &CoreRaimInput) -> RaimResultObject {
     let rms_m = if input.residuals_m.is_empty() {
         0.0
     } else {
@@ -306,6 +427,7 @@ fn result_from_core(result: CoreRaimResult, input: &CoreRaimInput) -> RaimResult
         fault_detected: result.fault_detected,
         test_statistic: result.test_statistic,
         threshold: result.threshold,
+        testable: result.testable,
         worst_sat: result.worst_sat,
         reduced_chi_square,
         normalized_residuals: result.normalized_residuals,
@@ -316,8 +438,11 @@ fn result_from_core(result: CoreRaimResult, input: &CoreRaimInput) -> RaimResult
 
 /// Run direct post-solve residual RAIM.
 ///
-/// `input` is `{ usedSats, residualsM }`. Use `options` fields `pFa`,
-/// `nSystems`, and either `weights` or `weightEntries` with `varianceOptions`.
+/// `input` is `{ usedSats, residualsM, variancesM2? }`. Under the default
+/// solution-weight mode, `variancesM2` is required and supplies the variances
+/// used by the solve; alternatively set `weights: { isUnit: true }` or provide
+/// explicit per-satellite weights. Use `options` fields `pFa`, `nSystems`,
+/// and either `weights` or `weightEntries` with `varianceOptions`.
 /// The result has the fault flag, chi-square statistic, threshold, largest
 /// normalized residual satellite, reduced chi-square, normalized residual map,
 /// RMS residual, and degrees of freedom.
@@ -325,15 +450,8 @@ fn result_from_core(result: CoreRaimResult, input: &CoreRaimInput) -> RaimResult
 pub fn raim(input: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
     let input: RaimInput = serde_wasm_bindgen::from_value(input)
         .map_err(|e| type_error(&format!("invalid RAIM input: {e}")))?;
-    let options_input: RaimOptionsInput = if options.is_undefined() || options.is_null() {
-        RaimOptionsInput::default()
-    } else {
-        serde_wasm_bindgen::from_value(options.clone())
-            .map_err(|e| type_error(&format!("invalid RAIM options: {e}")))?
-    };
-    let explicit_weights = parse_weights_option(&options)?;
     let core_input = input.to_core();
-    let core_options = options_input.to_core(explicit_weights)?;
+    let core_options = options_from_js(&options, false)?;
     let result = core_raim(&core_input, &core_options).map_err(quality_error)?;
     to_js(&result_from_core(result, &core_input))
 }
@@ -345,13 +463,7 @@ pub fn raim(input: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
 /// accepted by `raim`; omit it for the core defaults.
 #[wasm_bindgen(js_name = raimForSolution)]
 pub fn raim_for_solution(solution: &SppSolution, options: JsValue) -> Result<JsValue, JsValue> {
-    let options: RaimOptionsInput = if options.is_undefined() || options.is_null() {
-        RaimOptionsInput::default()
-    } else {
-        serde_wasm_bindgen::from_value(options)
-            .map_err(|e| type_error(&format!("invalid RAIM options: {e}")))?
-    };
-    let options = options.to_core(None)?;
+    let options = options_from_js(&options, false)?;
     let result = core_raim_for_solution(&solution.inner, &options).map_err(quality_error)?;
     let input = CoreRaimInput {
         used_sats: solution
@@ -361,6 +473,7 @@ pub fn raim_for_solution(solution: &SppSolution, options: JsValue) -> Result<JsV
             .map(ToString::to_string)
             .collect(),
         residuals_m: solution.inner.residuals_m.clone(),
+        variances_m2: Some(solution.inner.pseudorange_variances_m2.clone()),
     };
     to_js(&result_from_core(result, &input))
 }
@@ -387,13 +500,15 @@ impl RangeFdeRowInput {
 }
 
 /// RAIM/FDE options. Every field is optional and falls back to the core default
-/// (`pFa` the demo5 `1.0e-3`, no exclusion cap, `minRedundancy` 1).
+/// (`pFa` the demo5 `1.0e-3`, one exclusion, `minRedundancy` 1, and the
+/// RTKLIB demo5 100 m residual RMS cap).
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct RangeFdeOptionsInput {
     p_fa: Option<f64>,
     max_exclusions: Option<usize>,
     min_redundancy: Option<usize>,
+    max_exclusion_rms_m: Option<f64>,
 }
 
 impl RangeFdeOptionsInput {
@@ -403,6 +518,9 @@ impl RangeFdeOptionsInput {
         options.p_fa = self.p_fa.unwrap_or(defaults.p_fa);
         options.max_exclusions = self.max_exclusions.unwrap_or(defaults.max_exclusions);
         options.min_redundancy = self.min_redundancy.unwrap_or(defaults.min_redundancy);
+        options.max_exclusion_rms_m = self
+            .max_exclusion_rms_m
+            .unwrap_or(defaults.max_exclusion_rms_m);
         options
     }
 }
@@ -480,9 +598,9 @@ impl From<&RangeFdeResult> for RangeFdeResultObject {
 /// `rows` is an array of `{ id, residualM, designRow, weight }` objects (each
 /// `designRow` the measurement's design-matrix row, of length equal to the
 /// estimated state dimension). `options` is an optional `{ pFa?, maxExclusions?,
-/// minRedundancy? }` object (pass `undefined` for the core defaults). Returns the
-/// protected state correction, covariance, global chi-square test, the excluded
-/// ids, the per-measurement diagnostics, and the exclusion count. FDE
+/// minRedundancy?, maxExclusionRmsM? }` object (pass `undefined` for the core
+/// defaults). Returns the protected state correction, covariance, global
+/// chi-square test, the excluded ids, the per-measurement diagnostics, and the exclusion count. FDE
 /// computation runs in `sidereon_core::quality::raim_fde_design`.
 /// Malformed input throws a `TypeError`; a rank-deficient or rejected set throws
 /// an `Error`.
@@ -498,7 +616,8 @@ pub fn raim_fde_design_js(rows: JsValue, options: JsValue) -> Result<JsValue, Js
     };
 
     let core_rows: Vec<RangeFdeRow> = rows.iter().map(RangeFdeRowInput::to_core).collect();
-    let result = raim_fde_design(&core_rows, &options.to_core()).map_err(engine_error)?;
+    let result = raim_fde_design(&core_rows, &options.to_core())
+        .map_err(crate::positioning_error::quality_error)?;
 
     to_js(&RangeFdeResultObject::from(&result))
 }

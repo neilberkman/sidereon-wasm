@@ -60,6 +60,62 @@ test("malformed meteorology throws", () => {
   assert.throws(() => tropoZenithDelay(45.0, 0.0, { pressureHpa: 1000.0 }));
 });
 
+test("core meteorology refusal keeps its full typed error", () => {
+  assert.throws(
+    () => tropoZenithDelay(45.0, 0.0, { ...MET, pressureHpa: -1.0 }),
+    (error) => {
+      assert.ok(error instanceof RangeError);
+      assert.equal(error.detail.kind, "INVALID_INPUT");
+      assert.equal(error.detail.message, "pressure_hpa not positive");
+      assert.equal(error.message, `invalid input: ${error.detail.message}`);
+      return true;
+    },
+  );
+});
+
+test("core mapping refusal keeps its full typed error", () => {
+  assert.throws(
+    () => tropoMappingFactors(1.0, 45.0, 0.0, JD_WHOLE, JD_FRACTION),
+    (error) => {
+      assert.ok(error instanceof RangeError);
+      assert.equal(error.detail.kind, "INVALID_INPUT");
+      assert.equal(error.detail.message, "elevation_rad below mapping validity");
+      assert.equal(error.message, `invalid input: ${error.detail.message}`);
+      return true;
+    },
+  );
+});
+
+test("core split-date refusal keeps its full typed error", () => {
+  assert.throws(
+    () => tropoMappingFactors(45.0, 45.0, 0.0, Infinity, 0.0),
+    (error) => {
+      assert.ok(error instanceof RangeError);
+      assert.equal(error.detail.family, "TimeModelError");
+      assert.equal(error.detail.kind, "TIME_MODEL_INVALID_INPUT");
+      assert.equal(error.detail.message, error.message);
+      assert.equal(error.detail.field, "jd_whole");
+      assert.equal(error.detail.reason, "must be finite");
+      return true;
+    },
+  );
+});
+
+test("invalid receiver keeps its full frame-value error", () => {
+  assert.throws(
+    () => tropoZenithDelay(100.0, 0.0, MET),
+    (error) => {
+      assert.ok(error instanceof RangeError);
+      assert.equal(error.detail.family, "FrameValueError");
+      assert.equal(error.detail.kind, "FRAME_VALUE_INVALID_INPUT");
+      assert.equal(error.detail.message, error.message);
+      assert.equal(error.detail.field, "lat_rad");
+      assert.equal(error.detail.reason, "must be in [-pi/2, pi/2]");
+      return true;
+    },
+  );
+});
+
 test("a non-finite elevation is rejected, not folded to the horizon zero", () => {
   // -Infinity is bad input, not a sub-horizon geometry; it must throw rather
   // than silently return the below-horizon 0.0.

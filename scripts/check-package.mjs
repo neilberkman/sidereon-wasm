@@ -69,9 +69,9 @@ try {
     "licenses/IERS-Conventions-Software-License.txt",
     "licenses/SciPy-BSD-3-Clause.txt",
     "licenses/libloading-ISC.txt",
-    "third_party_source/sidereon-core-0.36.3/tides/mod.rs",
-    "third_party_source/sidereon-core-0.36.3/tides/ocean.rs",
-    "third_party_source/sidereon-core-0.36.3/tides/pole.rs",
+    "third_party_source/sidereon-core-3.0.0/tides/mod.rs",
+    "third_party_source/sidereon-core-3.0.0/tides/ocean.rs",
+    "third_party_source/sidereon-core-3.0.0/tides/pole.rs",
     "pkg/sidereon.js",
     "pkg/sidereon.d.ts",
     "pkg/sidereon_bg.wasm",
@@ -94,11 +94,11 @@ try {
   }
 
   const coreSourceDigests = {
-    "third_party_source/sidereon-core-0.36.3/tides/mod.rs":
-      "7c71cb8facbd81af8473d3634e4c63d97dda8cb37a2f59888d3397cfdde4d39b",
-    "third_party_source/sidereon-core-0.36.3/tides/ocean.rs":
-      "6bd72d6647b634f979b670040d8c0b659e1f581fa41fdeec41b74b85d8c26c01",
-    "third_party_source/sidereon-core-0.36.3/tides/pole.rs":
+    "third_party_source/sidereon-core-3.0.0/tides/mod.rs":
+      "0703d1b3470f59528880ae34990f064897d34876d5ff30b4fc860afdcadf7433",
+    "third_party_source/sidereon-core-3.0.0/tides/ocean.rs":
+      "25946677944425671a92717860ac2d70f255de5403eeb1fbf98b361716821d5c",
+    "third_party_source/sidereon-core-3.0.0/tides/pole.rs":
       "b4cc4c16bdd8ce1d8f04073602ab47dfb85a002b946ab192e8d4d2d600f0a1f8",
   };
   const exactThirdPartyDigests = {
@@ -155,7 +155,15 @@ try {
     "export function supportedSamples(",
     "export function validateExactSp3(",
     "continuityVerdict(fromJ2000S: number, throughJ2000S: number, orbitClass?: string | null, residualToleranceM?: number | null, gapThresholdFactor?: number | null): WindowContinuityVerdict;",
-    "continuityVerdict(merged: Sp3, fromJ2000S: number, throughJ2000S: number): WindowContinuityVerdict | null;",
+    "continuityVerdict(fromJ2000S: number, throughJ2000S: number): WindowContinuityVerdict | null;",
+    'readonly reason: "datum_not_observable" | "preferred_source_without_clock" | "no_consensus";',
+    'readonly reason: "off_target_grid" | "not_on_tick_axis";',
+    "readonly continuity: MergeContinuityReport | null;",
+    "readonly provenance: MergeProvenance | null;",
+    "selectedNodes(satellite: string, fromJ2000S: number, throughJ2000S: number): Float64Array;",
+    "continuitySelectedNodes(satellite: string, fromJ2000S: number, throughJ2000S: number): Float64Array | undefined;",
+    "export interface MergeProvenance",
+    'provenance?: "summary" | "full" | null;',
     "stencilExtent(): { beforeS: number; afterS: number };",
     "readonly covers: NominalCoverage;",
     'compression: "none" | "gzip" | "unix_compress";',

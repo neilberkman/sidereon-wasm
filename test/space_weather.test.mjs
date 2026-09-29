@@ -40,13 +40,29 @@ test("parseSpaceWeather exposes daily, monthly, coverage, and query rows", () =>
   });
   assert.equal(table.day(2026, 7, 3).class, "dailyPredicted");
   assert.equal(table.day(2026, 7, 3).apAvg, 25);
-  assert.deepEqual(table.sampleAt(civilToJ2000Seconds(2026, 9, 15, 12, 0, 0)), {
+  // A monthly predicted row states no Ap: the default policy refuses to
+  // substitute the quiet Ap of 4, and the lenient policy substitutes it and
+  // reports it.
+  const monthly = civilToJ2000Seconds(2026, 9, 15, 12, 0, 0);
+  assert.throws(() => table.sampleAt(monthly), /rejected by policy/);
+  assert.throws(() => table.sampleAt(monthly, "default"), /rejected by policy/);
+  const lenientMonthly = {
     f107: 118.9,
     f107a: 128.7,
     ap: 4,
     class: "monthlyPredicted",
     apDefaulted: true,
-  });
+  };
+  assert.deepEqual(table.sampleAt(monthly, "lenient"), lenientMonthly);
+  assert.deepEqual(table.sampleAt(monthly, { requireGeomagnetic: false }), lenientMonthly);
+  assert.throws(() => table.sampleAt(monthly, { requireGeomagnetc: false }), TypeError);
+  assert.throws(() => table.sampleAt(monthly, "loose"), TypeError);
+
+  const history = table.apHistoryAt(civilToJ2000Seconds(2003, 10, 31, 13, 0, 0));
+  assert.deepEqual(history.ap, [116, 154, 111, 154, 179, 183.125, 236.5]);
+  assert.equal(history.class, "observed");
+  assert.equal(history.apDefaulted, false);
+  assert.equal(history.binsFromDailyAp, 0);
   assert.deepEqual(
     Array.from(table.apArrayAt(civilToJ2000Seconds(2003, 10, 31, 13, 0, 0))),
     [116, 154, 111, 154, 179, 183.125, 236.5],

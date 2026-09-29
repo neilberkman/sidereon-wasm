@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { decodeRtcm, decodeRtcmFrame, encodeRtcm, encodeRtcmFrame } from "../pkg-node/sidereon.js";
-import { fixtureJson } from "./helpers.mjs";
+import { fixture, fixtureJson } from "./helpers.mjs";
 
 const hexToBytes = (hex) => Uint8Array.from(hex.match(/.{2}/g).map((b) => parseInt(b, 16)));
 
@@ -67,6 +67,26 @@ test("a 1005 station message built from scratch round-trips", () => {
   assert.equal(back.ecefZ, 4296881700n);
   // 1005 carries no antenna height.
   assert.equal(back.antennaHeight, undefined);
+});
+
+test("coordinate transformation messages round-trip typed parameter fields", () => {
+  const projection = {
+    type: "projection",
+    systemId: 1,
+    projectionType: 3,
+    parameters: {
+      kind: "naturalOrigin",
+      latitude: -1234567890n,
+      longitude: 2345678901n,
+      addScale: 123,
+      falseEasting: 9876543210n,
+      falseNorthing: -8765432109n,
+    },
+  };
+  const decoded = decodeRtcmFrame(encodeRtcmFrame(projection)).message;
+  assert.equal(decoded.type, "projection");
+  assert.deepEqual(decoded.parameters, projection.parameters);
+  assert.equal(decoded.parameters.latitude, projection.parameters.latitude);
 });
 
 test("a 1007 antenna descriptor built from scratch round-trips", () => {
@@ -309,9 +329,203 @@ test("an MSM4 observation message built from scratch round-trips", () => {
   assert.equal(back.signals[0].finePseudorange, 100);
   assert.equal(back.signals[0].finePhaseRange, -200);
   assert.equal(back.signals[0].cnr, 40);
+  // The decoded object, with the system spelled as the decoder writes it,
+  // re-encodes to the same frame.
+  const frame = encodeRtcmFrame(msm);
+  assert.deepEqual(encodeRtcmFrame(back), frame);
+});
+
+test("MSM1 and MSM2 round-trip only the fields their kinds carry", () => {
+  const header = {
+    referenceStationId: 0,
+    epochTime: 1000,
+    multipleMessage: false,
+    iods: 0,
+    reserved: 0,
+    clockSteering: 0,
+    externalClock: 0,
+    divergenceFreeSmoothing: false,
+    smoothingInterval: 0,
+  };
+  const msm1 = {
+    type: "msm",
+    messageNumber: 1071,
+    system: "gps",
+    kind: "msm1",
+    header,
+    satellites: [{ id: 5, roughRangeMod1: 512 }],
+    signals: [{ satelliteId: 5, signalId: 2, finePseudorange: 100 }],
+  };
+  const msm2 = {
+    type: "msm",
+    messageNumber: 1072,
+    system: "gps",
+    kind: "msm2",
+    header,
+    satellites: [{ id: 5, roughRangeMod1: 512 }],
+    signals: [
+      {
+        satelliteId: 5,
+        signalId: 2,
+        finePhaseRange: -200,
+        lockTimeIndicator: 0,
+        halfCycleAmbiguity: false,
+      },
+    ],
+  };
+  const decodedMsm1 = decodeRtcmFrame(encodeRtcmFrame(msm1)).message;
+  assert.equal(decodedMsm1.kind, "msm1");
+  assert.equal(decodedMsm1.satellites[0].roughRangeMs, undefined);
+  assert.equal(decodedMsm1.signals[0].finePseudorange, 100);
+  assert.equal(decodedMsm1.signals[0].finePhaseRange, undefined);
+  assert.equal(decodedMsm1.signals[0].cnr, undefined);
+  const decodedMsm2 = decodeRtcmFrame(encodeRtcmFrame(msm2)).message;
+  assert.equal(decodedMsm2.kind, "msm2");
+  assert.equal(decodedMsm2.signals[0].finePseudorange, undefined);
+  assert.equal(decodedMsm2.signals[0].finePhaseRange, -200);
+  assert.equal(decodedMsm2.signals[0].cnr, undefined);
 });
 
 test("encodeRtcmFrame rejects a malformed message object", () => {
   assert.throws(() => encodeRtcmFrame({ type: "stationCoordinates" }));
   assert.throws(() => encodeRtcmFrame({ notAType: true }));
+});
+
+test("codec refusals expose typed encode variants and fields", () => {
+  assert.throws(
+    () =>
+      encodeRtcm({
+        type: "stationCoordinates",
+        messageNumber: 1200,
+        referenceStationId: 1,
+        itrfRealizationYear: 0,
+        gpsIndicator: false,
+        glonassIndicator: false,
+        galileoIndicator: false,
+        referenceStationIndicator: false,
+        ecefX: 0n,
+        singleReceiverOscillator: false,
+        reserved: false,
+        ecefY: 0n,
+        quarterCycleIndicator: 0,
+        ecefZ: 0n,
+      }),
+    (error) => {
+      assert.equal(error.name, "RtcmEncodeError");
+      assert.equal(error.detail.kind, "RTCM_ENCODE");
+      assert.equal(error.detail.core.kind, "messageNumber");
+      assert.equal(error.detail.core.messageNumber, 1200);
+      assert.equal(error.detail.core.record.kind, "stationCoordinates");
+      assert.equal("coreDetails" in error.detail, false);
+      return true;
+    },
+  );
+});
+
+// A field the wire layout cannot state is refused by the core codec with its
+// typed variant, never written as a different satellite or mask.
+function assertEncodeRefused(message, core, messagePattern) {
+  for (const encode of [encodeRtcm, encodeRtcmFrame]) {
+    assert.throws(
+      () => encode(message),
+      (err) => {
+        assert.equal(err.name, "RtcmEncodeError");
+        assert.equal(err.detail.kind, "RTCM_ENCODE");
+        assert.deepEqual(err.detail.core, core);
+        assert.match(err.message, messagePattern);
+        assert.equal(err.detail.message, err.message);
+        return true;
+      },
+    );
+  }
+}
+
+test("an ephemeris satellite id wider than its field is refused, not truncated", () => {
+  const fx = fixtureJson("rtcm.json");
+  const eph = decodeRtcm(hexToBytes(fx.stream))[1];
+  assert.equal(eph.type, "gpsEphemeris");
+  // 1019 carries the satellite in six bits, 0..=63.
+  assertEncodeRefused(
+    { ...eph, satelliteId: 64 },
+    { kind: "satelliteIdOutOfRange", messageNumber: 1019, field: "GPS PRN", value: 64, width: 6 },
+    /6-bit raw satellite field \(0\.\.=63\)/,
+  );
+  assert.ok(encodeRtcm({ ...eph, satelliteId: 63 }) instanceof Uint8Array);
+});
+
+test("MSM satellite and signal lists the masks cannot state are refused", () => {
+  const header = {
+    referenceStationId: 0,
+    epochTime: 1000,
+    multipleMessage: false,
+    iods: 0,
+    reserved: 0,
+    clockSteering: 0,
+    externalClock: 0,
+    divergenceFreeSmoothing: false,
+    smoothingInterval: 0,
+  };
+  const signal = (satelliteId, signalId) => ({
+    satelliteId,
+    signalId,
+    finePseudorange: 100,
+    finePhaseRange: -200,
+    lockTimeIndicator: 0,
+    halfCycleAmbiguity: false,
+    cnr: 40,
+  });
+  const msm = (satellites, signals) => ({
+    type: "msm",
+    messageNumber: 1074,
+    system: "gps",
+    kind: "msm4",
+    header,
+    satellites: satellites.map((id) => ({ id, roughRangeMs: 67, roughRangeMod1: 512 })),
+    signals,
+  });
+
+  const mask = (problem) => ({ kind: "msmMask", messageNumber: 1074, problem });
+  assertEncodeRefused(
+    msm([0], [signal(0, 2)]),
+    mask({ kind: "satelliteOutsideMask", satellite: 0 }),
+    /satellite id 0 is outside the 1\.\.=64 satellite mask/,
+  );
+  assertEncodeRefused(
+    msm([65], [signal(65, 2)]),
+    mask({ kind: "satelliteOutsideMask", satellite: 65 }),
+    /satellite id 65 is outside/,
+  );
+  assertEncodeRefused(
+    msm([5], [signal(5, 33)]),
+    mask({ kind: "signalOutsideMask", signal: 33 }),
+    /signal id 33 is outside the 1\.\.=32 signal mask/,
+  );
+  assertEncodeRefused(
+    msm([5, 5], [signal(5, 2)]),
+    mask({ kind: "satelliteListedTwice", satellite: 5 }),
+    /satellite id 5 is listed twice/,
+  );
+  assertEncodeRefused(
+    msm([5], [signal(6, 2)]),
+    mask({ kind: "signalSatelliteNotListed", signal: 2, satellite: 6 }),
+    /signal 2 names satellite id 6, which the satellite list does not hold/,
+  );
+  assertEncodeRefused(
+    msm([5], [signal(5, 2), signal(5, 2)]),
+    mask({ kind: "cellListedTwice", satellite: 5, signal: 2 }),
+    /the cell for satellite id 5 signal 2 is listed twice/,
+  );
+  assert.ok(encodeRtcm(msm([5], [signal(5, 2)])) instanceof Uint8Array);
+});
+
+test("a decoded SSR frame re-encodes byte for byte", () => {
+  const hex = fixture("ssr/SSRA02IGS0_2026181234930_1060.hex").toString("utf8").trim();
+  const frame = Uint8Array.from(hex.match(/../g).map((byte) => Number.parseInt(byte, 16)));
+  // Read and written under the lenient policy, so any trailing bits the frame
+  // carries are kept and restated.
+  const decoded = decodeRtcmFrame(frame, "lenient");
+  assert.equal(decoded.message.type, "ssr");
+  assert.equal(decoded.message.messageNumber, 1060);
+  assert.deepEqual(encodeRtcmFrame(decoded.message, "lenient", decoded.reserved), frame);
+  assert.deepEqual(encodeRtcm(decoded.message, "lenient"), frame.slice(3, frame.length - 3));
 });

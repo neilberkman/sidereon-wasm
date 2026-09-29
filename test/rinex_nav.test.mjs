@@ -12,6 +12,7 @@ import {
   parseRinexGlonassRecords,
   parseRinexIonoCorrections,
   parseRinexLeapSeconds,
+  parseRinexNavFile,
   BroadcastDelayTerm,
   CnavSignal,
   NavMessage,
@@ -20,7 +21,7 @@ import {
   navMessageLabel,
 } from "../pkg-node/sidereon.js";
 
-import { fixture, fixtureJson, f64Bits, hexToF64, norm } from "./helpers.mjs";
+import { coreGoldens, fixture, fixtureJson, f64Bits, hexToF64, norm } from "./helpers.mjs";
 
 const ESBC = "nav/ESBC00DNK_R_20201770000_01D_MN.rnx";
 const BRDC = "nav/BRDC00GOP_R_20210010000_01D_MN.rnx";
@@ -68,7 +69,11 @@ test("mixed nav records and default store parse from the fixture", () => {
   assert.equal(store.leapSeconds, 18.0);
   assert.ok(store.recordCount > 0);
   assert.equal(store.glonassRecordCount, 0);
-  assert.ok(store.records.every((r) => r.svHealth === 0.0));
+  // The store keeps every record it can read, unhealthy ones included; a
+  // query applies RTKLIB's health and accuracy exclusion to the record it
+  // selects. Nothing in this file is left unread.
+  assert.deepEqual(store.skipped, []);
+  assert.ok(Array.isArray(store.departures));
   assert.ok(store.records.every((r) => r.message !== NavMessage.GalileoFnav));
   assert.ok(store.records.some((r) => r.satellite === "C05"));
 
@@ -160,8 +165,9 @@ test("CNAV/RINEX-4 record evaluation exposes URA and ISC terms", () => {
   );
   assert.equal(record.week, 2425);
   assert.equal(record.elements.toeSow, 91800);
-  assert.equal(record.issue, 306);
-  assert.equal(record.issueMessage, NavMessage.GpsCnav);
+  // A RINEX 4 CNAV record states no issue of data, and none is made up.
+  assert.equal(record.issue, undefined);
+  assert.equal(record.issueMessage, undefined);
   assert.notEqual(record.cnav, undefined);
 
   assert.equal(f64Bits(record.cnav.adotMS), 0x3f629ffffffffb7fn);
@@ -182,11 +188,17 @@ test("CNAV/RINEX-4 record evaluation exposes URA and ISC terms", () => {
     0xbdf3fffffffffd34n,
   );
 
+  // The engine's own CNAV golden (cnav_broadcast_golden.json, copied verbatim
+  // from sidereon-core) for this record at its reference time.
+  const golden = fixtureJson("cnav_broadcast_golden.json").cases.find(
+    (c) => c.name === "g01_gps_cnav_toe",
+  );
+  assert.equal(f64Bits(record.elements.toeSow), BigInt(golden.t_sow_hex));
   const state = record.evaluate(record.elements.toeSow);
-  assert.equal(f64Bits(state.clockS), 0x3f2ee71f5f4100cdn);
+  assert.equal(f64Bits(state.clockS), BigInt(golden.expect_hex.dt_clock_total_s));
   assert.deepEqual(
-    [state.xM, state.yM, state.zM].map((x) => `0x${f64Bits(x).toString(16).padStart(16, "0")}`),
-    ["0xc1746a00f3ea856e", "0xc16e037eb4cce2ab", "0xc1364141082327d0"],
+    [state.xM, state.yM, state.zM].map(f64Bits),
+    [golden.expect_hex.x_m, golden.expect_hex.y_m, golden.expect_hex.z_m].map(BigInt),
   );
 });
 
@@ -197,12 +209,14 @@ test("BroadcastEphemeris.evaluate selects a store record by GPST-like J2000 seco
   const query = gpsEpoch + record.week * 604800 + record.elements.toeSow;
   const state = store.evaluate(record.satellite, query);
 
-  assert.equal(state.satellite, "G01");
-  assert.equal(state.tJ2000S, 835970400);
-  assert.equal(f64Bits(state.clockS), 0x3f2ee69457945987n);
+  // The store's state at that epoch, reproduced natively by test/golden-gen.
+  const ref = coreGoldens().navStore;
+  assert.equal(state.satellite, ref.satellite);
+  assert.equal(f64Bits(state.tJ2000S), BigInt(ref.tJ2000S));
+  assert.equal(f64Bits(state.clockS), BigInt(ref.clockS));
   assert.deepEqual(
-    Array.from(state.positionM, (x) => `0x${f64Bits(x).toString(16).padStart(16, "0")}`),
-    ["0xc1735dc3f3f5a2d5", "0xc16dee83fc993d03", "0xc15ac9a1aad952c8"],
+    Array.from(state.positionM, f64Bits),
+    ref.positionM.map((h) => BigInt(h)),
   );
 });
 
@@ -274,4 +288,27 @@ test("toRinexString re-parses to the same broadcast records", () => {
   assert.equal(reparsed.recordCount, nav.recordCount);
   // Deterministic: re-encoding the re-parsed records is byte-identical.
   assert.equal(reparsed.toRinexString(), text);
+});
+
+test("parseRinexNavFile keeps every block and writes a file back byte for byte", () => {
+  for (const rel of [ESBC, BRDC, KMS, BRD4]) {
+    const bytes = fixture(rel);
+    const file = parseRinexNavFile(bytes);
+    assert.ok(file.entryCount > 0, `${rel} has blocks`);
+    assert.ok(Array.isArray(file.departures));
+    assert.equal(file.toRinexString(), bytes.toString("utf8"), `${rel} restated`);
+  }
+  assert.throws(() => parseRinexNavFile(new Uint8Array([0xff, 0xfe])), TypeError);
+});
+
+test("ionoCorrectionsAt returns the header coefficients where no frame replaces them", () => {
+  const bytes = fixture(BRDC);
+  const header = parseRinexIonoCorrections(bytes);
+  const store = loadRinexNav(bytes);
+  const t = civilToJ2000Seconds(2021, 1, 1, 12, 0, 0);
+  const at = store.ionoCorrectionsAt(t);
+  assert.deepEqual(Array.from(at.gps.alpha), Array.from(header.gps.alpha));
+  assert.deepEqual(Array.from(at.gps.beta), Array.from(header.gps.beta));
+  assert.deepEqual(Array.from(at.beidou.alpha), Array.from(header.beidou.alpha));
+  assert.deepEqual(Array.from(at.beidou.beta), Array.from(header.beidou.beta));
 });

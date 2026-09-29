@@ -7,7 +7,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { loadSp3, pppCorrections } from "../pkg-node/sidereon.js";
+import {
+  loadBiasSinex,
+  loadSp3,
+  pppCorrections,
+  pppCorrectionsWithCodeBias,
+  StationTideConstants,
+} from "../pkg-node/sidereon.js";
 import { fixture } from "./helpers.mjs";
 
 const SP3_FILE = "GRG0MGXFIN_20201760000_01D_15M_ORB.SP3";
@@ -122,4 +128,75 @@ test("no options yields all-empty correction tables", () => {
   assert.equal(corr.windupM.length, 0);
   assert.equal(corr.satPcoEcef.length, 0);
   assert.equal(corr.satPcvM.length, 0);
+});
+
+test("PPP precompute selects the station-tide constants and keeps validity metadata", () => {
+  const sp3 = loadProduct();
+  const epochs = [epoch()];
+  const defaults = pppCorrections(sp3, epochs, RECEIVER_M, { solidEarthTide: true });
+  const conventions = pppCorrections(sp3, epochs, RECEIVER_M, {
+    solidEarthTide: true,
+    stationTideConstants: StationTideConstants.Conventions,
+  });
+  const iersRoutine = pppCorrections(sp3, epochs, RECEIVER_M, {
+    solidEarthTide: true,
+    stationTideConstants: StationTideConstants.IersRoutine,
+    ut1Validity: "permissive",
+  });
+
+  assert.deepEqual(defaults.tide, conventions.tide);
+  assert.notDeepEqual(iersRoutine.tide, conventions.tide);
+  assert.equal(defaults.ut1Degraded, null);
+  assert.equal(iersRoutine.ut1Degraded, null);
+  assert.throws(
+    () => pppCorrections(sp3, epochs, RECEIVER_M, { stationTideConstants: 99 }),
+    TypeError,
+  );
+  assert.throws(
+    () => pppCorrections(sp3, epochs, RECEIVER_M, { ut1Validity: "sometimes" }),
+    TypeError,
+  );
+});
+
+test("PPP correction refusal keeps its RangeError and complete typed cause", () => {
+  const sp3 = loadProduct();
+  const badEpoch = epoch();
+  badEpoch.observations[0].freq1Hz = 0;
+  assert.throws(
+    () => pppCorrections(sp3, [badEpoch], RECEIVER_M, { phaseWindup: true }),
+    (error) => {
+      assert.ok(error instanceof RangeError);
+      assert.equal(error.name, "RangeError");
+      assert.equal(
+        error.message,
+        "invalid phase wind-up carrier frequencies at epoch 0 for G21: phase wind-up freq1_hz not positive",
+      );
+      assert.deepEqual(error.detail, {
+        family: "PppCorrectionsError",
+        kind: "WINDUP_FREQUENCY",
+        epochIndex: 0,
+        satellite: "G21",
+        field: "phase wind-up freq1_hz",
+        reason: "not positive",
+        message: error.message,
+      });
+      return true;
+    },
+  );
+});
+
+test("PPP code-bias diagnostics retain typed warning and record reference", () => {
+  const sp3 = loadProduct();
+  const bias = loadBiasSinex(fixture("bias/CODE.BIA"));
+  const corr = pppCorrectionsWithCodeBias(sp3, [epoch()], RECEIVER_M, {}, bias, {});
+  assert.equal(corr.warnings.length, 1);
+  assert.equal(corr.diagnostics.warningCount, 1);
+  assert.equal(corr.diagnostics.skipCount, 0);
+  assert.equal(corr.diagnostics.warnings[0] instanceof Map, false);
+  assert.deepEqual(corr.diagnostics.warnings[0], {
+    at: { line: null, recordIndex: 0, satellite: "G21" },
+    reason: "MissingMetadata",
+    kind: "missingMetadata",
+  });
+  assert.deepEqual(corr.diagnostics.skips, []);
 });

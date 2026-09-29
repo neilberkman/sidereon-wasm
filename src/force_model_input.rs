@@ -11,13 +11,13 @@ use sidereon_core::astro::constants::{J2_EARTH, MU_EARTH, RE_EARTH};
 use sidereon_core::astro::forces::{
     DragForce as CoreDragForce, DragParameters, SchwarzschildRelativity, SolarRadiationPressure,
     SolidEarthPoleTideGravity, SolidEarthTideGravity, SpaceWeather, SphericalHarmonicGravityConfig,
-    ThirdBodyBodies, ThirdBodyGravity, ZonalCoefficients, ZonalDegrees, ZonalGravity,
+    ThirdBodyBodies, ThirdBodyGravity, TideSystem, ZonalCoefficients, ZonalDegrees, ZonalGravity,
 };
 use sidereon_core::astro::propagator::{
     ForceModelComponents, ForceModelKind, IntegratorKind, IntegratorOptions,
 };
 
-use crate::error::{engine_error, type_error};
+use crate::error::{engine_error, reject_unknown_keys, type_error};
 
 const DEFAULT_SPHERICAL_HARMONIC_DEGREE: u16 = 8;
 
@@ -93,6 +93,7 @@ struct ZonalCoefficientsInput {
     j4: Option<f64>,
     j5: Option<f64>,
     j6: Option<f64>,
+    tide_system: Option<TideSystemInput>,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -123,7 +124,154 @@ struct RelativityInput {
 
 #[derive(Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
-struct TideInput {}
+struct TideInput {
+    tide_system: Option<TideSystemInput>,
+}
+
+const FORCE_MODEL_OBJECT_KEYS: &[&str] = &[
+    "kind",
+    "twoBody",
+    "twoBodyMuKm3S2",
+    "muKm3S2",
+    "reKm",
+    "j2",
+    "maxDegree",
+    "maxOrder",
+    "degree",
+    "order",
+    "zonal",
+    "sphericalHarmonic",
+    "geopotential",
+    "thirdBody",
+    "solidEarthTide",
+    "solidEarthPoleTide",
+    "solarRadiationPressure",
+    "srp",
+    "relativity",
+];
+const ZONAL_INPUT_KEYS: &[&str] = &[
+    "maxDegree",
+    "j2",
+    "j3",
+    "j4",
+    "j5",
+    "j6",
+    "muKm3S2",
+    "reKm",
+    "coefficients",
+];
+const ZONAL_COEFFICIENT_KEYS: &[&str] = &["j2", "j3", "j4", "j5", "j6", "tideSystem"];
+const SPHERICAL_HARMONIC_KEYS: &[&str] = &["model", "maxDegree", "maxOrder", "degree", "order"];
+const THIRD_BODY_KEYS: &[&str] = &["sun", "moon", "gmSunKm3S2", "gmMoonKm3S2"];
+const SRP_KEYS: &[&str] = &[
+    "cr",
+    "areaToMassM2Kg",
+    "areaM2",
+    "massKg",
+    "pressureNM2",
+    "auKm",
+];
+const RELATIVITY_KEYS: &[&str] = &["muKm3S2", "cKmS"];
+const SOLID_EARTH_TIDE_KEYS: &[&str] = &["tideSystem"];
+
+fn reject_force_model_component(
+    parent: &JsValue,
+    key: &str,
+    context: &str,
+    known: &[&str],
+) -> Result<(), JsValue> {
+    let value = js_sys::Reflect::get(parent, &JsValue::from_str(key))
+        .map_err(|_| type_error(&format!("could not read {context}")))?;
+    if !value.is_null() && value.is_object() {
+        reject_unknown_keys(&value, context, known)?;
+    }
+    Ok(())
+}
+
+fn reject_force_model_object(value: &JsValue) -> Result<(), JsValue> {
+    if value.is_null() || !value.is_object() {
+        return Ok(());
+    }
+    reject_unknown_keys(value, "force model", FORCE_MODEL_OBJECT_KEYS)?;
+    reject_force_model_component(value, "zonal", "zonal gravity", ZONAL_INPUT_KEYS)?;
+    let zonal = js_sys::Reflect::get(value, &JsValue::from_str("zonal"))
+        .map_err(|_| type_error("could not read zonal gravity"))?;
+    if !zonal.is_null() && zonal.is_object() {
+        reject_force_model_component(
+            &zonal,
+            "coefficients",
+            "zonal coefficients",
+            ZONAL_COEFFICIENT_KEYS,
+        )?;
+    }
+    reject_force_model_component(
+        value,
+        "sphericalHarmonic",
+        "spherical-harmonic gravity",
+        SPHERICAL_HARMONIC_KEYS,
+    )?;
+    reject_force_model_component(
+        value,
+        "geopotential",
+        "geopotential gravity",
+        SPHERICAL_HARMONIC_KEYS,
+    )?;
+    reject_force_model_component(value, "thirdBody", "third-body gravity", THIRD_BODY_KEYS)?;
+    reject_force_model_component(
+        value,
+        "solidEarthTide",
+        "solid-earth tide gravity",
+        SOLID_EARTH_TIDE_KEYS,
+    )?;
+    reject_force_model_component(
+        value,
+        "solidEarthPoleTide",
+        "solid-earth pole-tide gravity",
+        &[],
+    )?;
+    reject_force_model_component(
+        value,
+        "solarRadiationPressure",
+        "solar-radiation pressure",
+        SRP_KEYS,
+    )?;
+    reject_force_model_component(value, "srp", "solar-radiation pressure", SRP_KEYS)?;
+    reject_force_model_component(value, "relativity", "relativity", RELATIVITY_KEYS)
+}
+
+pub(crate) fn reject_force_model_property(parent: &JsValue, key: &str) -> Result<(), JsValue> {
+    let value = js_sys::Reflect::get(parent, &JsValue::from_str(key))
+        .map_err(|_| type_error(&format!("could not read {key}")))?;
+    reject_force_model_object(&value)
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const FORCE_MODEL_TYPES: &str = r#"
+export type TideSystem = "tideFree" | "zeroTide" | "meanTide";
+export type ZonalCoefficientsInput = {
+  j2?: number; j3?: number; j4?: number; j5?: number; j6?: number;
+  tideSystem?: TideSystem;
+};
+export type SolidEarthTideGravityInput = { tideSystem?: TideSystem };
+"#;
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum TideSystemInput {
+    TideFree,
+    ZeroTide,
+    MeanTide,
+}
+
+impl From<TideSystemInput> for TideSystem {
+    fn from(value: TideSystemInput) -> Self {
+        match value {
+            TideSystemInput::TideFree => Self::TideFree,
+            TideSystemInput::ZeroTide => Self::ZeroTide,
+            TideSystemInput::MeanTide => Self::MeanTide,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -553,6 +701,10 @@ fn zonal_from_object(input: &ZonalInput) -> Result<ZonalGravity, JsValue> {
                 j4: coefficients.j4.unwrap_or(defaults.j4),
                 j5: coefficients.j5.unwrap_or(defaults.j5),
                 j6: coefficients.j6.unwrap_or(defaults.j6),
+                tide_system: coefficients
+                    .tide_system
+                    .map(Into::into)
+                    .unwrap_or(defaults.tide_system),
             });
     Ok(ZonalGravity::new(
         input.mu_km3_s2.unwrap_or(MU_EARTH),
@@ -616,8 +768,13 @@ fn component_solid_earth_tide(
 ) -> Result<Option<SolidEarthTideGravity>, JsValue> {
     match input {
         ComponentInput::Enabled(false) => Ok(None),
-        ComponentInput::Enabled(true) | ComponentInput::Object(_) => {
-            Ok(Some(SolidEarthTideGravity::default()))
+        ComponentInput::Enabled(true) => Ok(Some(SolidEarthTideGravity::default())),
+        ComponentInput::Object(input) => {
+            let mut model = SolidEarthTideGravity::default();
+            if let Some(tide_system) = input.tide_system {
+                model.tide_system = tide_system.into();
+            }
+            Ok(Some(model))
         }
         ComponentInput::Label(label) => match label.as_str() {
             "none" => Ok(None),

@@ -3,6 +3,7 @@ use wasm_bindgen::prelude::*;
 
 use sidereon::almanac::{
     lunar_solar_eclipses as core_lunar_solar_eclipses, meridian_transits as core_meridian_transits,
+    meridian_transits_with_validity as core_meridian_transits_with_validity,
     moon_phases as core_moon_phases, planetary_events as core_planetary_events,
     seasons as core_seasons, CulminationKind, EclipseKind, EphemerisSource, MoonPhaseKind, Planet,
     PlanetaryEventKind, SeasonKind, TransitBody,
@@ -10,7 +11,9 @@ use sidereon::almanac::{
 use sidereon::passes::UtcInstant;
 use sidereon_core::astro::frames::transforms::GeodeticStationKm;
 
-use crate::error::{engine_error, type_error};
+use crate::astro_error::almanac_error;
+use crate::error::{type_error, ut1_validity, validated_object};
+use crate::label::{lower_camel_variant, Label};
 use crate::spk::Spk;
 
 #[derive(Deserialize)]
@@ -36,15 +39,15 @@ impl StationInput {
 #[serde(rename_all = "camelCase")]
 struct TimedKindJs {
     time_unix_us: i64,
-    kind: &'static str,
+    kind: Label,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PlanetaryEventJs {
     time_unix_us: i64,
-    planet: &'static str,
-    kind: &'static str,
+    planet: Label,
+    kind: Label,
     elongation_deg: f64,
 }
 
@@ -52,7 +55,7 @@ struct PlanetaryEventJs {
 #[serde(rename_all = "camelCase")]
 struct TransitEventJs {
     time_unix_us: i64,
-    kind: &'static str,
+    kind: Label,
     altitude_deg: f64,
 }
 
@@ -60,7 +63,7 @@ struct TransitEventJs {
 #[serde(rename_all = "camelCase")]
 struct EclipseEventJs {
     time_maximum_unix_us: i64,
-    kind: &'static str,
+    kind: Label,
     magnitude: f64,
     moon_latitude_deg: f64,
     gamma: f64,
@@ -71,28 +74,28 @@ fn instant(us: i64) -> UtcInstant {
     UtcInstant::from_unix_microseconds(us)
 }
 
-fn season_label(kind: SeasonKind) -> &'static str {
-    match kind {
+fn season_label(kind: SeasonKind) -> Label {
+    Label::Borrowed(match kind {
         SeasonKind::MarchEquinox => "marchEquinox",
         SeasonKind::JuneSolstice => "juneSolstice",
         SeasonKind::SeptemberEquinox => "septemberEquinox",
         SeasonKind::DecemberSolstice => "decemberSolstice",
-        _ => "unknown",
-    }
+        other => return lower_camel_variant(&other),
+    })
 }
 
-fn phase_label(kind: MoonPhaseKind) -> &'static str {
-    match kind {
+fn phase_label(kind: MoonPhaseKind) -> Label {
+    Label::Borrowed(match kind {
         MoonPhaseKind::New => "new",
         MoonPhaseKind::FirstQuarter => "firstQuarter",
         MoonPhaseKind::Full => "full",
         MoonPhaseKind::LastQuarter => "lastQuarter",
-        _ => "unknown",
-    }
+        other => return lower_camel_variant(&other),
+    })
 }
 
-fn planet_label(planet: Planet) -> &'static str {
-    match planet {
+fn planet_label(planet: Planet) -> Label {
+    Label::Borrowed(match planet {
         Planet::Mercury => "mercury",
         Planet::Venus => "venus",
         Planet::Mars => "mars",
@@ -100,8 +103,8 @@ fn planet_label(planet: Planet) -> &'static str {
         Planet::Saturn => "saturn",
         Planet::Uranus => "uranus",
         Planet::Neptune => "neptune",
-        _ => "unknown",
-    }
+        other => return lower_camel_variant(&other),
+    })
 }
 
 fn parse_planet(value: &str) -> Result<Planet, JsValue> {
@@ -127,24 +130,24 @@ fn parse_planet_event_kind(value: &str) -> Result<PlanetaryEventKind, JsValue> {
     }
 }
 
-fn planetary_kind_label(kind: PlanetaryEventKind) -> &'static str {
-    match kind {
+fn planetary_kind_label(kind: PlanetaryEventKind) -> Label {
+    Label::Borrowed(match kind {
         PlanetaryEventKind::Conjunction => "conjunction",
         PlanetaryEventKind::Opposition => "opposition",
-        _ => "unknown",
-    }
+        other => return lower_camel_variant(&other),
+    })
 }
 
-fn culmination_label(kind: CulminationKind) -> &'static str {
-    match kind {
+fn culmination_label(kind: CulminationKind) -> Label {
+    Label::Borrowed(match kind {
         CulminationKind::Upper => "upper",
         CulminationKind::Lower => "lower",
-        _ => "unknown",
-    }
+        other => return lower_camel_variant(&other),
+    })
 }
 
-fn eclipse_label(kind: EclipseKind) -> &'static str {
-    match kind {
+fn eclipse_label(kind: EclipseKind) -> Label {
+    Label::Borrowed(match kind {
         EclipseKind::LunarPenumbral => "lunarPenumbral",
         EclipseKind::LunarPartial => "lunarPartial",
         EclipseKind::LunarTotal => "lunarTotal",
@@ -152,8 +155,8 @@ fn eclipse_label(kind: EclipseKind) -> &'static str {
         EclipseKind::SolarAnnular => "solarAnnular",
         EclipseKind::SolarTotal => "solarTotal",
         EclipseKind::SolarHybrid => "solarHybrid",
-        _ => "unknown",
-    }
+        other => return lower_camel_variant(&other),
+    })
 }
 
 fn source_spk(spk: &Spk) -> EphemerisSource<'_> {
@@ -174,7 +177,7 @@ fn seasons_with_source(
         step_s,
         tolerance_s,
     )
-    .map_err(engine_error)?;
+    .map_err(almanac_error)?;
     let out: Vec<TimedKindJs> = events
         .into_iter()
         .map(|event| TimedKindJs {
@@ -232,7 +235,7 @@ fn moon_phases_with_source(
         step_s,
         tolerance_s,
     )
-    .map_err(engine_error)?;
+    .map_err(almanac_error)?;
     let out: Vec<TimedKindJs> = events
         .into_iter()
         .map(|event| TimedKindJs {
@@ -297,7 +300,7 @@ pub fn planetary_events(
         step_s,
         tolerance_s,
     )
-    .map_err(engine_error)?;
+    .map_err(almanac_error)?;
     let out: Vec<PlanetaryEventJs> = events
         .into_iter()
         .map(|event| PlanetaryEventJs {
@@ -338,7 +341,7 @@ fn transits_with_source(
         step_s,
         tolerance_s,
     )
-    .map_err(engine_error)?;
+    .map_err(almanac_error)?;
     let out: Vec<TransitEventJs> = events
         .into_iter()
         .map(|event| TransitEventJs {
@@ -350,10 +353,105 @@ fn transits_with_source(
     serde_wasm_bindgen::to_value(&out).map_err(|e| type_error(&e.to_string()))
 }
 
-#[wasm_bindgen(js_name = meridianTransits)]
-pub fn meridian_transits(
+#[allow(clippy::too_many_arguments)]
+fn transits_with_source_validity(
+    source: EphemerisSource<'_>,
     body: &str,
     station: JsValue,
+    start_unix_us: i64,
+    end_unix_us: i64,
+    step_s: f64,
+    tolerance_s: f64,
+    ut1: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let station: StationInput = serde_wasm_bindgen::from_value(station)
+        .map_err(|e| type_error(&format!("invalid station: {e}")))?;
+    let validated = core_meridian_transits_with_validity(
+        source,
+        parse_transit_body(body)?,
+        &station.to_core(),
+        instant(start_unix_us),
+        instant(end_unix_us),
+        step_s,
+        tolerance_s,
+        ut1_validity(ut1)?,
+    )
+    .map_err(almanac_error)?;
+    let out: Vec<TransitEventJs> = validated
+        .value
+        .into_iter()
+        .map(|event| TransitEventJs {
+            time_unix_us: event.time.unix_microseconds(),
+            kind: culmination_label(event.kind),
+            altitude_deg: event.altitude_deg,
+        })
+        .collect();
+    let value = serde_wasm_bindgen::to_value(&out).map_err(|e| type_error(&e.to_string()))?;
+    validated_object(&value, validated.degraded)
+}
+
+/// [`meridianTransits`] under a UT1 validity policy: `"strict"` (the default)
+/// refuses a window reaching past the UT1 table, `"permissive"` accepts it.
+/// Returns `{ value, ut1Degraded }` with `value` the transit events.
+#[wasm_bindgen(
+    js_name = meridianTransitsWithValidity,
+    unchecked_return_type = "Ut1Validated<MeridianTransitEvent[]>"
+)]
+#[allow(clippy::too_many_arguments)]
+pub fn meridian_transits_with_validity(
+    body: &str,
+    #[wasm_bindgen(unchecked_param_type = "ObserveStation")] station: JsValue,
+    start_unix_us: i64,
+    end_unix_us: i64,
+    step_s: f64,
+    tolerance_s: f64,
+    ut1: Option<String>,
+) -> Result<JsValue, JsValue> {
+    transits_with_source_validity(
+        EphemerisSource::Analytic,
+        body,
+        station,
+        start_unix_us,
+        end_unix_us,
+        step_s,
+        tolerance_s,
+        ut1,
+    )
+}
+
+/// [`meridianTransitsSpk`] under a UT1 validity policy, as
+/// [`meridianTransitsWithValidity`].
+#[wasm_bindgen(
+    js_name = meridianTransitsSpkWithValidity,
+    unchecked_return_type = "Ut1Validated<MeridianTransitEvent[]>"
+)]
+#[allow(clippy::too_many_arguments)]
+pub fn meridian_transits_spk_with_validity(
+    spk: &Spk,
+    body: &str,
+    #[wasm_bindgen(unchecked_param_type = "ObserveStation")] station: JsValue,
+    start_unix_us: i64,
+    end_unix_us: i64,
+    step_s: f64,
+    tolerance_s: f64,
+    ut1: Option<String>,
+) -> Result<JsValue, JsValue> {
+    transits_with_source_validity(
+        source_spk(spk),
+        body,
+        station,
+        start_unix_us,
+        end_unix_us,
+        step_s,
+        tolerance_s,
+        ut1,
+    )
+}
+
+#[wasm_bindgen(js_name = meridianTransits, unchecked_return_type = "MeridianTransitEvent[]")]
+pub fn meridian_transits(
+    body: &str,
+    #[wasm_bindgen(unchecked_param_type = "ObserveStation")] station: JsValue,
     start_unix_us: i64,
     end_unix_us: i64,
     step_s: f64,
@@ -370,11 +468,11 @@ pub fn meridian_transits(
     )
 }
 
-#[wasm_bindgen(js_name = meridianTransitsSpk)]
+#[wasm_bindgen(js_name = meridianTransitsSpk, unchecked_return_type = "MeridianTransitEvent[]")]
 pub fn meridian_transits_spk(
     spk: &Spk,
     body: &str,
-    station: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "ObserveStation")] station: JsValue,
     start_unix_us: i64,
     end_unix_us: i64,
     step_s: f64,
@@ -405,7 +503,7 @@ fn eclipses_with_source(
         step_s,
         tolerance_s,
     )
-    .map_err(engine_error)?;
+    .map_err(almanac_error)?;
     let out: Vec<EclipseEventJs> = events
         .into_iter()
         .map(|event| EclipseEventJs {

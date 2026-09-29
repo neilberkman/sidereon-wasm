@@ -31,6 +31,7 @@ import {
   melbourneWubbena,
   wideLaneCycles,
   detectCycleSlips,
+  ExactEpoch,
   smoothCode,
   smoothIonoFreeCode,
   slipReasonLabel,
@@ -39,6 +40,7 @@ import {
   rangeRateToDoppler,
   solveVelocity,
   pseudorangeVariance,
+  chi2Inv,
   sigmas,
   weightVector,
   RaimWeights,
@@ -61,7 +63,7 @@ import {
   PseudorangeDropReason,
 } from "../pkg-node/sidereon.js";
 
-import { fixture, hexToF64, f64Bits, hf } from "./helpers.mjs";
+import { coreGoldens, fixture, hexToF64, f64Bits, hf } from "./helpers.mjs";
 
 const C = 299792458.0;
 const aBits = (arr) => Array.from(arr, f64Bits);
@@ -185,17 +187,10 @@ const carrierArc = (rows = CARRIER_ARC_ROWS) =>
     gapTimeS: epoch,
   }));
 
-const VELOCITY_OBS_BITS = [
-  ["G07", "0xC0768A0B93C45F82"],
-  ["G08", "0xC081BBF2879835FD"],
-  ["G10", "0xC081C9B51570E844"],
-  ["G16", "0xC045EB58A1B7B54E"],
-  ["G18", "0x407EC07DD774B2F8"],
-  ["G20", "0xC0689F0E9E24FBC3"],
-  ["G21", "0x4063A9470C18C1A7"],
-  ["G26", "0x4079EF7D9618F6B0"],
-  ["G27", "0xC0775231A845D789"],
-];
+// The velocity scenario of sidereon-core's velocity module test, reproduced
+// natively by test/golden-gen: range rates predicted for a receiver moving at
+// (12, -7, 3) m/s with a 1 ns/s clock drift, and the engine's solutions.
+const VELOCITY = coreGoldens().velocity;
 
 const SIGNAL_PRN1_CHIPS = [
   -1, -1, 1, 1, -1, 1, 1, 1, 1, 1, -1, -1, -1, 1, 1, -1, 1, -1, 1, 1, -1, 1, 1, -1, -1, -1, -1, 1,
@@ -216,6 +211,9 @@ test("carrier frequency constants and default pair", () => {
   assert.equal(carrierFrequencyHz(GnssSystem.Gps, CarrierBand.E1), undefined);
   assert.equal(defaultSppFrequencyHz(GnssSystem.Gps), 1_575_420_000.0);
   assert.equal(defaultSppFrequencyHz(GnssSystem.Glonass), undefined);
+  // QZSS L1 and NavIC L5, as RTKLIB `sat2freq` gives their single-frequency codes.
+  assert.equal(defaultSppFrequencyHz(GnssSystem.Qzss), 1_575_420_000.0);
+  assert.equal(defaultSppFrequencyHz(GnssSystem.Navic), 1_176_450_000.0);
   assert.equal(glonassG1FrequencyHz(-7), 1_602_000_000.0 - 7.0 * 562_500.0);
 
   const pair = defaultPair(GnssSystem.Gps);
@@ -237,6 +235,22 @@ test("rinex band frequency lookup", () => {
     rinexBandWavelengthM(GnssSystem.Glonass, "1", -7),
     C / (1_602_000_000.0 - 7.0 * 562_500.0),
   );
+  // The FDMA carrier resolves only for a channel in the -7..=6 allocation;
+  // channel 7, which real headers give R28, names no carrier.
+  assert.equal(rinexBandFrequencyHz(GnssSystem.Glonass, "1", 6), 1_602_000_000.0 + 6 * 562_500.0);
+  assert.equal(rinexBandFrequencyHz(GnssSystem.Glonass, "1", 7), undefined);
+  assert.equal(rinexBandFrequencyHz(GnssSystem.Glonass, "2", 7), undefined);
+  // GLONASS CDMA G3, G1a and G2a are fixed carriers and need no channel.
+  assert.equal(rinexBandFrequencyHz(GnssSystem.Glonass, "3"), 1_202_025_000.0);
+  assert.equal(rinexBandFrequencyHz(GnssSystem.Glonass, "4"), 1_600_995_000.0);
+  assert.equal(rinexBandFrequencyHz(GnssSystem.Glonass, "6"), 1_248_060_000.0);
+  // SBAS L1 and L5, NavIC L5, S and L1, and QZSS L6.
+  assert.equal(rinexBandFrequencyHz(GnssSystem.Sbas, "1"), 1_575_420_000.0);
+  assert.equal(rinexBandFrequencyHz(GnssSystem.Sbas, "5"), 1_176_450_000.0);
+  assert.equal(rinexBandFrequencyHz(GnssSystem.Navic, "5"), 1_176_450_000.0);
+  assert.equal(rinexBandFrequencyHz(GnssSystem.Navic, "9"), 2_492_028_000.0);
+  assert.equal(rinexBandFrequencyHz(GnssSystem.Navic, "1"), 1_575_420_000.0);
+  assert.equal(rinexBandFrequencyHz(GnssSystem.Qzss, "6"), 1_278_750_000.0);
 });
 
 test("rinex band requires one character", () => {
@@ -328,6 +342,21 @@ test("cycle slips detect clean and injected arc bits", () => {
   });
 });
 
+test("carrier-phase arcs accept exact gap epochs", () => {
+  const scalar_arc = carrierArc(CARRIER_ARC_ROWS.slice(0, 4));
+  const exact_arc = scalar_arc.map((row, index) => ({
+    ...row,
+    gapEpoch: new ExactEpoch(BigInt(index), 0n).checkedAddSeconds(1e-19),
+  }));
+  assert.deepEqual(
+    detectCycleSlips(exact_arc, undefined).map((row) => row.slip),
+    detectCycleSlips(scalar_arc, undefined).map((row) => row.slip),
+  );
+  assert.equal(exact_arc[0].gapEpoch.subAttosecondDigits, 1n);
+  assert.equal(exact_arc[0].gapEpoch.subAttosecondPlaces, 1);
+  assert.equal(exact_arc[0].gapEpoch.wholeSeconds, 0n);
+});
+
 test("hatch smoothing matches the rust oracle bits", () => {
   const actual = smoothCode(carrierArc(), undefined, 100);
   const expected = [
@@ -385,114 +414,60 @@ test("doppler range-rate conversions match the formula", () => {
   assert.equal(rangeRateToDoppler(42.0, fL1), (-42.0 * fL1) / C);
 });
 
-test("velocity range-rate solve matches the rust oracle bits", () => {
+test("velocity range-rate solve matches the engine bits", () => {
   const sp3 = loadSp3(fixture("GRG0MGXFIN_20201760000_01D_15M_ORB.SP3"));
   const fL1 = carrierFrequencyHz(GnssSystem.Gps, CarrierBand.L1);
-  const observations = VELOCITY_OBS_BITS.map(([sat, bits]) => ({
+  const observations = VELOCITY.rangeRates.map(([sat, bits]) => ({
     satelliteId: sat,
     value: hexToF64(bits),
     carrierHz: fL1,
   }));
-  const receiver = Float64Array.from([4_500_000.0, 500_000.0, 4_500_000.0]);
-  const solution = solveVelocity(sp3, observations, receiver, 646_272_000.0, undefined);
-
-  assert.deepEqual(
-    solution.usedSats,
-    VELOCITY_OBS_BITS.map(([sat]) => sat),
+  const receiver = Float64Array.from(VELOCITY.receiverEcefM.map(hexToF64));
+  const solution = solveVelocity(
+    sp3,
+    observations,
+    receiver,
+    hexToF64(VELOCITY.tRxJ2000S),
+    undefined,
   );
+  const ref = VELOCITY.rangeRate;
+
+  assert.deepEqual(solution.usedSats, ref.usedSats);
   assert.equal(solution.velocityMS.length, 3);
   assert.equal(solution.stateCovariance.length, 16);
   assert.ok(Array.from(solution.stateCovariance).every(Number.isFinite));
   for (const idx of [0, 5, 10, 15]) assert.ok(solution.stateCovariance[idx] > 0);
   assert.equal(solution.residualsMS.length, observations.length);
-  assert.deepEqual(
-    aBits(solution.velocityMS),
-    expectBits(["0x4028000000000000", "0xc01c000000000016", "0x4007ffffffffff00"]),
-  );
-  assert.deepEqual(
-    aBits(solution.stateCovariance),
-    expectBits([
-      "0x3ff0906b12ade753",
-      "0xbfd3507feaeb34da",
-      "0x3fe4b8aaad393152",
-      "0x3e2653d2334473f0",
-      "0xbfd3507feaeb34dc",
-      "0x3fe06337a5bee55f",
-      "0x3f9ceec75f8410a1",
-      "0xbdfba852d0276899",
-      "0x3fe4b8aaad39314d",
-      "0x3f9ceec75f8410c1",
-      "0x3ffc72af9d76e44d",
-      "0x3e30eae3e3aecb8c",
-      "0x3e2653d2334473f2",
-      "0xbdfba852d027689e",
-      "0x3e30eae3e3aecb8b",
-      "0x3c6ae29fdfe7f6ff",
-    ]),
-  );
-  assert.equal(f64Bits(solution.speedMS), 0x402c6ce322982a37n);
-  assert.equal(f64Bits(solution.clockDriftSS), 0x3e112e0be826d2een);
-  assert.deepEqual(
-    aBits(solution.residualsMS),
-    expectBits([
-      "0xbd01000000000000",
-      "0xbd24000000000000",
-      "0x3cfc000000000000",
-      "0xbd16000000000000",
-      "0xbd1a800000000000",
-      "0x3cf0000000000000",
-      "0xbd14000000000000",
-      "0x3d31800000000000",
-      "0x3d18000000000000",
-    ]),
-  );
+  assert.deepEqual(aBits(solution.velocityMS), expectBits(ref.velocityMS));
+  assert.deepEqual(aBits(solution.stateCovariance), expectBits(ref.stateCovariance));
+  assert.equal(f64Bits(solution.speedMS), BigInt(ref.speedMS));
+  assert.equal(f64Bits(solution.clockDriftSS), BigInt(ref.clockDriftSS));
+  assert.deepEqual(aBits(solution.residualsMS), expectBits(ref.residualsMS));
+  // The synthesized receiver motion is recovered.
+  const truth = [12, -7, 3];
+  solution.velocityMS.forEach((v, i) => assert.ok(Math.abs(v - truth[i]) < 1e-6));
 });
 
-test("velocity doppler solve matches the rust oracle bits", () => {
+test("velocity doppler solve matches the engine bits", () => {
   const sp3 = loadSp3(fixture("GRG0MGXFIN_20201760000_01D_15M_ORB.SP3"));
-  const fL1 = carrierFrequencyHz(GnssSystem.Gps, CarrierBand.L1);
-  const dopplerObs = VELOCITY_OBS_BITS.map(([sat, bits], idx) => {
+  const ref = VELOCITY.doppler;
+  const dopplerObs = VELOCITY.rangeRates.map(([sat, bits], idx) => {
     const channel = (idx % 14) - 7;
     const carrier = rinexBandFrequencyHz(GnssSystem.Glonass, "1", channel);
-    return {
-      satelliteId: sat,
-      value: rangeRateToDoppler(hexToF64(bits), carrier),
-      carrierHz: carrier,
-    };
+    assert.equal(f64Bits(carrier), BigInt(ref.carriersHz[idx]));
+    const value = rangeRateToDoppler(hexToF64(bits), carrier);
+    assert.equal(f64Bits(value), BigInt(ref.values[idx]));
+    return { satelliteId: sat, value, carrierHz: carrier };
   });
-  void fL1;
-  const receiver = Float64Array.from([4_500_000.0, 500_000.0, 4_500_000.0]);
-  const solution = solveVelocity(sp3, dopplerObs, receiver, 646_272_000.0, {
+  const receiver = Float64Array.from(VELOCITY.receiverEcefM.map(hexToF64));
+  const solution = solveVelocity(sp3, dopplerObs, receiver, hexToF64(VELOCITY.tRxJ2000S), {
     observable: "doppler",
   });
 
-  assert.deepEqual(
-    aBits(solution.velocityMS),
-    expectBits(["0x402800000000000c", "0xc01c00000000000f", "0x4007ffffffffff60"]),
-  );
-  assert.deepEqual(
-    aBits(solution.stateCovariance),
-    expectBits([
-      "0x3ff0906b12ade753",
-      "0xbfd3507feaeb34da",
-      "0x3fe4b8aaad393152",
-      "0x3e2653d2334473f0",
-      "0xbfd3507feaeb34dc",
-      "0x3fe06337a5bee55f",
-      "0x3f9ceec75f8410a1",
-      "0xbdfba852d0276899",
-      "0x3fe4b8aaad39314d",
-      "0x3f9ceec75f8410c1",
-      "0x3ffc72af9d76e44d",
-      "0x3e30eae3e3aecb8c",
-      "0x3e2653d2334473f2",
-      "0xbdfba852d027689e",
-      "0x3e30eae3e3aecb8b",
-      "0x3c6ae29fdfe7f6ff",
-    ]),
-  );
-  assert.equal(f64Bits(solution.speedMS), 0x402c6ce322982a44n);
-  assert.equal(f64Bits(solution.clockDriftSS), 0x3e112e0be826d4b8n);
+  assert.deepEqual(aBits(solution.velocityMS), expectBits(ref.velocityMS));
+  assert.deepEqual(aBits(solution.stateCovariance), expectBits(ref.stateCovariance));
+  assert.equal(f64Bits(solution.speedMS), BigInt(ref.speedMS));
+  assert.equal(f64Bits(solution.clockDriftSS), BigInt(ref.clockDriftSS));
 });
 
 test("ionosphere-free pseudoranges report drop reasons", () => {
@@ -560,12 +535,43 @@ test("quality variance and weight vectors match the rust oracle", () => {
 });
 
 test("quality cn0 model and errors", () => {
-  assert.throws(() => pseudorangeVariance(30.0, { model: "elevation_cn0" }), RangeError);
-  assert.throws(() => pseudorangeVariance(0.0, undefined), RangeError);
+  assert.throws(
+    () => pseudorangeVariance(30.0, { model: "elevation_cn0" }),
+    (error) => error.detail?.kind === "MISSING_CN0",
+  );
+  assert.throws(
+    () => pseudorangeVariance(0.0, undefined),
+    (error) => error.detail?.kind === "INVALID_ELEVATION",
+  );
+  assert.throws(
+    () => pseudorangeVariance(30.0, { aM: -1.0 }),
+    (error) => error.detail?.kind === "INVALID_PARAMETER",
+  );
+  assert.equal(pseudorangeVariance(0.0, { bM: 0.0 }), 0.09);
+  assert.ok(Number.isFinite(pseudorangeVariance(-5.0, undefined)));
 
   const weak = pseudorangeVariance(30.0, { model: "elevation_cn0", cn0Dbhz: 30.0 });
   const strong = pseudorangeVariance(30.0, { model: "elevation_cn0", cn0Dbhz: 50.0 });
   assert.ok(strong < weak);
+});
+
+test("chi-square inverse CDF delegates typed validation to core", () => {
+  // For two degrees of freedom, the CDF is 1 - exp(-x/2), so its median is
+  // x = 2 ln(2), which lies strictly between 1 and 2. This analytic interval
+  // checks a valid quantile without fitting a decimal tolerance.
+  const median = chi2Inv(0.5, 2);
+  assert.ok(Number.isFinite(median) && median > 1 && median < 2);
+  assert.throws(
+    () => chi2Inv(0.0, 1),
+    (error) => error.detail?.kind === "INVALID_PROBABILITY",
+  );
+  for (const dof of [-1, 1.5, 2 ** 32, Number.POSITIVE_INFINITY]) {
+    assert.throws(
+      () => chi2Inv(0.95, dof),
+      (error) => error.detail?.kind === "INVALID_DOF",
+      `dof=${dof}`,
+    );
+  }
 });
 
 test("raim weights expose a sorted float64 vector", () => {

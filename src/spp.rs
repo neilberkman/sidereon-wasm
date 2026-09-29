@@ -8,29 +8,39 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+use sidereon_core::astro::math::least_squares::Status as SolveStatus;
 use sidereon_core::ephemeris::Sp3 as CoreSp3;
 use sidereon_core::positioning::{
-    solve_spp_batch_serial, solve_spp_from_rinex_obs as core_solve_spp_from_rinex_obs,
+    solve_spp_batch_serial,
+    solve_spp_from_rinex_obs_exact_with_policy as core_solve_spp_from_rinex_obs_exact_with_policy,
     solve_with_doppler_velocity as core_solve_with_doppler_velocity,
     spp_inputs_from_rinex_obs as core_spp_inputs_from_rinex_obs, Corrections, DopplerObservation,
-    EphemerisSource, KlobucharCoeffs, Observation, ReceiverSolution, RinexSppEpochSolution,
+    EphemerisSource, ExactSolveInputs, KlobucharCoeffs, Observation, PseudorangeCode, QzssClock,
+    ReceiverSolution, RejectionReason, RinexSppEpochSolution,
     RinexSppOptions as CoreRinexSppOptions, RobustConfig, SolveInputs, SolvePolicy,
-    SppDopplerSolution as CoreSppDopplerSolution, SurfaceMet, DEFAULT_HUBER_K,
+    SppDopplerSolution as CoreSppDopplerSolution, SurfaceMet, TroposphereModel, DEFAULT_HUBER_K,
     DEFAULT_ROBUST_MAX_OUTER, DEFAULT_ROBUST_OUTER_TOL_M, DEFAULT_ROBUST_SCALE_FLOOR_M,
 };
 use sidereon_core::quality::SolutionValidationOptions;
 use sidereon_core::rinex::observations::{
     ObsEpochTime as CoreObsEpochTime, SignalPolicy as CoreSignalPolicy,
 };
+use sidereon_core::ssr::{MissingCorrectionAction, SsrCorrectedEphemeris, SsrFallbackPolicy};
 use sidereon_core::{GnssSatelliteId, GnssSystem};
 
 use crate::dop::Dop;
 use crate::error::{engine_error, range_error, type_error};
+use crate::frames::ExactEpochValue;
 use crate::geometry_quality::GeometryQuality;
 use crate::marshal::mat3_flat;
 use crate::observables::VelocitySolution;
+use crate::positioning_error::{
+    detail_to_js, facade_error, positioning_error, rinex_spp_detail, solve_policy_detail,
+    spp_error, PositioningErrorDetail,
+};
 use crate::rinex_nav::BroadcastEphemeris;
 use crate::rinex_obs::RinexObs;
+use crate::ssr::SsrCorrectionStore;
 
 fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     value
@@ -47,6 +57,44 @@ struct SystemTdopJs {
 
 fn system_label(system: GnssSystem) -> &'static str {
     system.as_str()
+}
+
+/// The label a rejected satellite's reason crosses as. Selection tests the
+/// reasons in the order the core documents on `RejectionReason` and reports the
+/// first that applies.
+pub(crate) fn rejection_reason_label(reason: RejectionReason) -> &'static str {
+    match reason {
+        RejectionReason::NoEphemeris => "noEphemeris",
+        RejectionReason::SsrCorrectionExceedsLimit(_) => "ssrCorrectionExceedsLimit",
+        RejectionReason::LowElevation => "lowElevation",
+        RejectionReason::SbasWithdrawn => "sbasWithdrawn",
+        RejectionReason::SbasIonoUncovered => "sbasIonoUncovered",
+        RejectionReason::IonosphereCarrierUnresolved => "ionosphereCarrierUnresolved",
+    }
+}
+
+/// One satellite left out of a solve: `{ satelliteId: "R01", reason }`, plus
+/// `ssrCorrectionSize` when the reason is `"ssrCorrectionExceedsLimit"`.
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RejectedSatJs {
+    pub(crate) satellite_id: String,
+    pub(crate) reason: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) ssr_correction_size: Option<crate::ssr::SsrCorrectionSizeJs>,
+}
+
+impl From<&sidereon_core::positioning::RejectedSat> for RejectedSatJs {
+    fn from(row: &sidereon_core::positioning::RejectedSat) -> Self {
+        Self {
+            satellite_id: row.satellite_id.to_string(),
+            reason: rejection_reason_label(row.reason),
+            ssr_correction_size: match row.reason {
+                RejectionReason::SsrCorrectionExceedsLimit(size) => Some(size.into()),
+                _ => None,
+            },
+        }
+    }
 }
 
 /// One pseudorange observation: `{ satelliteId: "G01", pseudorangeM: 2.3e7 }`.
@@ -173,10 +221,13 @@ struct SppRequest {
     met: SurfaceMetInput,
     /// GLONASS FDMA channel numbers as `[slot, channel]` pairs, e.g.
     /// `[[1, 1], [2, -4]]`: each `slot` is the GLONASS satellite slot/PRN and
-    /// each `channel` the FDMA frequency channel `k` (valid `[-7, +6]`). Absent
-    /// or empty is correct for any solve with no GLONASS observation. A GLONASS
-    /// observation solved with the ionosphere correction on but no channel here
-    /// (or a channel outside the valid range) is rejected by the engine.
+    /// each `channel` the FDMA frequency channel `k` (the allocation is
+    /// `[-7, +6]`). Absent or empty is correct for any solve with no GLONASS
+    /// observation. With the ionosphere correction on, a GLONASS observation
+    /// with no channel here, or a channel outside the allocation, has no carrier
+    /// to scale the delay to: the engine leaves that satellite out, reports it
+    /// in `rejectedSats` as `"ionosphereCarrierUnresolved"`, and solves the rest
+    /// of the epoch.
     #[serde(default)]
     glonass_channels: Vec<(u8, i8)>,
     #[serde(default = "default_true")]
@@ -200,6 +251,129 @@ struct SppRequest {
     /// is refused with an `Error`. Honored only on the SP3 `solveSpp` path.
     #[serde(default)]
     max_pdop: Option<f64>,
+    /// Which code the pseudoranges are: `"singleFrequency"` (the default) or
+    /// `"ionosphereFree"`. The broadcast single-frequency group delay (GPS and
+    /// QZSS TGD, Galileo BGD, BeiDou TGD1) applies to single-frequency code only,
+    /// as RTKLIB `prange` applies it; a source without a group delay, such as
+    /// SP3, is unaffected.
+    #[serde(default)]
+    pseudorange_code: PseudorangeCodeInput,
+    #[serde(default)]
+    qzss_clock: QzssClockInput,
+    #[serde(default)]
+    troposphere_model: TroposphereModelInput,
+}
+
+/// The JS spelling of the core [`PseudorangeCode`], shared by every request
+/// that builds [`SolveInputs`].
+#[derive(Deserialize, Clone, Copy, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum PseudorangeCodeInput {
+    #[default]
+    SingleFrequency,
+    IonosphereFree,
+}
+
+impl From<PseudorangeCodeInput> for PseudorangeCode {
+    fn from(code: PseudorangeCodeInput) -> Self {
+        match code {
+            PseudorangeCodeInput::SingleFrequency => PseudorangeCode::SingleFrequency,
+            PseudorangeCodeInput::IonosphereFree => PseudorangeCode::IonosphereFree,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum QzssClockInput {
+    #[default]
+    Gps,
+    Separate,
+}
+
+impl From<QzssClockInput> for QzssClock {
+    fn from(value: QzssClockInput) -> Self {
+        match value {
+            QzssClockInput::Gps => Self::Gps,
+            QzssClockInput::Separate => Self::Separate,
+        }
+    }
+}
+
+impl From<QzssClock> for QzssClockInput {
+    fn from(value: QzssClock) -> Self {
+        match value {
+            QzssClock::Gps => Self::Gps,
+            QzssClock::Separate => Self::Separate,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum TroposphereModelInput {
+    #[default]
+    Rtklib,
+    SaastamoinenNiell,
+}
+
+impl From<TroposphereModelInput> for TroposphereModel {
+    fn from(value: TroposphereModelInput) -> Self {
+        match value {
+            TroposphereModelInput::Rtklib => Self::Rtklib,
+            TroposphereModelInput::SaastamoinenNiell => Self::SaastamoinenNiell,
+        }
+    }
+}
+
+impl From<TroposphereModel> for TroposphereModelInput {
+    fn from(value: TroposphereModel) -> Self {
+        match value {
+            TroposphereModel::Rtklib => Self::Rtklib,
+            TroposphereModel::SaastamoinenNiell => Self::SaastamoinenNiell,
+        }
+    }
+}
+
+/// The JS label of how a solve ended: the engine variant's name. The first four
+/// end a single trust-region solve; `"SelectionSettled"` (converged),
+/// `"OuterBudgetExhausted"` and `"OuterOscillation"` (not converged) end an SPP
+/// or static solve as a whole.
+pub(crate) fn solve_status_label(status: SolveStatus) -> &'static str {
+    match status {
+        SolveStatus::GradientTolerance => "GradientTolerance",
+        SolveStatus::CostTolerance => "CostTolerance",
+        SolveStatus::StepTolerance => "StepTolerance",
+        SolveStatus::MaxEvaluations => "MaxEvaluations",
+        SolveStatus::SelectionSettled => "SelectionSettled",
+        SolveStatus::OuterBudgetExhausted => "OuterBudgetExhausted",
+        SolveStatus::OuterOscillation => "OuterOscillation",
+    }
+}
+
+/// How an SPP solve ran and ended.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SppMetadataJs {
+    iterations: usize,
+    converged: bool,
+    status: &'static str,
+    outer_iterations: usize,
+    final_robust_scale_m: Option<f64>,
+    ionosphere_applied: bool,
+    troposphere_applied: bool,
+    used_count: usize,
+    systems: Vec<&'static str>,
+}
+
+/// The JS label of a UT1 departure a permissive UT1 policy accepted.
+pub(crate) fn degrade_reason_label(
+    reason: sidereon_core::astro::time::DegradeReason,
+) -> &'static str {
+    match reason {
+        sidereon_core::astro::time::DegradeReason::BeforeCoverage => "beforeCoverage",
+        sidereon_core::astro::time::DegradeReason::AfterCoverage => "afterCoverage",
+    }
 }
 
 fn default_true() -> bool {
@@ -257,6 +431,9 @@ fn build_solve_inputs(req: &SppRequest) -> Result<(SolveInputs, bool), JsValue> 
             relative_humidity: req.met.relative_humidity,
         },
         robust,
+        pseudorange_code: req.pseudorange_code.into(),
+        qzss_clock: req.qzss_clock.into(),
+        troposphere_model: req.troposphere_model.into(),
     };
 
     Ok((inputs, req.with_geodetic))
@@ -315,8 +492,77 @@ pub fn solve(eph: &CoreSp3, request: JsValue) -> Result<SppSolution, JsValue> {
 
     // Serial reference path: solve_spp, never the rayon batch variant.
     let solution = sidereon::solve_spp(eph as &dyn EphemerisSource, &inputs, with_geodetic, policy)
-        .map_err(engine_error)?;
+        .map_err(|e| facade_error(&e))?;
 
+    Ok(SppSolution { inner: solution })
+}
+
+#[wasm_bindgen(js_name = solveWithExactEpoch)]
+pub fn solve_with_exact_epoch_js(
+    eph: &crate::sp3::Sp3,
+    request: JsValue,
+    receive_epoch: &ExactEpochValue,
+) -> Result<SppSolution, JsValue> {
+    let req: SppRequest = serde_wasm_bindgen::from_value(request)
+        .map_err(|e| type_error(&format!("invalid SPP request: {e}")))?;
+    let (inputs, with_geodetic) = build_solve_inputs(&req)?;
+    let policy = build_policy(&req)?;
+    let exact_inputs = ExactSolveInputs {
+        inputs,
+        receive_epoch: receive_epoch.core(),
+    };
+    let solution = sidereon::positioning::solve_with_exact_epoch_and_policy(
+        &eph.inner as &dyn EphemerisSource,
+        &exact_inputs,
+        with_geodetic,
+        policy,
+    )
+    .map_err(|error| positioning_error(&solve_policy_detail(&error)))?;
+    Ok(SppSolution { inner: solution })
+}
+
+#[wasm_bindgen(js_name = solveSppWithSsrExactEpoch)]
+pub fn solve_spp_with_ssr_exact_epoch_js(
+    broadcast: &BroadcastEphemeris,
+    store: &SsrCorrectionStore,
+    request: JsValue,
+    receive_epoch: &ExactEpochValue,
+    fallback_to_broadcast: Option<bool>,
+    allow_regional_provider: Option<u16>,
+    validity: Option<String>,
+) -> Result<SppSolution, JsValue> {
+    let req: SppRequest = serde_wasm_bindgen::from_value(request)
+        .map_err(|error| type_error(&format!("invalid SPP request: {error}")))?;
+    let (inputs, with_geodetic) = build_solve_inputs(&req)?;
+    let policy = build_policy(&req)?;
+    let validity = crate::error::ut1_validity(validity)?;
+    let fallback = SsrFallbackPolicy {
+        on_missing_correction: if fallback_to_broadcast.unwrap_or(false) {
+            MissingCorrectionAction::FallBackToBroadcast
+        } else {
+            MissingCorrectionAction::Decline
+        },
+        ..Default::default()
+    };
+    let mut source = SsrCorrectedEphemeris::new(&broadcast.inner, store.core())
+        .with_fallback(fallback)
+        .with_validity(validity)
+        .with_correction_size_policy(store.correction_size_policy().into());
+    if let Some(provider) = allow_regional_provider {
+        source = source.allow_regional_provider(provider);
+    }
+    let exact_inputs = ExactSolveInputs {
+        inputs,
+        receive_epoch: receive_epoch.core(),
+    };
+    let result = sidereon_core::positioning::solve_with_exact_epoch_and_policy(
+        &source,
+        &exact_inputs,
+        with_geodetic,
+        policy,
+    );
+    store.record_oversized(source.oversized_corrections());
+    let solution = result.map_err(|error| positioning_error(&solve_policy_detail(&error)))?;
     Ok(SppSolution { inner: solution })
 }
 
@@ -350,7 +596,7 @@ pub fn solve_with_doppler_velocity(
     let doppler_observations = build_doppler_observations(doppler_observations)?;
     let inner =
         core_solve_with_doppler_velocity(eph, &inputs, &doppler_observations, with_geodetic)
-            .map_err(engine_error)?;
+            .map_err(|e| spp_error(&e))?;
     Ok(SppDopplerSolution { inner })
 }
 
@@ -376,6 +622,8 @@ struct RinexSppOptionsInput {
     satellites: Option<Vec<String>>,
     met: SurfaceMetInput,
     robust: Option<RobustInput>,
+    qzss_clock: Option<QzssClockInput>,
+    troposphere_model: Option<TroposphereModelInput>,
 }
 
 fn parse_gnss_system(label: &str) -> Result<GnssSystem, JsValue> {
@@ -433,6 +681,9 @@ impl RinexSppOptionsInput {
         if let Some(robust) = &self.robust {
             options = options.with_robust(Some(robust.to_config()?));
         }
+        options = options
+            .with_qzss_clock(self.qzss_clock.unwrap_or_default().into())
+            .with_troposphere_model(self.troposphere_model.unwrap_or_default().into());
         Ok(options)
     }
 }
@@ -510,6 +761,8 @@ struct RinexSppEpochInputsObject {
     initial_guess: [f64; 4],
     corrections: RinexSppCorrectionsObject,
     glonass_channels: Vec<[i32; 2]>,
+    qzss_clock: QzssClockInput,
+    troposphere_model: TroposphereModelInput,
 }
 
 impl From<&sidereon_core::positioning::RinexSppEpochInputs> for RinexSppEpochInputsObject {
@@ -540,6 +793,8 @@ impl From<&sidereon_core::positioning::RinexSppEpochInputs> for RinexSppEpochInp
                 .iter()
                 .map(|(slot, channel)| [i32::from(*slot), i32::from(*channel)])
                 .collect(),
+            qzss_clock: epoch.inputs.qzss_clock.into(),
+            troposphere_model: epoch.inputs.troposphere_model.into(),
         }
     }
 }
@@ -547,8 +802,8 @@ impl From<&sidereon_core::positioning::RinexSppEpochInputs> for RinexSppEpochInp
 /// Assemble parsed RINEX OBS epochs into broadcast-backed SPP solve inputs.
 ///
 /// `source` is a parsed RINEX NAV broadcast store. `options` accepts
-/// `signalPolicy`, `corrections`, `initialGuess`, `satellites`, `met`, and
-/// `robust`; omit it for the core default policy for the observation file.
+/// `signalPolicy`, `corrections`, `initialGuess`, `satellites`, `met`, `robust`,
+/// `qzssClock`, and `troposphereModel`; omit it for the core defaults.
 #[wasm_bindgen(js_name = sppInputsFromRinexObs)]
 pub fn spp_inputs_from_rinex_obs_js(
     source: &BroadcastEphemeris,
@@ -557,7 +812,7 @@ pub fn spp_inputs_from_rinex_obs_js(
 ) -> Result<JsValue, JsValue> {
     let options = rinex_spp_options(obs, options)?;
     let epochs = core_spp_inputs_from_rinex_obs(&obs.inner, &source.inner, &options)
-        .map_err(engine_error)?;
+        .map_err(|e| positioning_error(&rinex_spp_detail(&e)))?;
     let out: Vec<RinexSppEpochInputsObject> =
         epochs.iter().map(RinexSppEpochInputsObject::from).collect();
     to_js(&out)
@@ -565,9 +820,10 @@ pub fn spp_inputs_from_rinex_obs_js(
 
 /// Solve parsed RINEX OBS epochs serially against a broadcast ephemeris store.
 ///
-/// `rinexOptions` controls observation assembly; `solveOptions` accepts
-/// `withGeodetic`, `maxPdop`, and `coarseSearchSeeds`. The returned batch keeps
-/// per-epoch solve failures, so use `isOk(index)` before `solution(index)`.
+/// `rinexOptions` controls observation assembly, including `qzssClock` and
+/// `troposphereModel`; `solveOptions` accepts `withGeodetic`, `maxPdop`, and
+/// `coarseSearchSeeds`. The returned batch keeps per-epoch solve failures, so
+/// use `isOk(index)` before `solution(index)`.
 #[wasm_bindgen(js_name = solveSppFromRinexObs)]
 pub fn solve_spp_from_rinex_obs_js(
     source: &BroadcastEphemeris,
@@ -577,14 +833,14 @@ pub fn solve_spp_from_rinex_obs_js(
 ) -> Result<RinexSppSolutionBatch, JsValue> {
     let rinex_options = rinex_spp_options(obs, rinex_options)?;
     let (with_geodetic, policy) = rinex_solve_policy(solve_options)?;
-    let epochs = core_solve_spp_from_rinex_obs(
+    let epochs = core_solve_spp_from_rinex_obs_exact_with_policy(
         &source.inner,
         &obs.inner,
         &rinex_options,
         with_geodetic,
         policy,
     )
-    .map_err(engine_error)?;
+    .map_err(|e| positioning_error(&rinex_spp_detail(&e)))?;
     Ok(RinexSppSolutionBatch { epochs })
 }
 
@@ -630,12 +886,14 @@ impl RinexSppSolutionBatch {
             .as_ref()
         {
             Ok(solution) => Ok(SppSolution::from_inner(solution.clone())),
-            Err(error) => Err(engine_error(error.to_string())),
+            Err(error) => Err(positioning_error(&solve_policy_detail(error))),
         }
     }
 
-    /// The solve error for assembled batch item `index`, or `undefined`.
-    pub fn error(&self, index: usize) -> Result<Option<String>, JsValue> {
+    /// The solve failure of assembled batch item `index` as a
+    /// `PositioningErrorDetail`, or `undefined` when it solved.
+    #[wasm_bindgen(unchecked_return_type = "PositioningErrorDetail | undefined")]
+    pub fn error(&self, index: usize) -> Result<JsValue, JsValue> {
         match self
             .epochs
             .get(index)
@@ -643,8 +901,8 @@ impl RinexSppSolutionBatch {
             .solution
             .as_ref()
         {
-            Ok(_) => Ok(None),
-            Err(error) => Ok(Some(error.to_string())),
+            Ok(_) => Ok(JsValue::UNDEFINED),
+            Err(error) => detail_to_js(&solve_policy_detail(error)),
         }
     }
 }
@@ -658,7 +916,7 @@ impl RinexSppSolutionBatch {
 /// `withGeodetic` / `maxPdop` / `coarseSearchSeeds` set on an individual entry is
 /// ignored. Element `i` of the result corresponds to `epochs[i]` and is either a
 /// solution or that epoch's solve error. Delegates to the serial reference batch
-/// kernel `sidereon_core::spp::solve_spp_batch_serial`; the binding never spawns
+/// kernel `sidereon_core::positioning::solve_spp_batch_serial`; the binding never spawns
 /// the rayon thread pool the parallel variant uses.
 pub fn solve_batch(
     eph: &CoreSp3,
@@ -688,10 +946,13 @@ pub fn solve_batch(
     let results =
         solve_spp_batch_serial(eph as &dyn EphemerisSource, &inputs, with_geodetic, policy);
 
-    let epochs: Vec<Result<ReceiverSolution, String>> = results
-        .into_iter()
-        .map(|result| result.map_err(|e| e.to_string()))
-        .collect();
+    let mut epochs = Vec::with_capacity(results.len());
+    for result in results {
+        epochs.push(match result {
+            Ok(solution) => Ok(solution),
+            Err(error) => Err(solve_policy_detail(&error)),
+        });
+    }
 
     Ok(SppBatchSolution { epochs })
 }
@@ -702,7 +963,7 @@ pub fn solve_batch(
 /// [`SppBatchSolution.error`].
 #[wasm_bindgen]
 pub struct SppBatchSolution {
-    epochs: Vec<Result<ReceiverSolution, String>>,
+    epochs: Vec<Result<ReceiverSolution, PositioningErrorDetail>>,
 }
 
 #[wasm_bindgen]
@@ -724,7 +985,7 @@ impl SppBatchSolution {
     }
 
     /// The solution for epoch `index`. Throws a `RangeError` for an out-of-range
-    /// index and an `Error` carrying that epoch's solve-failure message when the
+    /// index and a `PositioningError` carrying that epoch's failure when the
     /// epoch did not converge (check [`SppBatchSolution.isOk`] first).
     pub fn solution(&self, index: usize) -> Result<SppSolution, JsValue> {
         match self
@@ -735,20 +996,22 @@ impl SppBatchSolution {
             Ok(solution) => Ok(SppSolution {
                 inner: solution.clone(),
             }),
-            Err(message) => Err(engine_error(message.clone())),
+            Err(detail) => Err(positioning_error(detail)),
         }
     }
 
-    /// The solve-failure message for epoch `index`, or `undefined` when the epoch
-    /// converged. Throws a `RangeError` for an out-of-range index.
-    pub fn error(&self, index: usize) -> Result<Option<String>, JsValue> {
+    /// The solve failure of epoch `index` as a `PositioningErrorDetail`, or
+    /// `undefined` when the epoch converged. Throws a `RangeError` for an
+    /// out-of-range index.
+    #[wasm_bindgen(unchecked_return_type = "PositioningErrorDetail | undefined")]
+    pub fn error(&self, index: usize) -> Result<JsValue, JsValue> {
         match self
             .epochs
             .get(index)
             .ok_or_else(|| range_error(&format!("epoch index {index} out of range")))?
         {
-            Ok(_) => Ok(None),
-            Err(message) => Ok(Some(message.clone())),
+            Ok(_) => Ok(JsValue::UNDEFINED),
+            Err(detail) => detail_to_js(detail),
         }
     }
 }
@@ -878,6 +1141,37 @@ impl SppSolution {
         self.inner.residuals_m.clone()
     }
 
+    /// Pseudorange variance in square metres, aligned with `usedSats` and
+    /// `residualsM`; this is the variance used by the solve before robust
+    /// reweighting.
+    #[wasm_bindgen(getter, js_name = pseudorangeVariancesM2)]
+    pub fn pseudorange_variances_m2(&self) -> Vec<f64> {
+        self.inner.pseudorange_variances_m2.clone()
+    }
+
+    /// Effective inverse-variance weight, including any final robust Huber
+    /// factor, aligned with `usedSats`, `residualsM`, and `pseudorangeVariancesM2`.
+    #[wasm_bindgen(getter)]
+    pub fn weights(&self) -> Vec<f64> {
+        self.inner.weights.clone()
+    }
+
+    /// Satellites left out of the solve, in observation order, each as
+    /// `{ satelliteId, reason }`. `reason` is the first that applies, tested
+    /// in the order `"noEphemeris"`, `"lowElevation"`, `"sbasIonoUncovered"`,
+    /// `"ionosphereCarrierUnresolved"`; `"sbasWithdrawn"` comes from the
+    /// augmentation paths.
+    #[wasm_bindgen(getter, js_name = rejectedSats, unchecked_return_type = "SppRejectedSatellite[]")]
+    pub fn rejected_sats(&self) -> Result<JsValue, JsValue> {
+        let rows: Vec<RejectedSatJs> = self
+            .inner
+            .rejected_sats
+            .iter()
+            .map(RejectedSatJs::from)
+            .collect();
+        to_js(&rows)
+    }
+
     /// Geometry observability and covariance-validation diagnostics for this
     /// solved design. `ZeroRedundancy` marks unvalidated snapshot covariance
     /// bounds, `Weak` leaves large bounds unclamped, and rank-deficient designs
@@ -899,6 +1193,18 @@ impl SppSolution {
         self.inner.metadata.raim_checkable
     }
 
+    /// The UT1 departure the ephemeris source accepted under a permissive UT1
+    /// policy while producing a satellite state for this solve:
+    /// `"beforeCoverage"` or `"afterCoverage"`, or `undefined` when every state
+    /// was produced inside UT1 coverage or read no UT1.
+    #[wasm_bindgen(getter, js_name = ut1Degraded, unchecked_return_type = "Ut1DegradeReason | undefined")]
+    pub fn ut1_degraded(&self) -> Option<String> {
+        self.inner
+            .metadata
+            .ut1_degraded
+            .map(|reason| degrade_reason_label(reason).to_owned())
+    }
+
     /// Dilution-of-precision scalars (GDOP/PDOP/HDOP/VDOP/TDOP) from the
     /// converged geometry, or `undefined` when the converged geometry is
     /// rank-deficient. The same `Dop` produced by [`gnssDop`](crate::gnss_dop).
@@ -911,6 +1217,30 @@ impl SppSolution {
     /// per GNSS in the solve in ascending system order (the same order as the
     /// per-system clocks). The first entry's `tdop` equals the reference clock's
     /// `dop.tdop`. Empty when the converged geometry is rank-deficient.
+    /// How the solve ran and ended: `{ iterations, converged, status,
+    /// outerIterations, finalRobustScaleM, ionosphereApplied,
+    /// troposphereApplied, usedCount }`. `converged` describes the whole solve:
+    /// `status` is `"SelectionSettled"` when it converged, and
+    /// `"OuterBudgetExhausted"` or `"OuterOscillation"` when a robust solve did
+    /// not settle.
+    #[wasm_bindgen(getter, unchecked_return_type = "SppSolveMetadata")]
+    pub fn metadata(&self) -> Result<JsValue, JsValue> {
+        let m = &self.inner.metadata;
+        SppMetadataJs {
+            iterations: m.iterations,
+            converged: m.converged,
+            status: solve_status_label(m.status),
+            outer_iterations: m.outer_iterations,
+            final_robust_scale_m: m.final_robust_scale_m,
+            ionosphere_applied: m.ionosphere_applied,
+            troposphere_applied: m.troposphere_applied,
+            used_count: m.used_count,
+            systems: m.systems.iter().map(|system| system.as_str()).collect(),
+        }
+        .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(|e| engine_error(e.to_string()))
+    }
+
     #[wasm_bindgen(getter, js_name = systemTdops)]
     pub fn system_tdops(&self) -> Result<JsValue, JsValue> {
         let out: Vec<SystemTdopJs> = self
@@ -925,6 +1255,72 @@ impl SppSolution {
         serde_wasm_bindgen::to_value(&out).map_err(|e| engine_error(e.to_string()))
     }
 }
+
+// The rejected-satellite shape shared by `SppSolution.rejectedSats` and
+// `StaticSolution.rejectedSats`. `wasm-pack` writes it into both `sidereon.d.ts`
+// targets; `types/sidereon-extra.d.ts` re-exports it.
+#[wasm_bindgen(typescript_custom_section)]
+const TS_SPP_DEFINITIONS: &str = r#"
+/**
+ * Why a satellite was left out of a solve. Selection reports the first reason
+ * that applies, tested in the order noEphemeris, lowElevation,
+ * sbasIonoUncovered, ionosphereCarrierUnresolved.
+ */
+/**
+ * How a solve ended. The first four end one trust-region solve;
+ * SelectionSettled (converged) and OuterBudgetExhausted (not converged) end an
+ * SPP or static solve as a whole.
+ */
+export type SolveStatus =
+  | "GradientTolerance"
+  | "CostTolerance"
+  | "StepTolerance"
+  | "MaxEvaluations"
+  | "SelectionSettled"
+  | "OuterBudgetExhausted"
+  | "OuterOscillation";
+
+/** How an SPP solve ran and ended. */
+export interface SppSolveMetadata {
+  iterations: number;
+  converged: boolean;
+  status: SolveStatus;
+  outerIterations: number;
+  finalRobustScaleM: number | null;
+  ionosphereApplied: boolean;
+  troposphereApplied: boolean;
+  usedCount: number;
+  systems: string[];
+}
+
+/** How a static solve ran and ended. */
+export interface StaticSolveMetadata {
+  iterations: number;
+  converged: boolean;
+  status: SolveStatus;
+  outerIterations: number;
+  finalRobustScaleM: number | null;
+  usedMeasurements: number;
+  nParameters: number;
+  redundancy: number;
+}
+
+export type SppRejectionReason =
+  | "noEphemeris"
+  | "ssrCorrectionExceedsLimit"
+  | "lowElevation"
+  | "sbasWithdrawn"
+  | "sbasIonoUncovered"
+  | "ionosphereCarrierUnresolved";
+
+/**
+ * A satellite left out of a solve, with the first reason that applies. An
+ * oversized SSR correction also carries the size that exceeded the limit.
+ */
+export type SppRejectedSatellite =
+  | { satelliteId: string; reason: "ssrCorrectionExceedsLimit"; ssrCorrectionSize: SsrCorrectionSize }
+  | { satelliteId: string; reason: Exclude<SppRejectionReason, "ssrCorrectionExceedsLimit"> };
+"#;
 
 #[cfg(test)]
 mod drift_tests {
@@ -941,5 +1337,50 @@ mod drift_tests {
         assert_eq!(config.scale_floor_m, DEFAULT_ROBUST_SCALE_FLOOR_M);
         assert_eq!(config.max_outer, DEFAULT_ROBUST_MAX_OUTER);
         assert_eq!(config.outer_tol_m, DEFAULT_ROBUST_OUTER_TOL_M);
+    }
+
+    #[test]
+    fn solve_status_mapping_includes_nonconverged_outer_oscillation() {
+        assert_eq!(
+            solve_status_label(SolveStatus::SelectionSettled),
+            "SelectionSettled"
+        );
+        assert_eq!(
+            solve_status_label(SolveStatus::OuterBudgetExhausted),
+            "OuterBudgetExhausted"
+        );
+        assert_eq!(
+            solve_status_label(SolveStatus::OuterOscillation),
+            "OuterOscillation"
+        );
+    }
+
+    #[test]
+    fn solve_input_selectors_default_and_cover_every_core_variant() {
+        let make_request = |selectors: &str| {
+            serde_json::from_str::<SppRequest>(&format!(
+                r#"{{"observations":[{{"satelliteId":"G01","pseudorangeM":22000000.0}}],"tRxJ2000S":0.0,"tRxSecondOfDayS":0.0,"dayOfYear":1.0{selectors}}}"#
+            ))
+            .expect("valid SPP request")
+        };
+        let (defaults, _) =
+            build_solve_inputs(&make_request("")).expect("SPP default selector choices are valid");
+        assert_eq!(defaults.qzss_clock, QzssClock::Gps);
+        assert_eq!(defaults.troposphere_model, TroposphereModel::Rtklib);
+
+        let (selected, _) = build_solve_inputs(&make_request(
+            r#", "qzssClock":"separate","troposphereModel":"saastamoinenNiell""#,
+        ))
+        .expect("every public selector variant maps to its core value");
+        assert_eq!(selected.qzss_clock, QzssClock::Separate);
+        assert_eq!(
+            selected.troposphere_model,
+            TroposphereModel::SaastamoinenNiell
+        );
+
+        assert!(serde_json::from_str::<SppRequest>(
+            r#"{"observations":[{"satelliteId":"G01","pseudorangeM":22000000.0}],"tRxJ2000S":0.0,"tRxSecondOfDayS":0.0,"dayOfYear":1.0,"qzssClock":"own"}"#
+        )
+        .is_err());
     }
 }

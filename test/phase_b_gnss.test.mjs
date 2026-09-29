@@ -27,7 +27,7 @@ import {
   ssrCorrectedState,
   ssrSourceLabel,
 } from "../pkg-node/sidereon.js";
-import { fixture, hexToF64 } from "./helpers.mjs";
+import { coreGoldens, fixture, hexToF64 } from "./helpers.mjs";
 
 const CORE_FIXTURES = fileURLToPath(new URL("./fixtures", import.meta.url));
 const C_M_S = 299792458.0;
@@ -75,23 +75,46 @@ test("GNSS system and carrier labels come from the core label tables", () => {
 test("Bias-SINEX and CODE DCB loaders expose oracle bias values", () => {
   const sinex = loadBiasSinex(coreFixture("bias/CODE.BIA"));
   const sinexGz = loadBiasSinexLossy(coreFixture("bias/COD0OPSFIN_20261330000_01D_01D_OSB.BIA.gz"));
-  assert.equal(sinex.recordCount, 351);
-  assert.ok(sinex.skippedRecords > 0);
+  // Record and skip counts, reproduced natively by test/golden-gen.
+  const counts = coreGoldens().bias;
+  assert.equal(sinex.recordCount, counts.sinexRecordCount);
+  assert.equal(sinex.skippedRecords, counts.sinexSkippedRecords);
   assert.ok(sinexGz.recordCount > 0);
+  assert.equal(sinex.mode, "absolute");
+  assert.equal(sinex.timeScale, "gpst");
+  assert.ok(sinex.records.every((r) => ["code", "phase", "mixed"].includes(r.family)));
+  assert.ok(sinex.records.every((r) => ["ns", "cyc"].includes(r.unit)));
 
   const osbEpoch = j2000FromUtc(2026, 6, 30);
-  close(sinex.codeOsbSeconds("G01", "C1C", osbEpoch, "gpst"), -6.2069e-9, 1e-16, "G01 C1C OSB");
-  close(sinex.codeOsbSeconds("G01", "C1W", osbEpoch, "gpst"), -5.2579e-9, 1e-16, "G01 C1W OSB");
-  close(sinex.codeOsbSeconds("R02", "C1P", osbEpoch, "gpst"), 1.784e-9, 1e-16, "R02 C1P OSB");
+  const osb = (sat, obs) => sinex.codeOsbSeconds(sat, obs, osbEpoch, "gpst");
+  assert.equal(osb("G01", "C1C").status, "available");
+  close(osb("G01", "C1C").value, -6.2069e-9, 1e-16, "G01 C1C OSB");
+  close(osb("G01", "C1W").value, -5.2579e-9, 1e-16, "G01 C1W OSB");
+  close(osb("R02", "C1P").value, 1.784e-9, 1e-16, "R02 C1P OSB");
+  const absent = osb("G01", "C9Z");
+  assert.equal(absent.status, "absent");
+  assert.equal(absent.value, null);
+  // A query on another time scale than the product's is not converted.
+  const utc = sinex.codeOsbSeconds("G01", "C1C", osbEpoch, "utc");
+  assert.equal(utc.status, "unsupportedScale");
+  assert.equal(utc.productScale, "gpst");
+  assert.equal(utc.queryScale, "utc");
 
   const dcb = loadCodeDcb(coreFixture("bias/P1C1_RINEX.DCB"), null);
-  assert.equal(dcb.recordCount, 496);
-  assert.equal(dcb.skippedRecords, 2);
+  // G34 and R28 are satellite tokens in the shared 01..99 range, so their
+  // records are kept with the others.
+  assert.equal(dcb.recordCount, counts.dcbRecordCount);
+  assert.equal(dcb.skippedRecords, counts.dcbSkippedRecords);
 
   const dcbEpoch = j2000FromUtc(2026, 6, 2);
-  close(dcb.codeDsbSeconds("G01", "C1W", "C1C", dcbEpoch, "gpst"), 0.626e-9, 1e-16, "G01 DCB");
   close(
-    dcb.codeDsbSeconds("G01", "C1C", "C1W", dcbEpoch, "gpst"),
+    dcb.codeDsbSeconds("G01", "C1W", "C1C", dcbEpoch, "gpst").value,
+    0.626e-9,
+    1e-16,
+    "G01 DCB",
+  );
+  close(
+    dcb.codeDsbSeconds("G01", "C1C", "C1W", dcbEpoch, "gpst").value,
     -0.626e-9,
     1e-16,
     "G01 inverse DCB",
@@ -110,7 +133,8 @@ test("Bias-SINEX and CODE DCB loaders expose oracle bias values", () => {
     "gpst",
   );
   const alpha = (F_L1_HZ * F_L1_HZ) / (F_L1_HZ * F_L1_HZ - F_L2_HZ * F_L2_HZ);
-  close(model, alpha * -0.626e-9 * C_M_S, 1e-12, "DCB model");
+  assert.equal(model.status, "available");
+  close(model.value, alpha * -0.626e-9 * C_M_S, 1e-12, "DCB model");
 });
 
 test("PPP correction precompute applies code-bias options", () => {
@@ -154,7 +178,7 @@ test("PPP correction precompute applies code-bias options", () => {
     t,
     "gpst",
   );
-  close(corrections.codeBiasM[0].valueM, direct, 1e-12, "PPP code bias");
+  close(corrections.codeBiasM[0].valueM, direct.value, 1e-12, "PPP code bias");
 });
 
 test("source-agnostic ephemeris sampler covers precise and broadcast sources", () => {
@@ -283,4 +307,89 @@ test("SSR decode, correction store, and corrected state route through core", () 
   );
   assert.ok(state);
   assert.ok(state.positionEcefM.every(Number.isFinite));
+});
+
+test("Bias-SINEX and CODE DCB products write back what they read", () => {
+  // The real CODE product carries one Latin-1 byte, 0xe4 ("ä" of "Jäggi") on
+  // line 29 of its reference block, so it is not UTF-8 text.
+  const bytes = coreFixture("bias/CODE.BIA");
+  const latin1 = bytes.indexOf(0xe4);
+  assert.notEqual(latin1, -1);
+  assert.equal(bytes.indexOf(0xe4, latin1 + 1), -1);
+  const sinex = loadBiasSinex(bytes);
+  // Every line the reader kept is the writer's authority.
+  assert.ok(Buffer.from(sinex.toBiasSinex()).equals(bytes));
+  assert.ok(Buffer.from(sinex.toBiasSinexBytes()).equals(bytes));
+  assert.throws(
+    () => sinex.toBiasSinexText(),
+    (error) => {
+      assert.equal(error.name, "BiasError");
+      assert.deepEqual(error.detail, { kind: "invalidUtf8Line", line: 29 });
+      return true;
+    },
+  );
+  assert.ok(Array.isArray(sinex.notices));
+  for (const write of [() => sinex.toCodeDcbText(), () => sinex.toCodeDcbBytes()]) {
+    assert.throws(write, (error) => {
+      assert.equal(error.name, "BiasError");
+      assert.deepEqual(error.detail, { kind: "missingWriterMetadata", field: "dcb_meta" });
+      return true;
+    });
+  }
+
+  // With that byte replaced by an ASCII letter of the same width the product
+  // is UTF-8, and the text writer returns it unchanged.
+  const ascii = Buffer.from(bytes);
+  ascii[latin1] = 0x61;
+  const asciiSinex = loadBiasSinex(ascii);
+  assert.ok(Buffer.from(asciiSinex.toBiasSinexBytes()).equals(ascii));
+  assert.equal(asciiSinex.toBiasSinexText(), ascii.toString("utf8"));
+
+  const dcb_text = coreFixture("bias/P1C1_RINEX.DCB");
+  const dcb = loadCodeDcb(dcb_text, null);
+  assert.ok(Buffer.from(dcb.toCodeDcb()).equals(dcb_text));
+  assert.ok(Buffer.from(dcb.toCodeDcbBytes()).equals(dcb_text));
+  assert.equal(dcb.toCodeDcbText(), dcb_text.toString("utf8"));
+  const again = loadCodeDcb(Buffer.from(dcb.toCodeDcbText(), "utf8"), null);
+  assert.equal(again.recordCount, dcb.recordCount);
+  const epoch = j2000FromUtc(2026, 6, 2);
+  assert.equal(
+    again.codeDsbSeconds("G01", "C1W", "C1C", epoch, "gpst").value,
+    dcb.codeDsbSeconds("G01", "C1W", "C1C", epoch, "gpst").value,
+  );
+
+  // A product the strict reader accepts departs from nothing, so the lenient
+  // reader reports the same notices.
+  assert.deepEqual(loadBiasSinex(bytes, "lenient").notices, sinex.notices);
+  assert.throws(() => loadBiasSinex(bytes, "loose"), TypeError);
+});
+
+test("Bias-SINEX departures retain typed details in strict and lenient modes", () => {
+  const valid = coreFixture("bias/CODE.BIA").toString("utf8");
+  const newline = valid.indexOf("\n");
+  const malformed = `${valid.slice(0, newline - 1)}${valid.slice(newline)}`;
+  const bytes = Buffer.from(malformed, "utf8");
+
+  assert.throws(
+    () => loadBiasSinex(bytes),
+    (error) => {
+      assert.equal(error.name, "BiasError");
+      assert.equal(error.detail.kind, "departure");
+      assert.deepEqual(error.detail.departure, {
+        kind: "headerLayout",
+        reason: "header line is not 74 columns",
+      });
+      return true;
+    },
+  );
+
+  const parsed = loadBiasSinex(bytes, "lenient");
+  const header_notice = parsed.noticeDetails.find(
+    (notice) => notice.kind === "departure" && notice.departure.kind === "headerLayout",
+  );
+  assert.deepEqual(header_notice, {
+    kind: "departure",
+    departure: { kind: "headerLayout", reason: "header line is not 74 columns" },
+  });
+  assert.ok(parsed.notices.some((notice) => notice.includes("HeaderLayout")));
 });

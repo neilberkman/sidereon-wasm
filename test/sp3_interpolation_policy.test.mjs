@@ -13,6 +13,15 @@ import { fixture } from "./helpers.mjs";
 
 const MID_HOLE_J2000_S = 646_260_300.0;
 
+function captureThrow(fn, expected) {
+  let thrown;
+  assert.throws(fn, (error) => {
+    thrown = error;
+    return expected === undefined || expected.test(error.message);
+  });
+  return thrown;
+}
+
 function gappedSp3Bytes() {
   const text = fixture("GRG0MGXFIN_20201760000_01D_15M_ORB.SP3").toString("utf8");
   const lines = text.split("\n");
@@ -92,6 +101,17 @@ test("Sp3.checkContinuity interpolation policy", () => {
   const dDef = resDef.defects.find((d) => d.satellite === "G01" && d.fromJ2000S === 646_254_900.0);
   assert.ok(dDef);
   assert.ok(dDef.magnitude > 20.0);
+  // Every field of the hold-out residual under the engine's name, beside the
+  // summary fields it fills.
+  assert.equal(dDef.kind, "hold_out_residual");
+  assert.equal(dDef.precedingJ2000S, dDef.fromJ2000S);
+  assert.equal(dDef.epochJ2000S, dDef.toJ2000S);
+  assert.equal(dDef.residualM, dDef.magnitude);
+  assert.equal(dDef.toleranceM, 1.0);
+  assert.equal(dDef.bound, dDef.toleranceM);
+  assert.ok(dDef.nodeEpochsJ2000S.length > 0);
+  assert.ok(dDef.nodeEpochsJ2000S.every((epoch, i, all) => i === 0 || all[i - 1] < epoch));
+  assert.equal(dDef.intervalS, undefined);
 
   // Wide policy bridges the gap, altering the hold-out replay.
   const resWide = sp3.checkContinuity(null, 1.0, 13.0);
@@ -103,6 +123,13 @@ test("Sp3.checkContinuity interpolation policy", () => {
   assert.notEqual(dWide.magnitude, dDef.magnitude);
 
   assert.throws(() => sp3.checkContinuity(null, 1.0, 1.0), /greater than 1\.0/);
+  const invalidTolerance = captureThrow(() => sp3.checkContinuity(null, Number.NaN));
+  assert.equal(invalidTolerance.name, "ContinuityOptionsError");
+  assert.deepEqual(invalidTolerance.detail, {
+    field: "residual_tolerance_m",
+    value: "NaN",
+    reason: "notFinite",
+  });
 });
 
 test("Sp3.continuityVerdict interpolation policy", () => {
@@ -132,7 +159,7 @@ test("mergeSp3 verifyContinuity interpolation policy", () => {
     verifyContinuity: { residualToleranceM: 1.0, gapThresholdFactor: 13.0 },
   });
   const axis = merged.epochsJ2000Seconds();
-  const verdict = report.continuityVerdict(merged, axis[10], axis[20]);
+  const verdict = report.continuityVerdict(axis[10], axis[20]);
   assert.ok(["accept", "refuse"].includes(verdict.decision));
 
   const p3 = loadSp3(bytes);
