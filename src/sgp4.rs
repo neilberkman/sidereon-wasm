@@ -30,6 +30,7 @@ use sidereon_core::geometry::visible_at_elevation_mask;
 
 use crate::error::{range_error, type_error, ut1_validity, validated_object};
 use crate::marshal::{instants, vec3_finite};
+use crate::ndm_error::omm_error;
 use crate::omm::Omm;
 use crate::sgp4_error::{
     decay_latched_error, fit_error, indexed_sgp4_error, look_angle_error, pass_error,
@@ -290,6 +291,53 @@ pub struct Tle {
     elements: TleElements,
     satellite: Satellite,
     checksum_warnings: Vec<CoreChecksumWarning>,
+}
+
+/// A reusable SGP4 satellite initialized from an OMM.
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct Sgp4Satellite {
+    satellite: Satellite,
+}
+
+#[wasm_bindgen]
+impl Sgp4Satellite {
+    /// Initialize SGP4 from an OMM through the engine's canonical OMM bridge.
+    /// Throws an `OmmError` with structured detail for incompatible metadata,
+    /// a missing `MEAN_MOTION` or `BSTAR`, or another invalid OMM field.
+    #[wasm_bindgen(js_name = fromOmm)]
+    pub fn from_omm(omm: &Omm) -> Result<Sgp4Satellite, JsValue> {
+        // Validate through Omm::to_element_set first so its lossless OmmError
+        // reaches JavaScript. Satellite::from_omm maps the same bridge errors
+        // to SGP4 input errors, then initializes the reusable core satellite.
+        omm.core().to_element_set().map_err(omm_error)?;
+        let satellite = Satellite::from_omm(omm.core()).map_err(sgp4_error)?;
+        Ok(Sgp4Satellite { satellite })
+    }
+
+    /// Propagate over a `BigInt64Array` of unix-microsecond epochs. Returns TEME
+    /// position (km) and velocity (km/s). Throws an `Error` on SGP4 failure.
+    pub fn propagate(&self, epochs_unix_us: &[i64]) -> Result<TlePropagation, JsValue> {
+        propagate_satellite(&self.satellite, epochs_unix_us)
+    }
+}
+
+fn propagate_satellite(
+    satellite: &Satellite,
+    epochs_unix_us: &[i64],
+) -> Result<TlePropagation, JsValue> {
+    let predictions =
+        propagate_teme_arc(satellite, &instants(epochs_unix_us)).map_err(sgp4_error)?;
+    let mut positions = Vec::with_capacity(predictions.len() * 3);
+    let mut velocities = Vec::with_capacity(predictions.len() * 3);
+    for prediction in &predictions {
+        positions.extend_from_slice(&prediction.position);
+        velocities.extend_from_slice(&prediction.velocity);
+    }
+    Ok(TlePropagation {
+        positions,
+        velocities,
+    })
 }
 
 /// Stateful opt-in latch for SGP4 decay-like failures.
@@ -639,18 +687,7 @@ impl Tle {
     /// position (km) and velocity (km/s). Throws an `Error` on SGP4 failure.
     #[wasm_bindgen]
     pub fn propagate(&self, epochs_unix_us: &[i64]) -> Result<TlePropagation, JsValue> {
-        let predictions =
-            propagate_teme_arc(&self.satellite, &instants(epochs_unix_us)).map_err(sgp4_error)?;
-        let mut positions = Vec::with_capacity(predictions.len() * 3);
-        let mut velocities = Vec::with_capacity(predictions.len() * 3);
-        for p in &predictions {
-            positions.extend_from_slice(&p.position);
-            velocities.extend_from_slice(&p.velocity);
-        }
-        Ok(TlePropagation {
-            positions,
-            velocities,
-        })
+        propagate_satellite(&self.satellite, epochs_unix_us)
     }
 
     /// Propagate over unix-microsecond epochs with an opt-in decay latch.

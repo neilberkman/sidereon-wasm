@@ -390,7 +390,7 @@ pub use sgp4::{
     fit_tle, parse_tle_file, propagate_batch, visible_from_satellites_js,
     visible_from_satellites_with_validity_js, ChecksumWarning, Constellation, DecayLatch,
     FleetPass, FleetPropagation, GroundStation, GroundTrack, LookAngles, NamedTle, ParsedTleFile,
-    SatellitePass, Tle, TleFit, TlePropagation, VisibilitySeries, VisibleSatellite,
+    SatellitePass, Sgp4Satellite, Tle, TleFit, TlePropagation, VisibilitySeries, VisibleSatellite,
 };
 pub use sidereal::{orbit_repeat_lag, periodicity_strength, repeat_period, sidereal_filter};
 pub use signal_analysis::{

@@ -141,6 +141,10 @@ restates an engine change as it reaches the JavaScript API.
 
 ### TLE and SGP4
 
+- `Sgp4Satellite.fromOmm(omm)` initializes a reusable SGP4 propagator through
+  the engine's canonical OMM bridge. Its `propagate(epochs)` returns the same
+  TEME arrays as the matching TLE, while incompatible metadata and missing
+  `MEAN_MOTION` or `BSTAR` remain typed `OmmError` failures.
 - **Breaking.** `new Tle(line1, line2, opsMode?, policy?)` and
   `parseTleFile(text, opsMode?, policy?)` take a checksum policy. `"strict"`,
   the default, refuses a column-69 digit that disagrees with the computed

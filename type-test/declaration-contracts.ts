@@ -2253,6 +2253,18 @@ type _WebOmmArray = Assert<
 type _NodeOmmArray = Assert<
   Equal<ReturnType<typeof NodeBindings.parseOmmCsvArray>, NodeBindings.OmmArray>
 >;
+type _WebSgp4FromOmm = Assert<
+  Equal<ReturnType<typeof WebBindings.Sgp4Satellite.fromOmm>, WebBindings.Sgp4Satellite>
+>;
+type _NodeSgp4FromOmm = Assert<
+  Equal<ReturnType<typeof NodeBindings.Sgp4Satellite.fromOmm>, NodeBindings.Sgp4Satellite>
+>;
+type _WebSgp4OmmPropagation = Assert<
+  Equal<ReturnType<WebBindings.Sgp4Satellite["propagate"]>, WebBindings.TlePropagation>
+>;
+type _NodeSgp4OmmPropagation = Assert<
+  Equal<ReturnType<NodeBindings.Sgp4Satellite["propagate"]>, NodeBindings.TlePropagation>
+>;
 type _WebTleRejected = Assert<
   Equal<WebBindings.ParsedTleFile["rejected"], WebBindings.RejectedTleRecord[]>
 >;

@@ -53,6 +53,20 @@ console.log(look.azimuthDeg[0], look.elevationDeg[0], look.rangeKm[0]);
 `BigInt64Array` of unix-microsecond epochs) and `findPasses(station, start, end,
 minElevationDeg)` for visibility windows.
 
+An OMM uses the same SGP4 kernel through its canonical mean-element bridge:
+
+```js
+import { parseOmmKvn, Sgp4Satellite } from "@neilberkman/sidereon";
+
+const omm = parseOmmKvn(ommText);
+const satellite = Sgp4Satellite.fromOmm(omm);
+const state = satellite.propagate(epochs);
+console.log(state.positionKm, state.velocityKmS);
+```
+
+`fromOmm` throws a typed `OmmError` when required SGP4 fields are absent or
+the message states an incompatible theory, center, frame, or time system.
+
 ### Node (ESM or CommonJS)
 
 Both module systems resolve to the Node build, which initializes the wasm while

@@ -349,6 +349,10 @@ impl Omm {
     pub(crate) fn from_core(inner: CoreOmm) -> Self {
         Self { inner }
     }
+
+    pub(crate) fn core(&self) -> &CoreOmm {
+        &self.inner
+    }
 }
 
 #[wasm_bindgen]

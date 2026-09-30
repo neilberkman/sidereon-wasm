@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import {
   Omm,
   OmmEpoch,
+  Sgp4Satellite,
+  Tle,
   parseOmmCsv,
   parseOmmCsvArray,
   parseOmmJson,
@@ -142,6 +144,98 @@ const isOmmError = (kind) => (e) =>
   e.name === "OmmError" &&
   e.detail.kind === kind &&
   e.detail.message === e.message;
+
+test("Sgp4Satellite.fromOmm matches each TLE fixture within source precision", () => {
+  const epochs = new BigInt64Array([
+    BigInt(Date.UTC(2026, 5, 17, 6)) * 1000n,
+    BigInt(Date.UTC(2026, 5, 18, 6)) * 1000n,
+  ]);
+  const assertWithin = (actual, expected, tolerance, message) => {
+    assert.equal(actual.length, expected.length, `${message} length`);
+    actual.forEach((value, index) => {
+      const delta = Math.abs(value - expected[index]);
+      assert.ok(delta <= tolerance, `${message}[${index}] delta ${delta}`);
+    });
+  };
+
+  for (const fx of FX.fixtures) {
+    const omm = parseOmmKvn(load(fx.kvn_fixture));
+    const [, line1, line2] = load(fx.kvn_fixture.replace(/\.kvn$/, ".tle")).split(/\r?\n/);
+    const satellite = Sgp4Satellite.fromOmm(omm);
+    const empty = satellite.propagate(new BigInt64Array());
+    assert.deepEqual(empty.positionKm, new Float64Array(), `${fx.name} empty position`);
+    assert.deepEqual(empty.velocityKmS, new Float64Array(), `${fx.name} empty velocity`);
+
+    const fromOmm = satellite.propagate(epochs);
+    const repeated = satellite.propagate(epochs);
+    const fromTle = new Tle(line1, line2).propagate(epochs);
+
+    assert.deepEqual(repeated.positionKm, fromOmm.positionKm, `${fx.name} repeat position`);
+    assert.deepEqual(repeated.velocityKmS, fromOmm.velocityKmS, `${fx.name} repeat velocity`);
+
+    // Some OMM fixtures retain more decimal digits than their fixed-width TLE
+    // partners. The resulting spread stays below 1 mm and 0.2 micrometers/s.
+    assertWithin(fromOmm.positionKm, fromTle.positionKm, 1e-6, `${fx.name} position km`);
+    assertWithin(fromOmm.velocityKmS, fromTle.velocityKmS, 2e-10, `${fx.name} velocity km/s`);
+  }
+});
+
+test("Sgp4Satellite.fromOmm preserves typed OMM bridge failures", () => {
+  const ref = FX.fixtures[0].from_kvn;
+  const epoch = new OmmEpoch(
+    ref.epoch.year,
+    ref.epoch.month,
+    ref.epoch.day,
+    ref.epoch.hour,
+    ref.epoch.minute,
+    ref.epoch.second,
+    ref.epoch.microsecond,
+  );
+  const baseMeta = {
+    centerName: "EARTH",
+    refFrame: "TEME",
+    timeSystem: "UTC",
+    meanElementTheory: "SGP4",
+    bstar: hexToF64(ref.bstar_hex),
+  };
+  const build = (meanMotion, meta) =>
+    new Omm(
+      epoch,
+      meanMotion,
+      hexToF64(ref.eccentricity_hex),
+      hexToF64(ref.inclination_deg_hex),
+      hexToF64(ref.ra_of_asc_node_deg_hex),
+      hexToF64(ref.arg_of_pericenter_deg_hex),
+      hexToF64(ref.mean_anomaly_deg_hex),
+      ref.norad_cat_id,
+      meta,
+    );
+  const expectedError = (kind, field) => (error) => {
+    assert.equal(error.name, "OmmError");
+    assert.equal(error.detail.kind, kind);
+    assert.equal(error.detail.field, field);
+    return true;
+  };
+
+  assert.throws(
+    () =>
+      Sgp4Satellite.fromOmm(
+        build(hexToF64(ref.mean_motion_hex), { ...baseMeta, meanElementTheory: "DSST" }),
+      ),
+    expectedError("INCOMPATIBLE_METADATA", "MEAN_ELEMENT_THEORY"),
+  );
+  assert.throws(
+    () => Sgp4Satellite.fromOmm(build(undefined, baseMeta)),
+    expectedError("MISSING_FIELD", "MEAN_MOTION"),
+  );
+  const withoutBstar = Object.fromEntries(
+    Object.entries(baseMeta).filter(([key]) => key !== "bstar"),
+  );
+  assert.throws(
+    () => Sgp4Satellite.fromOmm(build(hexToF64(ref.mean_motion_hex), withoutBstar)),
+    expectedError("MISSING_FIELD", "BSTAR"),
+  );
+});
 
 test("OMM failures are typed OmmErrors whose detail names the engine variant", () => {
   assert.throws(
