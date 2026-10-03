@@ -313,6 +313,134 @@ test("the 3.04 example reads every header record at its version's columns", () =
   });
   assert.equal(field("PRN LIST", "G01").prns.length, 16);
 
+  // Pin every field of every typed header record emitted by this real
+  // specification example, including repeated records and both PRN chunks.
+  assert.deepEqual(
+    records.map(({ field }) => field),
+    [
+      { kind: "VERSION_TYPE", version: 3.04, fileType: "C", satelliteSystem: "G" },
+      {
+        kind: "PROGRAM_RUN_BY_DATE",
+        program: "TORINEXC V9.9",
+        runBy: "USNO",
+        date: "19960403  001000 UTC",
+      },
+      { kind: "COMMENT", text: "EXAMPLE OF A CLOCK DATA ANALYSIS FILE" },
+      { kind: "COMMENT", text: "IN THIS CASE ANALYSIS RESULTS FROM GPS ONLY ARE INCLUDED" },
+      { kind: "COMMENT", text: "No re-alignment of the clocks has been applied." },
+      {
+        kind: "OBSERVATION_TYPES",
+        system: "G",
+        count: 4,
+        descriptors: ["C1W", "L1W", "C2W", "L2W"],
+      },
+      { kind: "TIME_SYSTEM", label: "GPS" },
+      { kind: "LEAP_SECONDS", seconds: "10", secondsNumber: 10 },
+      {
+        kind: "DCBS_APPLIED",
+        system: "G",
+        program: "CC2NONCC",
+        source: "p1c1bias.hist @ goby.nrl.navy.mil",
+      },
+      {
+        kind: "PCVS_APPLIED",
+        system: "G",
+        program: "PAGES",
+        source: "igs05.atx @ igscb.jpl.nasa.gov",
+      },
+      { kind: "TYPES_OF_DATA", count: 2, types: ["AS", "AR"] },
+      { kind: "ANALYSIS_CENTER", designator: "USN", name: "USNO USING GIPSY/OASIS-II" },
+      {
+        kind: "CLOCK_REF_COUNT",
+        count: 1,
+        start: { year: 1994, month: 7, day: 14, hour: 0, minute: 0, second: 0 },
+        stop: { year: 1994, month: 7, day: 14, hour: 20, minute: 59, second: 0 },
+      },
+      {
+        kind: "ANALYSIS_CLOCK_REF",
+        name: "USNO",
+        identifier: "40451S003",
+        constraintS: -0.123456789012,
+      },
+      {
+        kind: "CLOCK_REF_COUNT",
+        count: 1,
+        start: { year: 1994, month: 7, day: 14, hour: 21, minute: 0, second: 0 },
+        stop: { year: 1994, month: 7, day: 14, hour: 21, minute: 59, second: 0 },
+      },
+      {
+        kind: "ANALYSIS_CLOCK_REF",
+        name: "TIDB",
+        identifier: "50103M108",
+        constraintS: -0.123456789012,
+      },
+      { kind: "SOLUTION_STATION_COUNT", count: 4, frame: "ITRF96" },
+      {
+        kind: "SOLUTION_STATION",
+        name: "GOLD",
+        identifier: "40405S031",
+        xyzMm: ["1234567890", "-1234567890", "-1234567890"],
+        xyzMmNumber: [1234567890, -1234567890, -1234567890],
+      },
+      {
+        kind: "SOLUTION_STATION",
+        name: "AREQ",
+        identifier: "42202M005",
+        xyzMm: ["-1234567890", "1234567890", "-1234567890"],
+        xyzMmNumber: [-1234567890, 1234567890, -1234567890],
+      },
+      {
+        kind: "SOLUTION_STATION",
+        name: "TIDB",
+        identifier: "50103M108",
+        xyzMm: ["1234567890", "-1234567890", "1234567890"],
+        xyzMmNumber: [1234567890, -1234567890, 1234567890],
+      },
+      {
+        kind: "SOLUTION_STATION",
+        name: "HARK",
+        identifier: "30302M007",
+        xyzMm: ["-1234567890", "1234567890", "-1234567890"],
+        xyzMmNumber: [-1234567890, 1234567890, -1234567890],
+      },
+      {
+        kind: "SOLUTION_STATION",
+        name: "USNO",
+        identifier: "40451S003",
+        xyzMm: ["1234567890", "-1234567890", "-1234567890"],
+        xyzMmNumber: [1234567890, -1234567890, -1234567890],
+      },
+      { kind: "SOLUTION_SATELLITE_COUNT", count: 27 },
+      {
+        kind: "PRN_LIST",
+        prns: [
+          "G01",
+          "G02",
+          "G03",
+          "G04",
+          "G05",
+          "G06",
+          "G07",
+          "G08",
+          "G09",
+          "G10",
+          "G13",
+          "G14",
+          "G15",
+          "G16",
+          "G17",
+          "G18",
+        ],
+      },
+      {
+        kind: "PRN_LIST",
+        prns: ["G19", "G21", "G22", "G23", "G24", "G25", "G26", "G27", "G29", "G30", "G31"],
+      },
+      { kind: "END_OF_HEADER" },
+    ],
+  );
+  assert.equal(new Set(records.map(({ field }) => field.kind)).size, 17);
+
   const areq = clock.records().find((r) => r.name === "AREQ00USA");
   assert.equal(areq.recordType, "AR");
   assert.equal(areq.reading, "columnsV304");
@@ -375,6 +503,60 @@ test("a 3.04 file without TIME SYSTEM ID takes the default and can declare it", 
   assert.deepEqual(inserted.field, { kind: "TIME_SYSTEM", label: "GPS" });
 
   assert.throws(() => clock.setTimeSystem("XYZ"), TypeError);
+});
+
+test("the 3.04 clock header also exposes the remaining typed fields and continuation values", () => {
+  const clock = parseRinexClock(fixture(SPEC_304_A18));
+  const fields = clock.headerRecords().map(({ field }) => field);
+  assert.deepEqual(fields, [
+    { kind: "VERSION_TYPE", version: 3.04, fileType: "C", satelliteSystem: "" },
+    {
+      kind: "PROGRAM_RUN_BY_DATE",
+      program: "TORINEXC V9.9",
+      runBy: "USNO",
+      date: "19960403  001000 UTC",
+    },
+    { kind: "COMMENT", text: "EXAMPLE OF A CLOCK DATA FILE" },
+    { kind: "COMMENT", text: "IN THIS CASE CALIBRATION/DISCONTINUITY DATA GIVEN" },
+    { kind: "LEAP_SECONDS_GNSS", seconds: "10", secondsNumber: 10 },
+    { kind: "TYPES_OF_DATA", count: 2, types: ["CR", "DR"] },
+    { kind: "STATION_NAME_NUM", name: "USNO", identifier: "40451S003" },
+    { kind: "STATION_CLOCK_REF", text: "UTC(USNO) MASTER CLOCK VIA CONTINUOUS CABLE MONITOR" },
+    { kind: "END_OF_HEADER" },
+  ]);
+  assert.equal(new Set(fields.map(({ kind }) => kind)).size, 8);
+  const a17Fields = parseRinexClock(fixture(SPEC_304_A17))
+    .headerRecords()
+    .map(({ field }) => field);
+  const variantFields = new Map([...a17Fields, ...fields].map((field) => [field.kind, field]));
+  assert.equal(variantFields.size, 20);
+  assert.equal(
+    [...variantFields.values()].reduce((count, field) => count + Object.keys(field).length - 1, 0),
+    42,
+  );
+
+  const source = fixture(SPEC_304_A17).toString("utf8");
+  const lines = source.split("\r\n");
+  const observationTypes = lines.findIndex((line) => line.endsWith("SYS / # / OBS TYPES"));
+  assert.notEqual(observationTypes, -1);
+  lines[observationTypes] = header("G    5  C1W L1W C2W L2W", "SYS / # / OBS TYPES");
+  lines.splice(observationTypes + 1, 0, header("        L5Q", "SYS / # / OBS TYPES"));
+  const continued = parseRinexClock(bytes(lines.join("\r\n")));
+  assert.deepEqual(
+    continued
+      .headerRecords()
+      .filter(({ label }) => label === "SYS / # / OBS TYPES")
+      .map(({ field }) => field),
+    [
+      {
+        kind: "OBSERVATION_TYPES",
+        system: "G",
+        count: 5,
+        descriptors: ["C1W", "L1W", "C2W", "L2W"],
+      },
+      { kind: "OBSERVATION_TYPES", system: null, count: null, descriptors: ["L5Q"] },
+    ],
+  );
 });
 
 test("record edits validate the whole change and change nothing when refused", () => {

@@ -65,6 +65,16 @@ test("lintRinexObs reports the core diagnostics for RINEX 2 OBS", () => {
   );
   assert.equal(report.findings[0].severity, "info");
   assert.equal(report.findings[0].repairable, false);
+  assert.deepEqual(report.findings[0].at, {
+    epochIndex: undefined,
+    satellite: undefined,
+    field: "header",
+  });
+  assert.deepEqual(report.findings[1].at, {
+    epochIndex: undefined,
+    satellite: "R05",
+    field: "GLONASS SLOT / FRQ #",
+  });
   // The detail is typed: the unretained header record names its label, and
   // each GLONASS slot finding its satellite and issue.
   assert.deepEqual(report.findings[0].detail, {
@@ -76,6 +86,46 @@ test("lintRinexObs reports the core diagnostics for RINEX 2 OBS", () => {
     assert.equal(finding.detail.satellite, finding.at.satellite);
     assert.equal(typeof finding.detail.issue, "string");
   }
+});
+
+test("lintRinexObs preserves epoch-index locations on body findings", () => {
+  const source = fixture("obs/ESBC00DNK_R_20201770000_01D_30S_MO_trim.rnx").toString("utf8");
+  const firstEpoch = "> 2020 06 25 00 00 00.0000000  0 43";
+  const secondEpoch = "> 2020 06 25 00 00 30.0000000  0 43";
+  assert.ok(source.includes(firstEpoch));
+  assert.ok(source.includes(secondEpoch));
+  const marker = "__SIDEREON_EPOCH_SWAP__";
+  const reordered = source
+    .replace(firstEpoch, marker)
+    .replace(secondEpoch, firstEpoch)
+    .replace(marker, secondEpoch);
+  const report = lintRinexObs(encoder.encode(reordered));
+  const finding = report.findings.find((entry) => entry.code === "OBS-B01");
+  assert.ok(finding);
+  assert.deepEqual(finding.at, {
+    epochIndex: 1,
+    satellite: undefined,
+    field: undefined,
+  });
+  assert.deepEqual(finding.detail, {
+    kind: "OBS_EPOCH_ORDER",
+    previous: {
+      year: 2020,
+      month: 6,
+      day: 25,
+      hour: 0,
+      minute: 0,
+      second: 30,
+    },
+    current: {
+      year: 2020,
+      month: 6,
+      day: 25,
+      hour: 0,
+      minute: 0,
+      second: 0,
+    },
+  });
 });
 
 test("unavailable source INTERVAL is linted while QC infers or reports cadence", () => {
