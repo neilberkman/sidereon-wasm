@@ -721,7 +721,7 @@ test("Bias-SINEX departures retain typed details in strict and lenient modes", (
   assert.ok(parsed.notices.some((notice) => notice.includes("HeaderLayout")));
 });
 
-test("SSR clock retains the complete attached high-rate correction", () => {
+test("SSR 4076 store retains complete IGS orbit, clock, and high-rate records", () => {
   const baseClock = hexToBytes(
     "d30024fec22e30d40060123702088fffffa00009ffff600006ffff200023ffff60000a7ffffe20482165",
   );
@@ -731,19 +731,54 @@ test("SSR clock retains the complete attached high-rate correction", () => {
   store.ingest(baseClock, true, 2400, 100000, "gpst");
   store.ingest(highRateClock, true, 2400, 100000, "gpst");
 
-  const clock = store.clock("G01");
-  assert.ok(clock);
-  assert.deepEqual(clock.highRate, {
-    solution: {
-      source: "igsSsr",
-      providerId: 0x123,
-      solutionId: 7,
-    },
+  assert.deepEqual(store.orbit("G01"), {
+    source: "igsSsr",
+    providerId: 291,
+    solutionId: 7,
+    navMessage: "igsSsr",
+    hasNavMessageIndex: undefined,
+    iode: 17,
+    iodCrc: undefined,
     iodSsr: 6,
-    c0M: 0.0077,
+    basis: "velocityAligned",
+    crsRegional: false,
+    referencePoint: 0,
+    radialM: 0.00030000000000000003,
+    alongM: -0.0016,
+    crossM: 0.002,
+    radialRateMS: -0.000006,
+    alongRateMS: 0.000028,
+    crossRateMS: -0.000032,
     refEpochJ2000S: 820856800,
     transmittedEpochJ2000S: 820856800,
     updateIntervalS: 1,
   });
-  assert.equal(clock.highRateC0M, 0.0077);
+
+  assert.deepEqual(store.clock("G01"), {
+    source: "igsSsr",
+    providerId: 291,
+    solutionId: 7,
+    navMessage: "igsSsr",
+    hasNavMessageIndex: undefined,
+    iodSsr: 6,
+    c0M: -0.001,
+    c1MS: 0.000019999999999999998,
+    c2MS2: -6e-7,
+    highRate: {
+      solution: {
+        source: "igsSsr",
+        providerId: 291,
+        solutionId: 7,
+      },
+      iodSsr: 6,
+      c0M: 0.0077,
+      refEpochJ2000S: 820856800,
+      transmittedEpochJ2000S: 820856800,
+      updateIntervalS: 1,
+    },
+    highRateC0M: 0.0077,
+    refEpochJ2000S: 820856800,
+    transmittedEpochJ2000S: 820856800,
+    updateIntervalS: 1,
+  });
 });
