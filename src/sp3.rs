@@ -339,32 +339,209 @@ pub(crate) fn sp3_core_error_js(error: CoreError) -> JsValue {
     }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DeclaredStartMismatchDetailJs {
-    requested_j2000_s: f64,
-    declared_j2000_s: f64,
-    requested_tick: String,
-    declared_tick: Option<String>,
+/// Lossless public detail for every current exact-SP3 validation failure.
+///
+/// Integer fields cross as decimal strings because Rust's `usize`, `u64`, and
+/// `i128` ranges exceed JavaScript's exact integer range. Floating-point fields
+/// other than the already-public declared-start pair also cross as strings, so
+/// a non-finite diagnostic is retained rather than becoming `null`.
+fn exact_sp3_validation_error_detail(error: &ExactSp3ValidationError) -> serde_json::Value {
+    use ExactSp3ValidationError as E;
+
+    match error {
+        E::Parse(value) => serde_json::json!({
+            "kind": "parse", "value": value.to_string(), "debug": format!("{value:?}")
+        }),
+        E::Catalog(value) => serde_json::json!({
+            "kind": "catalog", "value": value.to_string(), "debug": format!("{value:?}")
+        }),
+        E::WrongProductFamily { actual } => {
+            serde_json::json!({"kind": "wrong_product_family", "actual": actual.code()})
+        }
+        E::InvalidIssue { issue } => {
+            serde_json::json!({"kind": "invalid_issue", "issue": issue})
+        }
+        E::UnsupportedSpanToken { token } => {
+            serde_json::json!({"kind": "unsupported_span_token", "token": token})
+        }
+        E::UnsupportedSampleToken { token } => {
+            serde_json::json!({"kind": "unsupported_sample_token", "token": token})
+        }
+        E::NonCanonicalSpanToken { token, canonical } => serde_json::json!({
+            "kind": "non_canonical_span_token", "token": token, "canonical": canonical
+        }),
+        E::NonCanonicalSampleToken { token, canonical } => serde_json::json!({
+            "kind": "non_canonical_sample_token", "token": token, "canonical": canonical
+        }),
+        E::InvalidExpectedAgency { agency } => {
+            serde_json::json!({"kind": "invalid_expected_agency", "agency": agency})
+        }
+        E::AgencyMismatch { expected, actual } => serde_json::json!({
+            "kind": "agency_mismatch", "expected": expected, "actual": actual
+        }),
+        E::MissingEof => serde_json::json!({"kind": "missing_eof"}),
+        E::MalformedEofRecord {
+            line_number,
+            record_length,
+        } => serde_json::json!({
+            "kind": "malformed_eof_record",
+            "lineNumber": line_number.to_string(),
+            "recordLength": record_length.to_string()
+        }),
+        E::TrailingContentAfterEof => {
+            serde_json::json!({"kind": "trailing_content_after_eof"})
+        }
+        E::MandatoryHeaderRecordCount {
+            record,
+            expected,
+            actual,
+        } => serde_json::json!({
+            "kind": "mandatory_header_record_count",
+            "record": record,
+            "expected": expected.to_string(),
+            "actual": actual.to_string()
+        }),
+        E::MissingDeclaredSatelliteCount => {
+            serde_json::json!({"kind": "missing_declared_satellite_count"})
+        }
+        E::DeclaredSatelliteCountMismatch { declared, tokens } => serde_json::json!({
+            "kind": "declared_satellite_count_mismatch",
+            "declared": declared.to_string(),
+            "tokens": tokens.to_string()
+        }),
+        E::DuplicateDeclaredSatellite {
+            token,
+            first_index,
+            duplicate_index,
+        } => serde_json::json!({
+            "kind": "duplicate_declared_satellite",
+            "token": token,
+            "firstIndex": first_index.to_string(),
+            "duplicateIndex": duplicate_index.to_string()
+        }),
+        E::NoDeclaredSatellites => serde_json::json!({"kind": "no_declared_satellites"}),
+        E::SatelliteRecordSequenceMismatch {
+            record,
+            epoch_index,
+            expected,
+            actual,
+        } => serde_json::json!({
+            "kind": "satellite_record_sequence_mismatch",
+            "record": record,
+            "epochIndex": epoch_index.to_string(),
+            "expected": expected,
+            "actual": actual
+        }),
+        E::BodyRecordInterleavingMismatch {
+            epoch_index,
+            expected,
+            actual,
+        } => serde_json::json!({
+            "kind": "body_record_interleaving_mismatch",
+            "epochIndex": epoch_index.to_string(),
+            "expected": expected,
+            "actual": actual
+        }),
+        E::NonFiniteHeaderCadence => {
+            serde_json::json!({"kind": "non_finite_header_cadence"})
+        }
+        E::NonPositiveHeaderCadence { actual_s } => serde_json::json!({
+            "kind": "non_positive_header_cadence", "actualS": actual_s.to_string()
+        }),
+        E::UnsupportedHeaderCadence { actual_s } => serde_json::json!({
+            "kind": "unsupported_header_cadence", "actualS": actual_s.to_string()
+        }),
+        E::CadenceMismatch {
+            requested_s,
+            header_s,
+        } => serde_json::json!({
+            "kind": "cadence_mismatch",
+            "requestedS": requested_s.to_string(),
+            "headerS": header_s.to_string()
+        }),
+        E::DeclaredEpochCountMismatch { declared, parsed } => serde_json::json!({
+            "kind": "declared_epoch_count_mismatch",
+            "declared": declared.to_string(),
+            "parsed": parsed.to_string()
+        }),
+        E::MissingDeclaredStart => serde_json::json!({"kind": "missing_declared_start"}),
+        E::DeclaredStartMismatch {
+            requested_j2000_s,
+            declared_j2000_s,
+            requested_tick,
+            declared_tick,
+        } => serde_json::json!({
+            "kind": "declared_start_mismatch",
+            "requestedJ2000S": requested_j2000_s,
+            "declaredJ2000S": declared_j2000_s,
+            "requestedTick": requested_tick.to_string(),
+            "declaredTick": declared_tick.map(|tick| tick.to_string())
+        }),
+        E::RequestBeforeGpsEpoch => serde_json::json!({"kind": "request_before_gps_epoch"}),
+        E::NonFiniteHeaderStartMetadata { field } => serde_json::json!({
+            "kind": "non_finite_header_start_metadata", "field": field
+        }),
+        E::InvalidHeaderStartMetadata { field, actual } => serde_json::json!({
+            "kind": "invalid_header_start_metadata",
+            "field": field,
+            "actual": actual.to_string()
+        }),
+        E::HeaderStartMetadataMismatch {
+            field,
+            requested,
+            actual,
+        } => serde_json::json!({
+            "kind": "header_start_metadata_mismatch",
+            "field": field,
+            "requested": requested.to_string(),
+            "actual": actual.to_string()
+        }),
+        E::EmptyEpochGrid => serde_json::json!({"kind": "empty_epoch_grid"}),
+        E::FirstEpochMismatch {
+            requested_j2000_s,
+            actual_j2000_s,
+        } => serde_json::json!({
+            "kind": "first_epoch_mismatch",
+            "requestedJ2000S": requested_j2000_s.to_string(),
+            "actualJ2000S": actual_j2000_s.to_string()
+        }),
+        E::IrregularEpochGrid {
+            epoch_index,
+            requested_s,
+            actual_s,
+        } => serde_json::json!({
+            "kind": "irregular_epoch_grid",
+            "epochIndex": epoch_index.to_string(),
+            "requestedS": requested_s.to_string(),
+            "actualS": actual_s.to_string()
+        }),
+        E::SpanNotMultipleOfCadence { span_s, cadence_s } => serde_json::json!({
+            "kind": "span_not_multiple_of_cadence",
+            "spanS": span_s.to_string(),
+            "cadenceS": cadence_s.to_string()
+        }),
+        E::SpanMismatch {
+            parsed,
+            half_open,
+            inclusive,
+        } => serde_json::json!({
+            "kind": "span_mismatch",
+            "parsed": parsed.to_string(),
+            "halfOpen": half_open.to_string(),
+            "inclusive": inclusive.to_string()
+        }),
+        E::FormatVersionMismatch { requested, actual } => serde_json::json!({
+            "kind": "format_version_mismatch", "requested": requested, "actual": actual
+        }),
+        other => serde_json::json!({
+            "kind": "unknown", "value": other.to_string(), "debug": format!("{other:?}")
+        }),
+    }
 }
 
 fn exact_sp3_validation_error_js(error: ExactSp3ValidationError) -> JsValue {
-    if let ExactSp3ValidationError::DeclaredStartMismatch {
-        requested_j2000_s,
-        declared_j2000_s,
-        requested_tick,
-        declared_tick,
-    } = &error
-    {
-        let detail = DeclaredStartMismatchDetailJs {
-            requested_j2000_s: *requested_j2000_s,
-            declared_j2000_s: *declared_j2000_s,
-            requested_tick: requested_tick.to_string(),
-            declared_tick: declared_tick.map(|tick| tick.to_string()),
-        };
-        return error_with_detail("ExactSp3ValidationError", &error.to_string(), &detail);
-    }
-    engine_error(error)
+    let detail = exact_sp3_validation_error_detail(&error);
+    error_with_detail("ExactSp3ValidationError", &error.to_string(), &detail)
 }
 
 /// Seconds since J2000 in the instant's own scale, reduced as the engine's SP3
@@ -833,9 +1010,9 @@ impl ExactSp3ParseResult {
 }
 
 /// Parse and exact-validate SP3 bytes, returning both product and coverage.
-/// A declared-start mismatch throws `ExactSp3ValidationError`; `error.detail`
-/// carries `requestedTick` and `declaredTick` as decimal strings so 10 ns tick
-/// evidence remains exact in JavaScript.
+/// Every validation refusal throws `ExactSp3ValidationError` with a
+/// discriminated `ExactSp3ValidationErrorDetail`. Integer and diagnostic float
+/// strings preserve values that JavaScript numbers cannot represent exactly.
 #[wasm_bindgen(js_name = parseExactSp3)]
 pub fn parse_exact_sp3(
     bytes: &[u8],
@@ -849,9 +1026,8 @@ pub fn parse_exact_sp3(
     })
 }
 
-/// Validate an already parsed SP3 product against an exact request. A
-/// declared-start mismatch carries the same exact decimal tick strings as
-/// [`parse_exact_sp3`].
+/// Validate an already parsed SP3 product against an exact request, with the
+/// same typed refusal detail as [`parse_exact_sp3`].
 #[wasm_bindgen(js_name = validateExactSp3)]
 pub fn validate_exact_sp3(
     product: &Sp3,
@@ -2650,8 +2826,8 @@ struct ContinuityReportJs {
     residuals_skipped: usize,
 }
 
-// The `detail` of a thrown `Sp3WriteError`. `wasm-pack` writes this into both
-// `sidereon.d.ts` targets; `types/sidereon-extra.d.ts` re-exports it.
+// Typed error details. `wasm-pack` writes these into both `sidereon.d.ts`
+// targets; `types/sidereon-extra.d.ts` re-exports them.
 #[wasm_bindgen(typescript_custom_section)]
 const TS_SP3_WRITE_DEFINITIONS: &str = r#"
 export type Sp3PreciseEphemerisAccuracySample = {
@@ -2756,6 +2932,58 @@ export interface Sp3RecordAccuracy {
   p: Sp3PositionClockAccuracy | null;
   v: Sp3VelocityAccuracy | null;
 }
+
+export type ExactSp3ValidationErrorDetail =
+  | { kind: "parse"; value: string; debug: string }
+  | { kind: "catalog"; value: string; debug: string }
+  | { kind: "wrong_product_family"; actual: string }
+  | { kind: "invalid_issue"; issue: string }
+  | { kind: "unsupported_span_token"; token: string }
+  | { kind: "unsupported_sample_token"; token: string }
+  | { kind: "non_canonical_span_token"; token: string; canonical: string }
+  | { kind: "non_canonical_sample_token"; token: string; canonical: string }
+  | { kind: "invalid_expected_agency"; agency: string }
+  | { kind: "agency_mismatch"; expected: string; actual: string }
+  | { kind: "missing_eof" }
+  | { kind: "malformed_eof_record"; lineNumber: string; recordLength: string }
+  | { kind: "trailing_content_after_eof" }
+  | { kind: "mandatory_header_record_count"; record: string; expected: string; actual: string }
+  | { kind: "missing_declared_satellite_count" }
+  | { kind: "declared_satellite_count_mismatch"; declared: string; tokens: string }
+  | { kind: "duplicate_declared_satellite"; token: string; firstIndex: string; duplicateIndex: string }
+  | { kind: "no_declared_satellites" }
+  | {
+      kind: "satellite_record_sequence_mismatch";
+      record: string;
+      epochIndex: string;
+      expected: string[];
+      actual: string[];
+    }
+  | { kind: "body_record_interleaving_mismatch"; epochIndex: string; expected: string[]; actual: string[] }
+  | { kind: "non_finite_header_cadence" }
+  | { kind: "non_positive_header_cadence"; actualS: string }
+  | { kind: "unsupported_header_cadence"; actualS: string }
+  | { kind: "cadence_mismatch"; requestedS: string; headerS: string }
+  | { kind: "declared_epoch_count_mismatch"; declared: string; parsed: string }
+  | { kind: "missing_declared_start" }
+  | {
+      kind: "declared_start_mismatch";
+      requestedJ2000S: number;
+      declaredJ2000S: number;
+      requestedTick: string;
+      declaredTick: string | null;
+    }
+  | { kind: "request_before_gps_epoch" }
+  | { kind: "non_finite_header_start_metadata"; field: string }
+  | { kind: "invalid_header_start_metadata"; field: string; actual: string }
+  | { kind: "header_start_metadata_mismatch"; field: string; requested: string; actual: string }
+  | { kind: "empty_epoch_grid" }
+  | { kind: "first_epoch_mismatch"; requestedJ2000S: string; actualJ2000S: string }
+  | { kind: "irregular_epoch_grid"; epochIndex: string; requestedS: string; actualS: string }
+  | { kind: "span_not_multiple_of_cadence"; spanS: string; cadenceS: string }
+  | { kind: "span_mismatch"; parsed: string; halfOpen: string; inclusive: string }
+  | { kind: "format_version_mismatch"; requested: string; actual: string }
+  | { kind: "unknown"; value: string; debug: string };
 
 export type Sp3WriteErrorDetail =
   | { kind: "ACCURACY_NOT_REPRESENTABLE"; satellite: string; epochIndex: number; component: string; exponent: number | null; message: string }
@@ -2888,8 +3116,269 @@ export type Sp3WriteErrorDetail =
 "#;
 
 #[cfg(test)]
+mod exact_sp3_validation_detail_mapping_tests {
+    use super::*;
+    use sidereon_core::data::{DataCatalogError, ProductType};
+
+    #[test]
+    fn every_current_variant_keeps_its_exact_public_payload() {
+        use ExactSp3ValidationError as E;
+
+        let parse_value = sidereon_core::Error::Parse("bad bytes".into());
+        let parse_text = parse_value.to_string();
+        let parse_debug = format!("{parse_value:?}");
+        let catalog_value = DataCatalogError::UnknownCenter("bad".into());
+        let catalog_text = catalog_value.to_string();
+        let catalog_debug = format!("{catalog_value:?}");
+        let cases = vec![
+            (
+                E::Parse(parse_value),
+                serde_json::json!({"kind":"parse","value":parse_text,"debug":parse_debug}),
+            ),
+            (
+                E::Catalog(catalog_value),
+                serde_json::json!({"kind":"catalog","value":catalog_text,"debug":catalog_debug}),
+            ),
+            (
+                E::WrongProductFamily {
+                    actual: ProductType::Clk,
+                },
+                serde_json::json!({"kind":"wrong_product_family","actual":"clk"}),
+            ),
+            (
+                E::InvalidIssue {
+                    issue: "2460".into(),
+                },
+                serde_json::json!({"kind":"invalid_issue","issue":"2460"}),
+            ),
+            (
+                E::UnsupportedSpanToken { token: "3D".into() },
+                serde_json::json!({"kind":"unsupported_span_token","token":"3D"}),
+            ),
+            (
+                E::UnsupportedSampleToken { token: "7S".into() },
+                serde_json::json!({"kind":"unsupported_sample_token","token":"7S"}),
+            ),
+            (
+                E::NonCanonicalSpanToken {
+                    token: "24H".into(),
+                    canonical: "1D".into(),
+                },
+                serde_json::json!({"kind":"non_canonical_span_token","token":"24H","canonical":"1D"}),
+            ),
+            (
+                E::NonCanonicalSampleToken {
+                    token: "60S".into(),
+                    canonical: "1M".into(),
+                },
+                serde_json::json!({"kind":"non_canonical_sample_token","token":"60S","canonical":"1M"}),
+            ),
+            (
+                E::InvalidExpectedAgency {
+                    agency: "bad!".into(),
+                },
+                serde_json::json!({"kind":"invalid_expected_agency","agency":"bad!"}),
+            ),
+            (
+                E::AgencyMismatch {
+                    expected: "COD".into(),
+                    actual: "GFZ".into(),
+                },
+                serde_json::json!({"kind":"agency_mismatch","expected":"COD","actual":"GFZ"}),
+            ),
+            (E::MissingEof, serde_json::json!({"kind":"missing_eof"})),
+            (
+                E::MalformedEofRecord {
+                    line_number: usize::MAX,
+                    record_length: 2048,
+                },
+                serde_json::json!({"kind":"malformed_eof_record","lineNumber":usize::MAX.to_string(),"recordLength":"2048"}),
+            ),
+            (
+                E::TrailingContentAfterEof,
+                serde_json::json!({"kind":"trailing_content_after_eof"}),
+            ),
+            (
+                E::MandatoryHeaderRecordCount {
+                    record: "%i",
+                    expected: 2,
+                    actual: 1,
+                },
+                serde_json::json!({"kind":"mandatory_header_record_count","record":"%i","expected":"2","actual":"1"}),
+            ),
+            (
+                E::MissingDeclaredSatelliteCount,
+                serde_json::json!({"kind":"missing_declared_satellite_count"}),
+            ),
+            (
+                E::DeclaredSatelliteCountMismatch {
+                    declared: usize::MAX,
+                    tokens: 3,
+                },
+                serde_json::json!({"kind":"declared_satellite_count_mismatch","declared":usize::MAX.to_string(),"tokens":"3"}),
+            ),
+            (
+                E::DuplicateDeclaredSatellite {
+                    token: "G01".into(),
+                    first_index: 0,
+                    duplicate_index: usize::MAX,
+                },
+                serde_json::json!({"kind":"duplicate_declared_satellite","token":"G01","firstIndex":"0","duplicateIndex":usize::MAX.to_string()}),
+            ),
+            (
+                E::NoDeclaredSatellites,
+                serde_json::json!({"kind":"no_declared_satellites"}),
+            ),
+            (
+                E::SatelliteRecordSequenceMismatch {
+                    record: "P",
+                    epoch_index: 4,
+                    expected: vec!["G01".into()],
+                    actual: vec!["G02".into()],
+                },
+                serde_json::json!({"kind":"satellite_record_sequence_mismatch","record":"P","epochIndex":"4","expected":["G01"],"actual":["G02"]}),
+            ),
+            (
+                E::BodyRecordInterleavingMismatch {
+                    epoch_index: 5,
+                    expected: vec!["PG01".into(), "VG01".into()],
+                    actual: vec!["VG01".into(), "PG01".into()],
+                },
+                serde_json::json!({"kind":"body_record_interleaving_mismatch","epochIndex":"5","expected":["PG01","VG01"],"actual":["VG01","PG01"]}),
+            ),
+            (
+                E::NonFiniteHeaderCadence,
+                serde_json::json!({"kind":"non_finite_header_cadence"}),
+            ),
+            (
+                E::NonPositiveHeaderCadence {
+                    actual_s: f64::NEG_INFINITY,
+                },
+                serde_json::json!({"kind":"non_positive_header_cadence","actualS":"-inf"}),
+            ),
+            (
+                E::UnsupportedHeaderCadence { actual_s: 100000.0 },
+                serde_json::json!({"kind":"unsupported_header_cadence","actualS":"100000"}),
+            ),
+            (
+                E::CadenceMismatch {
+                    requested_s: 300.0,
+                    header_s: 600.0,
+                },
+                serde_json::json!({"kind":"cadence_mismatch","requestedS":"300","headerS":"600"}),
+            ),
+            (
+                E::DeclaredEpochCountMismatch {
+                    declared: u64::MAX,
+                    parsed: usize::MAX,
+                },
+                serde_json::json!({"kind":"declared_epoch_count_mismatch","declared":u64::MAX.to_string(),"parsed":usize::MAX.to_string()}),
+            ),
+            (
+                E::MissingDeclaredStart,
+                serde_json::json!({"kind":"missing_declared_start"}),
+            ),
+            (
+                E::DeclaredStartMismatch {
+                    requested_j2000_s: 1.25,
+                    declared_j2000_s: 1.5,
+                    requested_tick: i128::MAX,
+                    declared_tick: Some(i128::MIN),
+                },
+                serde_json::json!({"kind":"declared_start_mismatch","requestedJ2000S":1.25,"declaredJ2000S":1.5,"requestedTick":i128::MAX.to_string(),"declaredTick":i128::MIN.to_string()}),
+            ),
+            (
+                E::RequestBeforeGpsEpoch,
+                serde_json::json!({"kind":"request_before_gps_epoch"}),
+            ),
+            (
+                E::NonFiniteHeaderStartMetadata { field: "mjd" },
+                serde_json::json!({"kind":"non_finite_header_start_metadata","field":"mjd"}),
+            ),
+            (
+                E::InvalidHeaderStartMetadata {
+                    field: "seconds_of_week",
+                    actual: f64::INFINITY,
+                },
+                serde_json::json!({"kind":"invalid_header_start_metadata","field":"seconds_of_week","actual":"inf"}),
+            ),
+            (
+                E::HeaderStartMetadataMismatch {
+                    field: "mjd",
+                    requested: 60000.0,
+                    actual: 60001.0,
+                },
+                serde_json::json!({"kind":"header_start_metadata_mismatch","field":"mjd","requested":"60000","actual":"60001"}),
+            ),
+            (
+                E::EmptyEpochGrid,
+                serde_json::json!({"kind":"empty_epoch_grid"}),
+            ),
+            (
+                E::FirstEpochMismatch {
+                    requested_j2000_s: 1.0,
+                    actual_j2000_s: 2.0,
+                },
+                serde_json::json!({"kind":"first_epoch_mismatch","requestedJ2000S":"1","actualJ2000S":"2"}),
+            ),
+            (
+                E::IrregularEpochGrid {
+                    epoch_index: usize::MAX,
+                    requested_s: 300.0,
+                    actual_s: 299.99999999,
+                },
+                serde_json::json!({"kind":"irregular_epoch_grid","epochIndex":usize::MAX.to_string(),"requestedS":"300","actualS":"299.99999999"}),
+            ),
+            (
+                E::SpanNotMultipleOfCadence {
+                    span_s: u64::MAX,
+                    cadence_s: 300,
+                },
+                serde_json::json!({"kind":"span_not_multiple_of_cadence","spanS":u64::MAX.to_string(),"cadenceS":"300"}),
+            ),
+            (
+                E::SpanMismatch {
+                    parsed: 20,
+                    half_open: 21,
+                    inclusive: 22,
+                },
+                serde_json::json!({"kind":"span_mismatch","parsed":"20","halfOpen":"21","inclusive":"22"}),
+            ),
+            (
+                E::FormatVersionMismatch {
+                    requested: "d".into(),
+                    actual: "c".into(),
+                },
+                serde_json::json!({"kind":"format_version_mismatch","requested":"d","actual":"c"}),
+            ),
+        ];
+
+        assert_eq!(cases.len(), 37);
+        let mut kinds = std::collections::BTreeSet::new();
+        for (error, expected) in cases {
+            let actual = exact_sp3_validation_error_detail(&error);
+            assert_eq!(actual, expected, "{error:?}");
+            kinds.insert(actual["kind"].as_str().expect("kind string").to_owned());
+        }
+        assert_eq!(kinds.len(), 37);
+    }
+}
+
+#[cfg(test)]
 mod sp3_writer_detail_mapping_tests {
     use super::*;
+
+    fn assert_complete_mapping(error: CoreSp3WriteError, mut expected: serde_json::Value) {
+        expected
+            .as_object_mut()
+            .expect("expected mapping is an object")
+            .insert("message".to_string(), serde_json::json!(error.to_string()));
+        assert_eq!(
+            serde_json::to_value(Sp3WriteErrorDetailJs::from_core(&error)).unwrap(),
+            expected,
+            "mapping for {error:?}"
+        );
+    }
 
     #[test]
     fn current_epoch_and_accuracy_variants_keep_typed_payloads() {
@@ -2933,5 +3422,267 @@ mod sp3_writer_detail_mapping_tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn every_sp3_write_refusal_keeps_its_complete_public_payload() {
+        use sidereon_core::astro::time::TimeScale;
+        use sidereon_core::ephemeris::Sp3TimeSystem;
+
+        let satellite = "G07".parse().expect("valid test satellite");
+        let unrepresentable = GnssSatelliteId {
+            system: sidereon_core::GnssSystem::Gps,
+            prn: 100,
+        };
+
+        let cases = vec![
+            (
+                CoreSp3WriteError::TextNotColumnSafe {
+                    field: "agency",
+                    value: "A\nB".to_string(),
+                },
+                serde_json::json!({"kind":"TEXT_NOT_COLUMN_SAFE","field":"agency","value":"A\nB"}),
+            ),
+            (
+                CoreSp3WriteError::TextNotColumnStable {
+                    field: "orbit type",
+                    value: " FIT ".to_string(),
+                },
+                serde_json::json!({"kind":"TEXT_NOT_COLUMN_STABLE","field":"orbit type","value":" FIT "}),
+            ),
+            (
+                CoreSp3WriteError::BlankDescriptor {
+                    field: "data used",
+                    value: "".to_string(),
+                },
+                serde_json::json!({"kind":"BLANK_DESCRIPTOR","field":"data used","value":""}),
+            ),
+            (
+                CoreSp3WriteError::EmptyComment {
+                    index: 3,
+                    value: "".to_string(),
+                },
+                serde_json::json!({"kind":"EMPTY_COMMENT","index":3,"value":""}),
+            ),
+            (
+                CoreSp3WriteError::TextTooWide {
+                    field: "agency",
+                    columns: 4,
+                    value: "ABCDE".to_string(),
+                },
+                serde_json::json!({"kind":"TEXT_TOO_WIDE","field":"agency","columns":4,"value":"ABCDE"}),
+            ),
+            (
+                CoreSp3WriteError::IntegerTooWide {
+                    field: "epoch count",
+                    columns: 7,
+                    value: 9_007_199_254_740_993,
+                },
+                serde_json::json!({"kind":"INTEGER_TOO_WIDE","field":"epoch count","columns":7,"value":"9007199254740993","valueNumber":null}),
+            ),
+            (
+                CoreSp3WriteError::NonFinite { field: "interval" },
+                serde_json::json!({"kind":"NON_FINITE","field":"interval"}),
+            ),
+            (
+                CoreSp3WriteError::NumberTooWide {
+                    field: "clock base",
+                    columns: 10,
+                    decimals: 7,
+                    value: 12_345.25,
+                },
+                serde_json::json!({"kind":"NUMBER_TOO_WIDE","field":"clock base","columns":10,"decimals":7,"value":12345.25}),
+            ),
+            (
+                CoreSp3WriteError::PrecisionNotRepresentable {
+                    field: "position base",
+                    columns: 10,
+                    decimals: 7,
+                    value: 1.25000001,
+                },
+                serde_json::json!({"kind":"PRECISION_NOT_REPRESENTABLE","field":"position base","columns":10,"decimals":7,"value":1.25000001}),
+            ),
+            (
+                CoreSp3WriteError::AccuracyNotRepresentable {
+                    sat: satellite,
+                    epoch_index: 5,
+                    component: "position",
+                    exponent: Some(-12),
+                },
+                serde_json::json!({"kind":"ACCURACY_NOT_REPRESENTABLE","satellite":"G07","epochIndex":5,"component":"position","exponent":-12}),
+            ),
+            (
+                CoreSp3WriteError::AccuracyRecordMismatch {
+                    sat: satellite,
+                    epoch_index: 6,
+                },
+                serde_json::json!({"kind":"ACCURACY_RECORD_MISMATCH","satellite":"G07","epochIndex":6}),
+            ),
+            (
+                CoreSp3WriteError::AccuracyBasisMissing {
+                    sat: satellite,
+                    epoch_index: 8,
+                },
+                serde_json::json!({"kind":"ACCURACY_BASIS_MISSING","satellite":"G07","epochIndex":8}),
+            ),
+            (
+                CoreSp3WriteError::YearNotRepresentable {
+                    epoch_index: 9,
+                    year: -12_345,
+                },
+                serde_json::json!({"kind":"YEAR_NOT_REPRESENTABLE","epochIndex":9,"year":"-12345","yearNumber":-12345.0}),
+            ),
+            (
+                CoreSp3WriteError::EpochNotRestatable {
+                    epoch_index: 10,
+                    field_seconds: 59.125,
+                    residual_s: 0.000_000_01,
+                },
+                serde_json::json!({"kind":"EPOCH_NOT_RESTATABLE","epochIndex":10,"fieldSeconds":59.125,"residualS":0.00000001}),
+            ),
+            (
+                CoreSp3WriteError::EpochTimeScaleMismatch {
+                    epoch_index: 11,
+                    epoch_scale: TimeScale::Gpst,
+                    header_scale: TimeScale::Utc,
+                },
+                serde_json::json!({"kind":"EPOCH_TIME_SCALE_MISMATCH","epochIndex":11,"epochScale":"GPST","headerScale":"UTC"}),
+            ),
+            (
+                CoreSp3WriteError::HeaderTimeScaleMismatch {
+                    time_system: Sp3TimeSystem::Galileo,
+                    time_scale: TimeScale::Gpst,
+                },
+                serde_json::json!({"kind":"HEADER_TIME_SCALE_MISMATCH","timeSystem":"GAL","timeScale":"GPST"}),
+            ),
+            (
+                CoreSp3WriteError::EpochCountMismatch {
+                    declared: 9_007_199_254_740_993,
+                    epochs: 12,
+                },
+                serde_json::json!({"kind":"EPOCH_COUNT_MISMATCH","declared":"9007199254740993","declaredNumber":null,"epochs":12}),
+            ),
+            (
+                CoreSp3WriteError::AccuracyCodeCountMismatch {
+                    satellites: 13,
+                    codes: 12,
+                },
+                serde_json::json!({"kind":"ACCURACY_CODE_COUNT_MISMATCH","satellites":13,"codes":12}),
+            ),
+            (
+                CoreSp3WriteError::DuplicateSatellite { sat: satellite },
+                serde_json::json!({"kind":"DUPLICATE_SATELLITE","satellite":"G07"}),
+            ),
+            (
+                CoreSp3WriteError::SatelliteNotRepresentable {
+                    sat: unrepresentable,
+                },
+                serde_json::json!({"kind":"SATELLITE_NOT_REPRESENTABLE","system":"G","prn":100}),
+            ),
+            (
+                CoreSp3WriteError::EpochArrayLengthMismatch {
+                    field: "clocks",
+                    epochs: 14,
+                    entries: 13,
+                },
+                serde_json::json!({"kind":"EPOCH_ARRAY_LENGTH_MISMATCH","field":"clocks","epochs":14,"entries":13}),
+            ),
+            (
+                CoreSp3WriteError::UndeclaredSatelliteRecord {
+                    sat: satellite,
+                    epoch_index: 15,
+                },
+                serde_json::json!({"kind":"UNDECLARED_SATELLITE_RECORD","satellite":"G07","epochIndex":15}),
+            ),
+            (
+                CoreSp3WriteError::ConflictingRecords {
+                    sat: satellite,
+                    epoch_index: 16,
+                },
+                serde_json::json!({"kind":"CONFLICTING_RECORDS","satellite":"G07","epochIndex":16}),
+            ),
+            (
+                CoreSp3WriteError::VelocityStateInPositionProduct {
+                    field: "velocity x",
+                    sat: satellite,
+                    epoch_index: 17,
+                },
+                serde_json::json!({"kind":"VELOCITY_STATE_IN_POSITION_PRODUCT","field":"velocity x","satellite":"G07","epochIndex":17}),
+            ),
+            (
+                CoreSp3WriteError::RecordValueNonFinite {
+                    field: "clock",
+                    sat: satellite,
+                    epoch_index: 18,
+                },
+                serde_json::json!({"kind":"RECORD_VALUE_NON_FINITE","field":"clock","satellite":"G07","epochIndex":18}),
+            ),
+            (
+                CoreSp3WriteError::RecordValueTooWide {
+                    field: "position x",
+                    sat: satellite,
+                    epoch_index: 19,
+                    columns: 14,
+                    decimals: 6,
+                    column_value: 123_456_789.25,
+                },
+                serde_json::json!({"kind":"RECORD_VALUE_TOO_WIDE","field":"position x","satellite":"G07","epochIndex":19,"columns":14,"decimals":6,"columnValue":123456789.25}),
+            ),
+            (
+                CoreSp3WriteError::RecordValueNotRepresentable {
+                    field: "clock",
+                    sat: satellite,
+                    epoch_index: 20,
+                    columns: 14,
+                    decimals: 6,
+                    stored: 0.000_001_25,
+                    column_value: 1.250_000_01,
+                },
+                serde_json::json!({"kind":"RECORD_VALUE_NOT_REPRESENTABLE","field":"clock","satellite":"G07","epochIndex":20,"columns":14,"decimals":6,"stored":0.00000125,"columnValue":1.25000001}),
+            ),
+            (
+                CoreSp3WriteError::RecordReadsAsAbsent {
+                    field: "clock",
+                    sat: satellite,
+                    epoch_index: 21,
+                    column_value: 999_999.999_999,
+                },
+                serde_json::json!({"kind":"RECORD_READS_AS_ABSENT","field":"clock","satellite":"G07","epochIndex":21,"columnValue":999999.999999}),
+            ),
+            (
+                CoreSp3WriteError::RecordFieldsDisagree {
+                    field: "velocity y",
+                    sat: satellite,
+                    epoch_index: 22,
+                    stored: Some(-0.0),
+                    native: None,
+                },
+                serde_json::json!({"kind":"RECORD_FIELDS_DISAGREE","field":"velocity y","satellite":"G07","epochIndex":22,"stored":-0.0,"native":null}),
+            ),
+        ];
+
+        assert_eq!(cases.len(), 29);
+        for (error, expected) in cases {
+            assert_complete_mapping(error, expected);
+        }
+
+        assert_complete_mapping(
+            CoreSp3WriteError::EpochNotRestatable {
+                epoch_index: 23,
+                field_seconds: 0.0,
+                residual_s: f64::NAN,
+            },
+            serde_json::json!({"kind":"EPOCH_NOT_RESTATABLE","epochIndex":23,"fieldSeconds":0.0,"residualS":null}),
+        );
+        assert_complete_mapping(
+            CoreSp3WriteError::RecordFieldsDisagree {
+                field: "clock rate",
+                sat: satellite,
+                epoch_index: 24,
+                stored: None,
+                native: Some(-2.5),
+            },
+            serde_json::json!({"kind":"RECORD_FIELDS_DISAGREE","field":"clock rate","satellite":"G07","epochIndex":24,"stored":null,"native":-2.5}),
+        );
     }
 }

@@ -1591,6 +1591,207 @@ pub fn parse_tdm_kvn_with_policy(
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tdm_error_detail_all_variants_and_payloads_are_exact() {
+        let cases: Vec<(CoreTdmError, &str, serde_json::Value)> = vec![
+            (
+                CoreTdmError::NoSegments,
+                "NO_SEGMENTS",
+                serde_json::json!({}),
+            ),
+            (
+                CoreTdmError::Section {
+                    line: 5,
+                    detail: "unexpected section",
+                },
+                "SECTION",
+                serde_json::json!({"line":5,"detail":"unexpected section"}),
+            ),
+            (
+                CoreTdmError::MalformedLine {
+                    line: 12,
+                    text: "NOT A LINE".into(),
+                },
+                "MALFORMED_LINE",
+                serde_json::json!({"line":12,"text":"NOT A LINE"}),
+            ),
+            (
+                CoreTdmError::NonPrintableCharacter {
+                    line: Some(8),
+                    keyword: "COMMENT".into(),
+                    column: 4,
+                    character: '\x07',
+                },
+                "NON_PRINTABLE_CHARACTER",
+                serde_json::json!({"line":8,"keyword":"COMMENT","column":4,"character":"\u{7}"}),
+            ),
+            (
+                CoreTdmError::LineTooLong {
+                    line: None,
+                    keyword: "DATA".into(),
+                    length: 255,
+                },
+                "LINE_TOO_LONG",
+                serde_json::json!({"line":null,"keyword":"DATA","length":255}),
+            ),
+            (
+                CoreTdmError::MalformedEpoch {
+                    line: Some(10),
+                    keyword: "RECEIVE_FREQ".into(),
+                    text: "bad-epoch".into(),
+                },
+                "MALFORMED_EPOCH",
+                serde_json::json!({"line":10,"keyword":"RECEIVE_FREQ","text":"bad-epoch"}),
+            ),
+            (
+                CoreTdmError::RecordsOutOfOrder {
+                    segment: 1,
+                    keyword: "RANGE".into(),
+                    epoch: "2026-01-01T00:00:00".into(),
+                },
+                "RECORDS_OUT_OF_ORDER",
+                serde_json::json!({"segment":1,"keyword":"RANGE","epoch":"2026-01-01T00:00:00"}),
+            ),
+            (
+                CoreTdmError::DuplicateRecord {
+                    segment: 2,
+                    keyword: "DOPPLER".into(),
+                    epoch: "2026-01-01T00:00:00".into(),
+                },
+                "DUPLICATE_RECORD",
+                serde_json::json!({"segment":2,"keyword":"DOPPLER","epoch":"2026-01-01T00:00:00"}),
+            ),
+            (
+                CoreTdmError::UnterminatedFinalLine { line: 99 },
+                "UNTERMINATED_FINAL_LINE",
+                serde_json::json!({"line":99}),
+            ),
+            (
+                CoreTdmError::Unwritable {
+                    keyword: "COMMENT".into(),
+                    reason: "non-ascii",
+                },
+                "UNWRITABLE",
+                serde_json::json!({"keyword":"COMMENT","reason":"non-ascii"}),
+            ),
+            (
+                CoreTdmError::KeywordOutOfOrder {
+                    line: Some(14),
+                    keyword: "MODE".into(),
+                    section: "metadata",
+                },
+                "KEYWORD_OUT_OF_ORDER",
+                serde_json::json!({"line":14,"keyword":"MODE","section":"metadata"}),
+            ),
+            (
+                CoreTdmError::UndefinedParticipant {
+                    segment: 1,
+                    keyword: "PATH".into(),
+                    index: 3,
+                },
+                "UNDEFINED_PARTICIPANT",
+                serde_json::json!({"segment":1,"keyword":"PATH","index":3}),
+            ),
+            (
+                CoreTdmError::ConflictingKeyword {
+                    line: Some(6),
+                    keyword: "TIME_SYSTEM".into(),
+                    section: "metadata",
+                    first: "UTC".into(),
+                    second: "TAI".into(),
+                },
+                "CONFLICTING_KEYWORD",
+                serde_json::json!({"line":6,"keyword":"TIME_SYSTEM","section":"metadata","first":"UTC","second":"TAI"}),
+            ),
+            (
+                CoreTdmError::RepeatedKeyword {
+                    line: None,
+                    keyword: "START_TIME".into(),
+                    section: "metadata",
+                },
+                "REPEATED_KEYWORD",
+                serde_json::json!({"line":null,"keyword":"START_TIME","section":"metadata"}),
+            ),
+            (
+                CoreTdmError::UndefinedKeyword {
+                    line: 22,
+                    keyword: "UNKNOWN_KW".into(),
+                    section: "header",
+                },
+                "UNDEFINED_KEYWORD",
+                serde_json::json!({"line":22,"keyword":"UNKNOWN_KW","section":"header"}),
+            ),
+            (
+                CoreTdmError::MissingKeyword {
+                    keyword: "TIME_SYSTEM".into(),
+                    segment: Some(1),
+                },
+                "MISSING_KEYWORD",
+                serde_json::json!({"keyword":"TIME_SYSTEM","segment":1}),
+            ),
+            (
+                CoreTdmError::EmptyDataSection { segment: 1 },
+                "EMPTY_DATA_SECTION",
+                serde_json::json!({"segment":1}),
+            ),
+            (
+                CoreTdmError::EmptyValue {
+                    line: None,
+                    keyword: "PARTICIPANT_2".into(),
+                },
+                "EMPTY_VALUE",
+                serde_json::json!({"line":null,"keyword":"PARTICIPANT_2"}),
+            ),
+            (
+                CoreTdmError::InvalidVersion {
+                    line: Some(1),
+                    value: "3.0".into(),
+                },
+                "INVALID_VERSION",
+                serde_json::json!({"line":1,"value":"3.0"}),
+            ),
+            (
+                CoreTdmError::KeywordNotAssignable {
+                    keyword: "DATA_START".into(),
+                },
+                "KEYWORD_NOT_ASSIGNABLE",
+                serde_json::json!({"keyword":"DATA_START"}),
+            ),
+            (
+                CoreTdmError::MalformedRecord {
+                    line: 33,
+                    keyword: "RECEIVE_FREQ".into(),
+                },
+                "MALFORMED_RECORD",
+                serde_json::json!({"line":33,"keyword":"RECEIVE_FREQ"}),
+            ),
+            (
+                CoreTdmError::InvalidField {
+                    keyword: "TRANSMIT_FREQ".into(),
+                    kind: TdmInputErrorKind::NotPositive,
+                },
+                "INVALID_FIELD",
+                serde_json::json!({"keyword":"TRANSMIT_FREQ","inputErrorKind":"NOT_POSITIVE"}),
+            ),
+        ];
+
+        assert_eq!(cases.len(), 22);
+        for (error, expected_kind, expected_fields) in cases {
+            let expected_message = error.to_string();
+            let detail = serde_json::to_value(TdmErrorDetailJs::from_core(error)).unwrap();
+            assert_eq!(detail["kind"], expected_kind);
+            assert_eq!(detail["message"], expected_message);
+            for (field, expected) in expected_fields.as_object().unwrap() {
+                assert_eq!(&detail[field], expected, "field {field} of {expected_kind}");
+            }
+        }
+    }
+}
+
 // --- TypeScript declarations -------------------------------------------------
 
 // The plain-object shapes the TDM entry points take and return, and the names

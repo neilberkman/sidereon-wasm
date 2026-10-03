@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseTleFile, GroundStation } from "../pkg-node/sidereon.js";
+import { parseTleFile, Tle, GroundStation } from "../pkg-node/sidereon.js";
 
 // Valid ISS element set, reused as both a named (3-line) and a bare (2-line) record.
 const L1 = "1 25544U 98067A   18184.80969102  .00001614  00000-0  31745-4 0  9993";
@@ -17,6 +17,9 @@ const L2 = "2 25544  51.6414 295.8524 0003435 262.6267 204.2868 15.5400563812110
 // so SGP4 init fails -> counted in `skipped`, not thrown.
 const BAD_L1 = "1 00001U 00000A   18184.80969102  .00000000  00000-0  00000-0 0  0001";
 const BAD_L2 = "2 00001 not a valid line two";
+
+const DS_L1 = "1 23599U 95029B   06171.76535463  .00085586  12891-6  12956-2 0  2905";
+const DS_L2 = "2 23599   6.9327   0.2849 5782022 274.4436  25.2425  4.47796565123555";
 
 const FILE = [
   "ISS (ZARYA)",
@@ -59,6 +62,29 @@ test("parseTleFile parses names, skips malformed, and returns usable Tles", () =
   assert.ok(Number.isFinite(look.azimuthDeg[0]));
   assert.ok(Number.isFinite(look.elevationDeg[0]));
   assert.ok(look.rangeKm[0] > 0);
+});
+
+test("parseTleFile preserves explicit AFSPC mode through propagation", () => {
+  const parsed = parseTleFile(["OPS MODE PROBE", DS_L1, DS_L2].join("\n"), "afspc");
+  assert.equal(parsed.count, 1);
+  assert.equal(parsed.satellites[0].name, "OPS MODE PROBE");
+
+  const epoch = BigInt64Array.of(1_150_870_926_640_032n);
+  const fromFile = parsed.satellites[0].tle;
+  const direct = new Tle(DS_L1, DS_L2, "afspc");
+  const fileState = fromFile.propagate(epoch);
+  const directState = direct.propagate(epoch);
+
+  assert.deepEqual(fromFile.toLines(), direct.toLines());
+  assert.deepEqual(fileState.positionKm, directState.positionKm);
+  assert.deepEqual(fileState.velocityKmS, directState.velocityKmS);
+
+  const improvedState = new Tle(DS_L1, DS_L2, "improved").propagate(epoch);
+  assert.notDeepEqual(
+    fileState.positionKm,
+    improvedState.positionKm,
+    "deep-space AFSPC propagation unexpectedly matched improved mode",
+  );
 });
 
 test("parseTleFile strips the CelesTrak '0 ' name marker", () => {

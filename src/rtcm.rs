@@ -46,6 +46,225 @@ fn rtcm_policy(label: Option<String>) -> Result<RtcmPolicy, JsValue> {
     }
 }
 
+#[cfg(test)]
+mod rtcm_encode_error_contract_tests {
+    use super::rtcm_encode_error_payload;
+    use sidereon_core::rtcm::{
+        MsmKind, MsmMaskProblem, MsmOptionalField, MsmOptionalProblem, RtcmDeparture,
+        RtcmEncodeError as Encode, RtcmFieldEncoding, RtcmRecordKind, SsrKind,
+    };
+
+    #[test]
+    fn every_rtcm_encode_variant_and_field_has_the_documented_js_detail() {
+        let departure = RtcmDeparture::FrameReservedBits { reserved: 5 };
+        let departure_message = departure.to_string();
+        let cases = vec![
+            (
+                Encode::FieldOutOfRange {
+                    message_number: 1005,
+                    field: "ecef_x".into(),
+                    value: -2,
+                    width: 38,
+                    encoding: RtcmFieldEncoding::TwosComplement,
+                },
+                serde_json::json!({"kind":"fieldOutOfRange","messageNumber":1005,"field":"ecef_x","value":"-2","width":38,"encoding":"twosComplement"}),
+            ),
+            (
+                Encode::NegativeZeroWithValue {
+                    message_number: 1020,
+                    field: "tau_n".into(),
+                    value: 7,
+                },
+                serde_json::json!({"kind":"negativeZeroWithValue","messageNumber":1020,"field":"tau_n","value":7}),
+            ),
+            (
+                Encode::NegativeZeroMask {
+                    message_number: 1020,
+                    mask: 9,
+                },
+                serde_json::json!({"kind":"negativeZeroMask","messageNumber":1020,"mask":9}),
+            ),
+            (
+                Encode::MessageNumber {
+                    message_number: 999,
+                    record: RtcmRecordKind::StationCoordinates,
+                },
+                serde_json::json!({"kind":"messageNumber","messageNumber":999,"record":{"kind":"stationCoordinates"}}),
+            ),
+            (
+                Encode::FieldPresence {
+                    message_number: 1005,
+                    record: RtcmRecordKind::StationCoordinates,
+                    field: "antenna_height",
+                    carried: false,
+                },
+                serde_json::json!({"kind":"fieldPresence","messageNumber":1005,"record":{"kind":"stationCoordinates"},"field":"antenna_height","carried":false}),
+            ),
+            (
+                Encode::SatelliteFieldPresence {
+                    message_number: 1074,
+                    record: RtcmRecordKind::Msm {
+                        system: sidereon_core::GnssSystem::Gps,
+                        kind: MsmKind::Msm4,
+                    },
+                    satellite: 7,
+                    field: "extended_info",
+                    carried: false,
+                },
+                serde_json::json!({"kind":"satelliteFieldPresence","messageNumber":1074,"record":{"kind":"msm","system":"GPS","messageKind":"msm4"},"satellite":7,"field":"extended_info","carried":false}),
+            ),
+            (
+                Encode::CountMismatch {
+                    message_number: 1015,
+                    field: "satellites",
+                    expected: 2,
+                    actual: 1,
+                },
+                serde_json::json!({"kind":"countMismatch","messageNumber":1015,"field":"satellites","expected":2,"actual":1}),
+            ),
+            (
+                Encode::ValueOutOfRange {
+                    message_number: 1005,
+                    field: "itrf".into(),
+                    value: 64,
+                    minimum: 0,
+                    maximum: 63,
+                },
+                serde_json::json!({"kind":"valueOutOfRange","messageNumber":1005,"field":"itrf","value":"64","minimum":"0","maximum":"63"}),
+            ),
+            (
+                Encode::NonLatin1Character {
+                    field: "descriptor".into(),
+                    character: 'λ',
+                },
+                serde_json::json!({"kind":"nonLatin1Character","field":"descriptor","character":"λ"}),
+            ),
+            (
+                Encode::SatelliteIdOutOfRange {
+                    message_number: 1019,
+                    field: "GPS PRN",
+                    value: 64,
+                    width: 6,
+                },
+                serde_json::json!({"kind":"satelliteIdOutOfRange","messageNumber":1019,"field":"GPS PRN","value":64,"width":6}),
+            ),
+            (
+                Encode::SsrSatelliteIdOutOfRange {
+                    message_number: 1057,
+                    value: 64,
+                    width: 6,
+                },
+                serde_json::json!({"kind":"ssrSatelliteIdOutOfRange","messageNumber":1057,"value":64,"width":6}),
+            ),
+            (
+                Encode::SsrRecordsNotCarried {
+                    message_number: 1058,
+                    kind: SsrKind::Clock,
+                    records: "orbit",
+                    count: 2,
+                },
+                serde_json::json!({"kind":"ssrRecordsNotCarried","messageNumber":1058,"ssrKind":"clock","records":"orbit","count":2}),
+            ),
+            (
+                Encode::SsrCombinedRecordCounts {
+                    message_number: 1060,
+                    orbit: 2,
+                    clock: 1,
+                },
+                serde_json::json!({"kind":"ssrCombinedRecordCounts","messageNumber":1060,"orbit":2,"clock":1}),
+            ),
+            (
+                Encode::SsrCombinedSatelliteMismatch {
+                    message_number: 1060,
+                    index: 1,
+                    orbit_satellite: 4,
+                    clock_satellite: 5,
+                },
+                serde_json::json!({"kind":"ssrCombinedSatelliteMismatch","messageNumber":1060,"index":1,"orbitSatellite":4,"clockSatellite":5}),
+            ),
+            (
+                Encode::SsrHighRateClockTerms {
+                    message_number: 1062,
+                    satellite: 3,
+                    c1: -4,
+                    c2: 5,
+                },
+                serde_json::json!({"kind":"ssrHighRateClockTerms","messageNumber":1062,"satellite":3,"c1":-4,"c2":5}),
+            ),
+            (
+                Encode::SsrSatelliteCount {
+                    message_number: 1057,
+                    declared: 2,
+                    records: 1,
+                },
+                serde_json::json!({"kind":"ssrSatelliteCount","messageNumber":1057,"declared":2,"records":1}),
+            ),
+            (
+                Encode::MsmMask {
+                    message_number: 1074,
+                    problem: MsmMaskProblem::SignalNotInMask { signal: 3, mask: 5 },
+                },
+                serde_json::json!({"kind":"msmMask","messageNumber":1074,"problem":{"kind":"signalNotInMask","signal":3,"mask":5}}),
+            ),
+            (
+                Encode::MsmOptional {
+                    message_number: 1077,
+                    kind: MsmKind::Msm7,
+                    satellite: 4,
+                    signal: Some(6),
+                    field: MsmOptionalField::FinePhaseRangeRate,
+                    problem: MsmOptionalProblem::InvalidValue(-16384),
+                },
+                serde_json::json!({"kind":"msmOptional","messageNumber":1077,"messageKind":"msm7","satellite":4,"signal":6,"field":"finePhaseRangeRate","problem":{"kind":"invalidValue","value":-16384}}),
+            ),
+            (
+                Encode::TrailingZeroBits {
+                    message_number: 1006,
+                    bits: 3,
+                },
+                serde_json::json!({"kind":"trailingZeroBits","messageNumber":1006,"bits":3}),
+            ),
+            (
+                Encode::StrictDeparture(departure),
+                serde_json::json!({"kind":"strictDeparture","departure":{"kind":"frameReservedBits","message":departure_message,"reserved":5}}),
+            ),
+            (
+                Encode::UnsupportedBodyTooShort {
+                    message_number: 4090,
+                },
+                serde_json::json!({"kind":"unsupportedBodyTooShort","messageNumber":4090}),
+            ),
+            (
+                Encode::UnsupportedBodyNumber {
+                    message_number: 4090,
+                    carried: 4089,
+                },
+                serde_json::json!({"kind":"unsupportedBodyNumber","messageNumber":4090,"carried":4089}),
+            ),
+            (
+                Encode::UnsupportedDecodedNumber {
+                    message_number: 4090,
+                },
+                serde_json::json!({"kind":"unsupportedDecodedNumber","messageNumber":4090}),
+            ),
+            (
+                Encode::FrameBodyTooLong { len: 1024 },
+                serde_json::json!({"kind":"frameBodyTooLong","len":1024}),
+            ),
+            (
+                Encode::FrameReservedOutOfRange { value: 64 },
+                serde_json::json!({"kind":"frameReservedOutOfRange","value":64}),
+            ),
+        ];
+
+        assert_eq!(cases.len(), 25);
+        for (error, expected) in cases {
+            assert_eq!(rtcm_encode_error_payload(&error), expected);
+            assert!(!error.to_string().is_empty());
+        }
+    }
+}
+
 /// A departure from RTCM 3, as `{ kind, message, messageNumber?, ... }`.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

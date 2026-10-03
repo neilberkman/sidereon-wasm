@@ -1418,3 +1418,343 @@ export interface RinexLintReport {
     findings: RinexLintFinding[];
 }
 "#;
+
+#[cfg(test)]
+mod finding_detail_conversion_tests {
+    use super::*;
+    use serde_json::json;
+    use sidereon_core::astro::time::TimeScale;
+    use sidereon_core::{GnssSatelliteId, GnssSystem};
+
+    #[test]
+    fn all_forty_variants_preserve_payload_fields_and_five_methods() {
+        let at = FindingRef {
+            epoch_index: Some(7),
+            satellite: Some("G09".into()),
+            field: Some("SYS / # / OBS TYPES"),
+        };
+        let epoch = ObsEpochTime {
+            year: 2024,
+            month: 2,
+            day: 3,
+            hour: 4,
+            minute: 5,
+            second: 6.25,
+        };
+        let sat = GnssSatelliteId::new(GnssSystem::Gps, 9).unwrap();
+        let cases: Vec<(Finding, serde_json::Value)> = vec![
+            (
+                Finding::ObsFatalParse {
+                    at: at.clone(),
+                    message: "m01".into(),
+                },
+                json!({"kind":"OBS_FATAL_PARSE","message":"m01"}),
+            ),
+            (
+                Finding::ObsUnpublishedVersion {
+                    at: at.clone(),
+                    version: 9.125,
+                },
+                json!({"kind":"OBS_UNPUBLISHED_VERSION","version":9.125}),
+            ),
+            (
+                Finding::ObsMissingHeader {
+                    at: at.clone(),
+                    label: "L03",
+                },
+                json!({"kind":"OBS_MISSING_HEADER","label":"L03"}),
+            ),
+            (
+                Finding::ObsMissingObsTypes { at: at.clone() },
+                json!({"kind":"OBS_MISSING_OBS_TYPES"}),
+            ),
+            (
+                Finding::ObsInvalidObsCode {
+                    at: at.clone(),
+                    system: GnssSystem::Gps,
+                    code: "C1Z".into(),
+                },
+                json!({"kind":"OBS_INVALID_OBS_CODE","system":"GPS","code":"C1Z"}),
+            ),
+            (
+                Finding::ObsDuplicateObsCode {
+                    at: at.clone(),
+                    system: GnssSystem::Gps,
+                    code: "L1C".into(),
+                },
+                json!({"kind":"OBS_DUPLICATE_OBS_CODE","system":"GPS","code":"L1C"}),
+            ),
+            (
+                Finding::ObsTimeOfFirstMismatch {
+                    at: at.clone(),
+                    declared: epoch,
+                    declared_scale: TimeScale::Gpst,
+                    observed: epoch,
+                    observed_scale: TimeScale::Utc,
+                },
+                json!({"kind":"OBS_TIME_OF_FIRST_MISMATCH","declared":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25},"declaredScale":"gpst","observed":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25},"observedScale":"utc"}),
+            ),
+            (
+                Finding::ObsTimeOfLastMismatch {
+                    at: at.clone(),
+                    declared: epoch,
+                    declared_scale: TimeScale::Gpst,
+                    observed: epoch,
+                    observed_scale: TimeScale::Utc,
+                },
+                json!({"kind":"OBS_TIME_OF_LAST_MISMATCH","declared":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25},"declaredScale":"gpst","observed":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25},"observedScale":"utc"}),
+            ),
+            (
+                Finding::ObsIntervalMismatch {
+                    at: at.clone(),
+                    declared_s: 9.5,
+                    observed_s: 10.5,
+                },
+                json!({"kind":"OBS_INTERVAL_MISMATCH","declaredS":9.5,"observedS":10.5}),
+            ),
+            (
+                Finding::ObsSatelliteCountMismatch {
+                    at: at.clone(),
+                    declared: 11,
+                    observed: 12,
+                },
+                json!({"kind":"OBS_SATELLITE_COUNT_MISMATCH","declared":11,"observed":12}),
+            ),
+            (
+                Finding::ObsPrnObsCountMismatch {
+                    at: at.clone(),
+                    satellite: sat,
+                    code: "C1C".into(),
+                    declared: Some(13),
+                    observed: 14,
+                },
+                json!({"kind":"OBS_PRN_OBS_COUNT_MISMATCH","satellite":"G09","code":"C1C","declared":13,"observed":14}),
+            ),
+            (
+                Finding::ObsGlonassSlotIssue {
+                    at: at.clone(),
+                    satellite: sat,
+                    issue: "missing slot",
+                },
+                json!({"kind":"OBS_GLONASS_SLOT_ISSUE","satellite":"G09","issue":"missing slot"}),
+            ),
+            (
+                Finding::ObsPhaseShiftUndeclaredCode {
+                    at: at.clone(),
+                    system: GnssSystem::Gps,
+                    code: "L1C".into(),
+                },
+                json!({"kind":"OBS_PHASE_SHIFT_UNDECLARED_CODE","system":"GPS","code":"L1C"}),
+            ),
+            (
+                Finding::ObsScaleFactorIssue {
+                    at: at.clone(),
+                    system: GnssSystem::Gps,
+                    code: Some("C1C".into()),
+                },
+                json!({"kind":"OBS_SCALE_FACTOR_ISSUE","system":"GPS","code":"C1C"}),
+            ),
+            (
+                Finding::ObsMarkerTypeIssue {
+                    at: at.clone(),
+                    marker_type: "M15".into(),
+                },
+                json!({"kind":"OBS_MARKER_TYPE_ISSUE","markerType":"M15"}),
+            ),
+            (
+                Finding::ObsIdentityFieldIssue {
+                    at: at.clone(),
+                    label: "L16",
+                    value: "V16".into(),
+                },
+                json!({"kind":"OBS_IDENTITY_FIELD_ISSUE","label":"L16","value":"V16"}),
+            ),
+            (
+                Finding::ObsImplausibleApproxPosition {
+                    at: at.clone(),
+                    radius_m: 17.5,
+                },
+                json!({"kind":"OBS_IMPLAUSIBLE_APPROX_POSITION","radiusM":17.5}),
+            ),
+            (
+                Finding::ObsImplausibleAntennaDelta {
+                    at: at.clone(),
+                    component: 18,
+                    value_m: 19.5,
+                },
+                json!({"kind":"OBS_IMPLAUSIBLE_ANTENNA_DELTA","component":18,"valueM":19.5}),
+            ),
+            (
+                Finding::ObsEpochOrder {
+                    at: at.clone(),
+                    previous: epoch,
+                    current: epoch,
+                },
+                json!({"kind":"OBS_EPOCH_ORDER","previous":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25},"current":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25}}),
+            ),
+            (
+                Finding::ObsDuplicateEpoch {
+                    at: at.clone(),
+                    epoch,
+                },
+                json!({"kind":"OBS_DUPLICATE_EPOCH","epoch":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25}}),
+            ),
+            (
+                Finding::ObsSkippedRecords {
+                    at: at.clone(),
+                    count: 21,
+                },
+                json!({"kind":"OBS_SKIPPED_RECORDS","count":21}),
+            ),
+            (
+                Finding::ObsEpochSatCountMismatch {
+                    at: at.clone(),
+                    declared: 22,
+                    retained: 23,
+                },
+                json!({"kind":"OBS_EPOCH_SAT_COUNT_MISMATCH","declared":22,"retained":23}),
+            ),
+            (
+                Finding::ObsUnretainedHeader {
+                    at: at.clone(),
+                    label: "L24".into(),
+                },
+                json!({"kind":"OBS_UNRETAINED_HEADER","label":"L24"}),
+            ),
+            (
+                Finding::ObsPseudorangeOutOfRange {
+                    at: at.clone(),
+                    code: "C1C".into(),
+                    value_m: 25.5,
+                },
+                json!({"kind":"OBS_PSEUDORANGE_OUT_OF_RANGE","code":"C1C","valueM":25.5}),
+            ),
+            (
+                Finding::ObsLossOfLockOutOfRange {
+                    at: at.clone(),
+                    code: "L1C".into(),
+                    lli: 26,
+                },
+                json!({"kind":"OBS_LOSS_OF_LOCK_OUT_OF_RANGE","code":"L1C","lli":26}),
+            ),
+            (
+                Finding::ObsEventHeaderUnreadable {
+                    at: at.clone(),
+                    message: "m27".into(),
+                },
+                json!({"kind":"OBS_EVENT_HEADER_UNREADABLE","message":"m27"}),
+            ),
+            (
+                Finding::ObsEventEpoch {
+                    at: at.clone(),
+                    flag: 28,
+                },
+                json!({"kind":"OBS_EVENT_EPOCH","flag":28}),
+            ),
+            (
+                Finding::ObsEmptySatelliteRecord { at: at.clone() },
+                json!({"kind":"OBS_EMPTY_SATELLITE_RECORD"}),
+            ),
+            (
+                Finding::ObsEpochGap {
+                    at: at.clone(),
+                    gap_s: 29.5,
+                    interval_s: 30.5,
+                },
+                json!({"kind":"OBS_EPOCH_GAP","gapS":29.5,"intervalS":30.5}),
+            ),
+            (
+                Finding::NavFatalParse {
+                    at: at.clone(),
+                    message: "m31".into(),
+                },
+                json!({"kind":"NAV_FATAL_PARSE","message":"m31"}),
+            ),
+            (
+                Finding::NavLeapSecondsAbsent { at: at.clone() },
+                json!({"kind":"NAV_LEAP_SECONDS_ABSENT"}),
+            ),
+            (
+                Finding::NavIonoMalformed {
+                    at: at.clone(),
+                    message: "m33".into(),
+                },
+                json!({"kind":"NAV_IONO_MALFORMED","message":"m33"}),
+            ),
+            (
+                Finding::NavDroppedBlock {
+                    at: at.clone(),
+                    satellite: "G09".into(),
+                    message: "m34".into(),
+                },
+                json!({"kind":"NAV_DROPPED_BLOCK","satellite":"G09","message":"m34"}),
+            ),
+            (
+                Finding::NavDuplicateRecord {
+                    at: at.clone(),
+                    satellite: sat,
+                    same_payload: true,
+                },
+                json!({"kind":"NAV_DUPLICATE_RECORD","satellite":"G09","samePayload":true}),
+            ),
+            (
+                Finding::NavUnsortedRecords { at: at.clone() },
+                json!({"kind":"NAV_UNSORTED_RECORDS"}),
+            ),
+            (
+                Finding::NavImplausibleRecord {
+                    at: at.clone(),
+                    satellite: sat,
+                    field: "F37",
+                    value: 37.5,
+                },
+                json!({"kind":"NAV_IMPLAUSIBLE_RECORD","satellite":"G09","field":"F37","value":37.5}),
+            ),
+            (
+                Finding::NavUnhealthyRecords {
+                    at: at.clone(),
+                    system: GnssSystem::Gps,
+                    count: 38,
+                },
+                json!({"kind":"NAV_UNHEALTHY_RECORDS","system":"GPS","count":38}),
+            ),
+            (
+                Finding::NavOutOfScopeRecords {
+                    at: at.clone(),
+                    class: "C39".into(),
+                    count: 39,
+                },
+                json!({"kind":"NAV_OUT_OF_SCOPE_RECORDS","class":"C39","count":39}),
+            ),
+            (
+                Finding::ObsIntervalUnavailable { at: at.clone() },
+                json!({"kind":"OBS_INTERVAL_UNAVAILABLE"}),
+            ),
+            (
+                Finding::ObsInvalidInterval {
+                    at,
+                    declared_s: 40.5,
+                },
+                json!({"kind":"OBS_INVALID_INTERVAL","declaredS":40.5}),
+            ),
+        ];
+        assert_eq!(cases.len(), 40);
+        for (finding, expected) in cases {
+            let binding = finding_js(&finding);
+            assert_eq!(
+                serde_json::to_value(&binding.detail).unwrap(),
+                expected,
+                "{}",
+                finding.code()
+            );
+            assert_eq!(binding.code, finding.code());
+            assert_eq!(binding.severity, severity_label(finding.severity()));
+            assert_eq!(binding.spec_ref, finding.spec_ref());
+            assert_eq!(binding.repairable, finding.is_repairable());
+            assert_eq!(
+                serde_json::to_value(&binding.at).unwrap(),
+                json!({"epochIndex":7,"satellite":"G09","field":"SYS / # / OBS TYPES"})
+            );
+        }
+    }
+}

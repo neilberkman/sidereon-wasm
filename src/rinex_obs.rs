@@ -2035,3 +2035,298 @@ export interface RinexObsDowngrade {
   changes: ObsDowngradeChange[];
 }
 "#;
+
+#[cfg(test)]
+mod writer_contract_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn satellite(system: CoreGnssSystem, prn: u8) -> GnssSatelliteId {
+        GnssSatelliteId { system, prn }
+    }
+
+    #[test]
+    fn every_writer_error_variant_maps_to_literal_detail_and_display() {
+        let cases: Vec<(CoreRinexObsWriteError, serde_json::Value, &str)> = vec![
+            (
+                CoreRinexObsWriteError::CodeListsNotVersionTwo {
+                    system: CoreGnssSystem::Gps,
+                    position: 2,
+                    code: Some("C1C".into()),
+                },
+                serde_json::json!({"kind":"CODE_LISTS_NOT_VERSION_TWO","system":"G","position":2,"code":"C1C","message":"RINEX OBS version 2 has no observation type that every constellation reads back as its own code at position 2, where GPS holds \"C1C\""}),
+                "RINEX OBS version 2 has no observation type that every constellation reads back as its own code at position 2, where GPS holds \"C1C\"",
+            ),
+            (
+                CoreRinexObsWriteError::CodeListsNotVersionTwo {
+                    system: CoreGnssSystem::Galileo,
+                    position: 1,
+                    code: None,
+                },
+                serde_json::json!({"kind":"CODE_LISTS_NOT_VERSION_TWO","system":"E","position":1,"code":null,"message":"RINEX OBS version 2 names one list of codes for every constellation, and Galileo holds 1 codes where another constellation holds a different number"}),
+                "RINEX OBS version 2 names one list of codes for every constellation, and Galileo holds 1 codes where another constellation holds a different number",
+            ),
+            (
+                CoreRinexObsWriteError::NotVersionTwo { version: 3.5 },
+                serde_json::json!({"kind":"NOT_VERSION_TWO","version":3.5,"message":"RINEX OBS version 3.5 is not a version 2"}),
+                "RINEX OBS version 3.5 is not a version 2",
+            ),
+            (
+                CoreRinexObsWriteError::ScaleFactorsInVersionTwo { count: 2 },
+                serde_json::json!({"kind":"SCALE_FACTORS_IN_VERSION_TWO","count":2,"message":"RINEX OBS version 2 would carry 2 SYS / SCALE FACTOR records, which version 2 readers that do not apply them read as physical values; downgrade_to_rinex2 removes them"}),
+                "RINEX OBS version 2 would carry 2 SYS / SCALE FACTOR records, which version 2 readers that do not apply them read as physical values; downgrade_to_rinex2 removes them",
+            ),
+            (
+                CoreRinexObsWriteError::ValuesWithoutCodes {
+                    epoch_index: 3,
+                    satellite: satellite(CoreGnssSystem::Galileo, 7),
+                    codes: 2,
+                    values: 4,
+                },
+                serde_json::json!({"kind":"VALUES_WITHOUT_CODES","epochIndex":3,"satellite":"E07","codes":2,"values":4,"message":"RINEX OBS epoch 3 satellite E07 holds 4 values for 2 observation codes"}),
+                "RINEX OBS epoch 3 satellite E07 holds 4 values for 2 observation codes",
+            ),
+            (
+                CoreRinexObsWriteError::CountsWithoutCodes {
+                    satellite: satellite(CoreGnssSystem::Gps, 12),
+                    codes: 2,
+                    counts: 3,
+                },
+                serde_json::json!({"kind":"COUNTS_WITHOUT_CODES","satellite":"G12","codes":2,"counts":3,"message":"RINEX OBS PRN / # OF OBS for G12 holds 3 counts for 2 observation codes"}),
+                "RINEX OBS PRN / # OF OBS for G12 holds 3 counts for 2 observation codes",
+            ),
+            (
+                CoreRinexObsWriteError::CodeListNotStated { system: CoreGnssSystem::BeiDou },
+                serde_json::json!({"kind":"CODE_LIST_NOT_STATED","system":"C","message":"RINEX OBS version 2 would not state BeiDou's code list: no observation or PRN / # OF OBS count names BeiDou, so a reader builds no list for it, and the type names do not read as it; downgrade_to_rinex2 removes the list"}),
+                "RINEX OBS version 2 would not state BeiDou's code list: no observation or PRN / # OF OBS count names BeiDou, so a reader builds no list for it, and the type names do not read as it; downgrade_to_rinex2 removes the list",
+            ),
+            (
+                CoreRinexObsWriteError::EpochFlagTooWide { epoch_index: 4, flag: 12 },
+                serde_json::json!({"kind":"EPOCH_FLAG_TOO_WIDE","epochIndex":4,"flag":12,"message":"RINEX OBS epoch 4 flag 12 does not fit the one-digit flag field"}),
+                "RINEX OBS epoch 4 flag 12 does not fit the one-digit flag field",
+            ),
+            (
+                CoreRinexObsWriteError::EpochTimeMissing { epoch_index: 5, flag: 0 },
+                serde_json::json!({"kind":"EPOCH_TIME_MISSING","epochIndex":5,"flag":0,"message":"RINEX OBS epoch 5 with flag 0 has no epoch time, which only an event may leave blank"}),
+                "RINEX OBS epoch 5 with flag 0 has no epoch time, which only an event may leave blank",
+            ),
+            (
+                CoreRinexObsWriteError::EpochPicosecondsNotInVersion { epoch_index: 6, version: 4.01 },
+                serde_json::json!({"kind":"EPOCH_PICOSECONDS_NOT_IN_VERSION","epochIndex":6,"version":4.01,"message":"RINEX OBS epoch 6 carries picoseconds, which a version 4.01 epoch record has no field for"}),
+                "RINEX OBS epoch 6 carries picoseconds, which a version 4.01 epoch record has no field for",
+            ),
+            (
+                CoreRinexObsWriteError::TooManyObservationTypes { count: 1000 },
+                serde_json::json!({"kind":"TOO_MANY_OBSERVATION_TYPES","count":1000,"message":"RINEX OBS version 2 would need at least 1000 observation types, more than the 999 its count field declares"}),
+                "RINEX OBS version 2 would need at least 1000 observation types, more than the 999 its count field declares",
+            ),
+            (
+                CoreRinexObsWriteError::CodeListsNotUnion { system: CoreGnssSystem::Sbas },
+                serde_json::json!({"kind":"CODE_LISTS_NOT_UNION","system":"S","message":"RINEX OBS SBAS code list is not the union of the lists the header and its events declare"}),
+                "RINEX OBS SBAS code list is not the union of the lists the header and its events declare",
+            ),
+            (
+                CoreRinexObsWriteError::ValueOutsideDeclaredList {
+                    epoch_index: 7,
+                    satellite: satellite(CoreGnssSystem::Gps, 4),
+                    code: Some("L1C".into()),
+                },
+                serde_json::json!({"kind":"VALUE_OUTSIDE_DECLARED_LIST","epochIndex":7,"satellite":"G04","code":"L1C","message":"RINEX OBS epoch 7 satellite G04 holds a value under \"L1C\", which the list in effect at that epoch does not declare"}),
+                "RINEX OBS epoch 7 satellite G04 holds a value under \"L1C\", which the list in effect at that epoch does not declare",
+            ),
+            (
+                CoreRinexObsWriteError::ValueOutsideDeclaredList {
+                    epoch_index: 8,
+                    satellite: satellite(CoreGnssSystem::Glonass, 2),
+                    code: None,
+                },
+                serde_json::json!({"kind":"VALUE_OUTSIDE_DECLARED_LIST","epochIndex":8,"satellite":"R02","code":null,"message":"RINEX OBS epoch 8 satellite R02 is of a constellation with no code list in effect at that epoch"}),
+                "RINEX OBS epoch 8 satellite R02 is of a constellation with no code list in effect at that epoch",
+            ),
+            (
+                CoreRinexObsWriteError::DeclaredListNotStated { system: CoreGnssSystem::Qzss },
+                serde_json::json!({"kind":"DECLARED_LIST_NOT_STATED","system":"J","message":"RINEX OBS QZSS declared code list is not what the version 2 type names state for it"}),
+                "RINEX OBS QZSS declared code list is not what the version 2 type names state for it",
+            ),
+            (
+                CoreRinexObsWriteError::EventRecordsUnreadable { message: "bad event record".into() },
+                serde_json::json!({"kind":"EVENT_RECORDS_UNREADABLE","readerError":"bad event record","message":"RINEX OBS event header records do not read: bad event record"}),
+                "RINEX OBS event header records do not read: bad event record",
+            ),
+            (
+                CoreRinexObsWriteError::ObservableNotRepresentable {
+                    system: CoreGnssSystem::Gps,
+                    code: "L1C".into(),
+                    version: 2.11,
+                },
+                serde_json::json!({"kind":"OBSERVABLE_NOT_REPRESENTABLE","system":"G","code":"L1C","version":2.11,"message":"RINEX OBS GPS code L1C is on a carrier that version 2.11 cannot represent"}),
+                "RINEX OBS GPS code L1C is on a carrier that version 2.11 cannot represent",
+            ),
+            (
+                CoreRinexObsWriteError::LeapSecondsTimeSystemNotInVersion {
+                    time_system: "BDT".into(),
+                    version: 2.11,
+                },
+                serde_json::json!({"kind":"LEAP_SECONDS_TIME_SYSTEM_NOT_IN_VERSION","timeSystem":"BDT","version":2.11,"message":"RINEX OBS LEAP SECONDS time system BDT is not supported in version 2.11"}),
+                "RINEX OBS LEAP SECONDS time system BDT is not supported in version 2.11",
+            ),
+            (
+                CoreRinexObsWriteError::InvalidLeapSecondsTimeSystem { time_system: "X?".into() },
+                serde_json::json!({"kind":"INVALID_LEAP_SECONDS_TIME_SYSTEM","timeSystem":"X?","message":"RINEX OBS LEAP SECONDS invalid time system identifier: \"X?\""}),
+                "RINEX OBS LEAP SECONDS invalid time system identifier: \"X?\"",
+            ),
+            (
+                CoreRinexObsWriteError::ReadBackMismatch { what: "header.version".into() },
+                serde_json::json!({"kind":"READ_BACK_MISMATCH","what":"header.version","message":"RINEX OBS text would not read back as the product: header.version"}),
+                "RINEX OBS text would not read back as the product: header.version",
+            ),
+        ];
+        assert_eq!(
+            cases.len(),
+            20,
+            "18 variants plus both optional-value cases"
+        );
+        let kinds: BTreeSet<_> = cases
+            .iter()
+            .map(|(_, expected, _)| expected["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds.len(), 18, "every error variant is covered");
+
+        for (source, expected, display) in cases {
+            assert_eq!(source.to_string(), display, "literal core Display message");
+            let mapped = RinexObsWriteErrorDetailJs::from_core(source.clone());
+            assert_eq!(serde_json::to_value(&mapped).unwrap(), expected);
+            assert_eq!(mapped, mapped.clone());
+            assert_eq!(mapped, RinexObsWriteErrorDetailJs::from_core(source));
+        }
+    }
+
+    #[test]
+    fn every_downgrade_change_variant_maps_every_field_and_nested_value() {
+        let cases: Vec<(CoreObsDowngradeChange, serde_json::Value)> = vec![
+            (
+                CoreObsDowngradeChange::CodeRenamed {
+                    system: CoreGnssSystem::Gps,
+                    from: "C1X".into(),
+                    to: "C1C".into(),
+                },
+                serde_json::json!({"kind":"CODE_RENAMED","system":"G","from":"C1X","to":"C1C"}),
+            ),
+            (
+                CoreObsDowngradeChange::CodeMoved {
+                    system: CoreGnssSystem::Galileo,
+                    code: "L1C".into(),
+                    from: 3,
+                    to: 1,
+                },
+                serde_json::json!({"kind":"CODE_MOVED","system":"E","code":"L1C","from":3,"to":1}),
+            ),
+            (
+                CoreObsDowngradeChange::CodeAdded {
+                    system: CoreGnssSystem::BeiDou,
+                    code: "C2I".into(),
+                },
+                serde_json::json!({"kind":"CODE_ADDED","system":"C","code":"C2I"}),
+            ),
+            (
+                CoreObsDowngradeChange::CodeListRemoved {
+                    system: CoreGnssSystem::Sbas,
+                    codes: vec!["C1C".into(), "L1C".into()],
+                },
+                serde_json::json!({"kind":"CODE_LIST_REMOVED","system":"S","codes":["C1C","L1C"]}),
+            ),
+            (
+                CoreObsDowngradeChange::ValueRounded {
+                    epoch_index: 2,
+                    satellite: satellite(CoreGnssSystem::Gps, 8),
+                    code: "C1C".into(),
+                    from: 1.2345,
+                    to: 1.235,
+                },
+                serde_json::json!({"kind":"VALUE_ROUNDED","epochIndex":2,"satellite":"G08","code":"C1C","from":1.2345,"to":1.235}),
+            ),
+            (
+                CoreObsDowngradeChange::CycleSlipRounded {
+                    epoch_index: 3,
+                    satellite: satellite(CoreGnssSystem::Glonass, 9),
+                    code: "L2C".into(),
+                    from: -2.3456,
+                    to: -2.346,
+                },
+                serde_json::json!({"kind":"CYCLE_SLIP_ROUNDED","epochIndex":3,"satellite":"R09","code":"L2C","from":-2.3456,"to":-2.346}),
+            ),
+            (
+                CoreObsDowngradeChange::ScaleFactorsRemoved { count: 4 },
+                serde_json::json!({"kind":"SCALE_FACTORS_REMOVED","count":4}),
+            ),
+            (
+                CoreObsDowngradeChange::EpochPicosecondsRemoved {
+                    epoch_index: 5,
+                    picoseconds: 98765,
+                },
+                serde_json::json!({"kind":"EPOCH_PICOSECONDS_REMOVED","epochIndex":5,"picoseconds":98765}),
+            ),
+            (
+                CoreObsDowngradeChange::ClockOffsetRounded {
+                    epoch_index: 6,
+                    from: -0.1234567896,
+                    to: -0.12345679,
+                },
+                serde_json::json!({"kind":"CLOCK_OFFSET_ROUNDED","epochIndex":6,"from":-0.1234567896,"to":-0.12345679}),
+            ),
+            (
+                CoreObsDowngradeChange::InEventLists {
+                    epoch_index: 7,
+                    change: Box::new(CoreObsDowngradeChange::CodeMoved {
+                        system: CoreGnssSystem::BeiDou,
+                        code: "C1I".into(),
+                        from: 3,
+                        to: 1,
+                    }),
+                },
+                serde_json::json!({"kind":"IN_EVENT_LISTS","epochIndex":7,"change":{"kind":"CODE_MOVED","system":"C","code":"C1I","from":3,"to":1}}),
+            ),
+            (
+                CoreObsDowngradeChange::DeprecatedRecordsRemoved {
+                    label: "GLONASS COD/PHS/BIS".into(),
+                    epoch_index: None,
+                    records: vec!["C1C -10.000".into()],
+                },
+                serde_json::json!({"kind":"DEPRECATED_RECORDS_REMOVED","label":"GLONASS COD/PHS/BIS","epochIndex":null,"records":["C1C -10.000"]}),
+            ),
+            (
+                CoreObsDowngradeChange::EventRecordsRewritten {
+                    epoch_index: 9,
+                    from: vec!["G    1 C1C".into()],
+                    to: vec!["     1    C1".into()],
+                },
+                serde_json::json!({"kind":"EVENT_RECORDS_REWRITTEN","epochIndex":9,"from":["G    1 C1C"],"to":["     1    C1"]}),
+            ),
+            (
+                CoreObsDowngradeChange::DeprecatedRecordsRemoved {
+                    label: "SYS / PHASE SHIFT".into(),
+                    epoch_index: Some(4),
+                    records: vec!["G L1C 0.250".into(), "G L2C -0.125".into()],
+                },
+                serde_json::json!({"kind":"DEPRECATED_RECORDS_REMOVED","label":"SYS / PHASE SHIFT","epochIndex":4,"records":["G L1C 0.250","G L2C -0.125"]}),
+            ),
+        ];
+        assert_eq!(
+            cases.len(),
+            13,
+            "12 variants plus both optional epoch-index values"
+        );
+        let kinds: BTreeSet<_> = cases
+            .iter()
+            .map(|(_, expected)| expected["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds.len(), 12, "every downgrade-change variant is covered");
+
+        for (source, expected) in cases {
+            let mapped = ObsDowngradeChangeJs::from_core(source.clone());
+            assert_eq!(serde_json::to_value(&mapped).unwrap(), expected);
+            assert_eq!(mapped, mapped.clone());
+            assert_eq!(mapped, ObsDowngradeChangeJs::from_core(source));
+        }
+    }
+}

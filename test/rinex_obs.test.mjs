@@ -50,6 +50,11 @@ test("rinex obs header and epochs parse from the fixture", () => {
     "C2W",
     "C5Q",
   ]);
+  assert.deepEqual(
+    obs.obsCodes(GnssSystem.Gps),
+    header.obsCodes(GnssSystem.Gps),
+    "the owner-level obsCodes route exposes the complete header code list",
+  );
   assert.equal(header.obsCodes(GnssSystem.BeiDou)[0], "C2I");
   assert.ok(header.phaseShifts.length >= 20);
 

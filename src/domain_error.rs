@@ -398,6 +398,204 @@ mod tests {
         assert_eq!(cause["latitudeBitsHex"], "8000000000000000");
         assert_eq!(cause["longitudeBitsHex"], "7ff0000000000000");
     }
+
+    #[test]
+    fn catalog_error_all_variants_and_payloads_are_exact() {
+        use sidereon_core::data::{
+            AnalysisCenter, DataCatalogError as E, DistributionSource, ProductDate, ProductType,
+        };
+
+        let cases: Vec<(E, serde_json::Value)> = vec![
+            (
+                E::UnknownCenter("unknown_c".into()),
+                serde_json::json!({"kind":"unknownCenter","value":"unknown_c"}),
+            ),
+            (
+                E::UnknownProductType("unknown_pt".into()),
+                serde_json::json!({"kind":"unknownProductType","value":"unknown_pt"}),
+            ),
+            (
+                E::UnsupportedProduct {
+                    center: AnalysisCenter::Cod,
+                    product_type: ProductType::Sp3,
+                },
+                serde_json::json!({"kind":"unsupportedProduct","center":"cod","productType":"sp3"}),
+            ),
+            (
+                E::UnsupportedDistribution {
+                    source: DistributionSource::Direct,
+                    product_type: ProductType::Sp3,
+                },
+                serde_json::json!({"kind":"unsupportedDistribution","source":"direct","productType":"sp3"}),
+            ),
+            (
+                E::UnsupportedProductEra {
+                    center: AnalysisCenter::Cod,
+                    product_type: ProductType::Sp3,
+                    date: ProductDate {
+                        year: 2020,
+                        month: 1,
+                        day: 2,
+                    },
+                },
+                serde_json::json!({"kind":"unsupportedProductEra","center":"cod","productType":"sp3","date":{"year":2020,"month":1,"day":2}}),
+            ),
+            (
+                E::UnsupportedDistributionEra {
+                    source: DistributionSource::Direct,
+                    center: AnalysisCenter::Cod,
+                    product_type: ProductType::Sp3,
+                    date: ProductDate {
+                        year: 2020,
+                        month: 1,
+                        day: 2,
+                    },
+                },
+                serde_json::json!({"kind":"unsupportedDistributionEra","source":"direct","center":"cod","productType":"sp3","date":{"year":2020,"month":1,"day":2}}),
+            ),
+            (
+                E::NoDistributionSources,
+                serde_json::json!({"kind":"noDistributionSources"}),
+            ),
+            (
+                E::InvalidOfficialFilename("bad..name".into()),
+                serde_json::json!({"kind":"invalidOfficialFilename","value":"bad..name"}),
+            ),
+            (
+                E::InconsistentProductIdentity {
+                    field: "official_filename",
+                },
+                serde_json::json!({"kind":"inconsistentProductIdentity","field":"official_filename"}),
+            ),
+            (
+                E::NoOpenMirror {
+                    center: "cod".into(),
+                    product_type: "sp3".into(),
+                },
+                serde_json::json!({"kind":"noOpenMirror","center":"cod","productType":"sp3"}),
+            ),
+            (
+                E::InvalidDate {
+                    year: 2026,
+                    month: 13,
+                    day: 40,
+                },
+                serde_json::json!({"kind":"invalidDate","year":2026,"month":13,"day":40}),
+            ),
+            (
+                E::DateOutOfRange,
+                serde_json::json!({"kind":"dateOutOfRange"}),
+            ),
+            (
+                E::DateBeforeGpsEpoch(ProductDate {
+                    year: 1970,
+                    month: 1,
+                    day: 1,
+                }),
+                serde_json::json!({"kind":"dateBeforeGpsEpoch","date":{"year":1970,"month":1,"day":1}}),
+            ),
+            (
+                E::InvalidGpsDayOfWeek(7),
+                serde_json::json!({"kind":"invalidGpsDayOfWeek","day":7}),
+            ),
+            (
+                E::InvalidSample("99X".into()),
+                serde_json::json!({"kind":"invalidSample","value":"99X"}),
+            ),
+            (
+                E::UnsupportedSample {
+                    center: AnalysisCenter::Cod,
+                    product_type: ProductType::Sp3,
+                    sample: "99X".into(),
+                },
+                serde_json::json!({"kind":"unsupportedSample","center":"cod","productType":"sp3","sample":"99X"}),
+            ),
+            (
+                E::InvalidSpan("99D".into()),
+                serde_json::json!({"kind":"invalidSpan","value":"99D"}),
+            ),
+            (
+                E::InvalidIssue("9999".into()),
+                serde_json::json!({"kind":"invalidIssue","value":"9999"}),
+            ),
+            (
+                E::MissingIssue {
+                    center: AnalysisCenter::IgsUlt,
+                },
+                serde_json::json!({"kind":"missingIssue","center":"igs_ult"}),
+            ),
+            (
+                E::UnexpectedIssue {
+                    center: AnalysisCenter::Cod,
+                },
+                serde_json::json!({"kind":"unexpectedIssue","center":"cod"}),
+            ),
+            (
+                E::UnsupportedIssue {
+                    center: AnalysisCenter::IgsUlt,
+                    issue: "0130".into(),
+                },
+                serde_json::json!({"kind":"unsupportedIssue","center":"igs_ult","issue":"0130"}),
+            ),
+            (
+                E::InvalidDateTime {
+                    hour: 25,
+                    minute: 61,
+                    second: 62,
+                },
+                serde_json::json!({"kind":"invalidDateTime","hour":25,"minute":61,"second":62}),
+            ),
+            (E::NoUltraIssue, serde_json::json!({"kind":"noUltraIssue"})),
+            (
+                E::NoAvailableUltraIssue,
+                serde_json::json!({"kind":"noAvailableUltraIssue"}),
+            ),
+            (
+                E::UnsupportedNominalSchedule {
+                    center: AnalysisCenter::WumNrt,
+                    product_type: ProductType::Sp3,
+                },
+                serde_json::json!({"kind":"unsupportedNominalSchedule","center":"wum_nrt","productType":"sp3"}),
+            ),
+            (
+                E::UnrecognizedArchiveListing {
+                    reason: "bad grammar".into(),
+                },
+                serde_json::json!({"kind":"unrecognizedArchiveListing","reason":"bad grammar"}),
+            ),
+            (
+                E::InvalidStation("BADSTATION".into()),
+                serde_json::json!({"kind":"invalidStation","value":"BADSTATION"}),
+            ),
+            (
+                E::InvalidCoordinate {
+                    lat_deg_bits: (-0.0_f64).to_bits(),
+                    lon_deg_bits: f64::INFINITY.to_bits(),
+                },
+                serde_json::json!({"kind":"invalidCoordinate","latitudeBitsHex":"8000000000000000","longitudeBitsHex":"7ff0000000000000"}),
+            ),
+            (
+                E::InvalidTileIndex {
+                    lat_index: -95,
+                    lon_index: 185,
+                },
+                serde_json::json!({"kind":"invalidTileIndex","latitudeIndex":-95,"longitudeIndex":185}),
+            ),
+            (
+                E::InvalidTileId("invalid_tile".into()),
+                serde_json::json!({"kind":"invalidTileId","value":"invalid_tile"}),
+            ),
+        ];
+
+        assert_eq!(cases.len(), 30);
+        for (error, expected) in cases {
+            assert_eq!(catalog_error(&error), expected);
+        }
+        assert_eq!(
+            E::UnknownCenter("unknown_c".into()).to_string(),
+            "unknown analysis center \"unknown_c\""
+        );
+    }
 }
 
 #[wasm_bindgen::prelude::wasm_bindgen(typescript_custom_section)]

@@ -41,29 +41,49 @@ const opt = (v) => v ?? null;
 
 const assertOmm = (omm, ref) => {
   assert.equal(opt(omm.ccsdsOmmVers), ref.ccsds_omm_vers);
+  assert.equal(opt(omm.classification), opt(ref.classification));
   assert.equal(opt(omm.creationDate), ref.creation_date);
   assert.equal(opt(omm.originator), ref.originator);
+  assert.equal(opt(omm.messageId), opt(ref.message_id));
   assert.equal(opt(omm.objectName), ref.object_name);
   assert.equal(opt(omm.objectId), ref.object_id);
   assert.equal(opt(omm.centerName), ref.center_name);
   assert.equal(opt(omm.refFrame), ref.ref_frame);
+  assert.equal(opt(omm.refFrameEpoch), opt(ref.ref_frame_epoch));
   assert.equal(opt(omm.timeSystem), ref.time_system);
   assert.equal(opt(omm.meanElementTheory), ref.mean_element_theory);
   assertEpoch(omm.epoch, ref.epoch);
   eqBits(omm.meanMotion, ref.mean_motion_hex);
+  assert.equal(opt(omm.semiMajorAxisKm), opt(ref.semi_major_axis_km));
   eqBits(omm.eccentricity, ref.eccentricity_hex);
   eqBits(omm.inclinationDeg, ref.inclination_deg_hex);
   eqBits(omm.raOfAscNodeDeg, ref.ra_of_asc_node_deg_hex);
   eqBits(omm.argOfPericenterDeg, ref.arg_of_pericenter_deg_hex);
   eqBits(omm.meanAnomalyDeg, ref.mean_anomaly_deg_hex);
+  assert.equal(opt(omm.gmKm3S2), opt(ref.gm_km3_s2));
+  assert.deepEqual(opt(omm.spacecraft), opt(ref.spacecraft));
   assert.equal(omm.ephemerisType, ref.ephemeris_type);
   assert.equal(omm.classificationType, ref.classification_type);
   assert.equal(omm.noradCatId, ref.norad_cat_id);
   assert.equal(omm.elementSetNo, ref.element_set_no);
   assert.equal(omm.revAtEpoch, BigInt(ref.rev_at_epoch));
   eqBits(omm.bstar, ref.bstar_hex);
+  assert.equal(opt(omm.btermM2Kg), opt(ref.bterm_m2_kg));
   eqBits(omm.meanMotionDot, ref.mean_motion_dot_hex);
   eqBits(omm.meanMotionDdot, ref.mean_motion_ddot_hex);
+  assert.equal(opt(omm.agomM2Kg), opt(ref.agom_m2_kg));
+  assert.deepEqual(opt(omm.covariance), opt(ref.covariance));
+  assert.deepEqual(omm.userDefined, ref.user_defined ?? []);
+  assert.deepEqual(
+    omm.comments,
+    ref.comments ?? {
+      header: [],
+      metadata: [],
+      meanElements: [],
+      tleParameters: [],
+      userDefined: [],
+    },
+  );
 };
 
 test("parse OMM KVN/XML/JSON match reference fields and re-encode", () => {
@@ -129,6 +149,119 @@ test("constructed OMM matches parsed KVN encoding", () => {
     },
   );
   assert.equal(omm.toKvnString(), FX.fixtures[0].encoded_kvn);
+});
+
+test("constructed OMM retains every public metadata field", () => {
+  const ref = FX.fixtures[0].from_kvn;
+  const e = ref.epoch;
+  const epoch = new OmmEpoch(e.year, e.month, e.day, e.hour, e.minute, e.second, e.microsecond);
+  const retained = {
+    classification: "C",
+    messageId: "OMM-RETAINED-METADATA",
+    refFrameEpoch: "2026-06-17T06:00:00.000000Z",
+    semiMajorAxisKm: 26_560.5,
+    gmKm3S2: 398_600.5,
+    spacecraft: {
+      comments: ["spacecraft retained"],
+      massKg: 1_500.5,
+      solarRadAreaM2: 12.25,
+      solarRadCoeff: 1.75,
+      dragAreaM2: 8.5,
+      dragCoeff: 2.25,
+    },
+    btermM2Kg: 0.125,
+    agomM2Kg: 0.25,
+    covariance: {
+      comments: ["covariance retained"],
+      covRefFrame: "RTN",
+      lowerTriangle: Array.from({ length: 21 }, (_, index) => (index + 1) / 8),
+    },
+    userDefined: [
+      { parameter: "OWNER", value: "SIDEREON" },
+      { parameter: "PURPOSE", value: "ROUNDTRIP" },
+    ],
+    comments: {
+      header: ["header retained"],
+      metadata: ["metadata retained"],
+      meanElements: ["mean elements retained"],
+      tleParameters: ["TLE parameters retained"],
+      userDefined: ["user-defined retained"],
+    },
+  };
+  const omm = new Omm(
+    epoch,
+    hexToF64(ref.mean_motion_hex),
+    hexToF64(ref.eccentricity_hex),
+    hexToF64(ref.inclination_deg_hex),
+    hexToF64(ref.ra_of_asc_node_deg_hex),
+    hexToF64(ref.arg_of_pericenter_deg_hex),
+    hexToF64(ref.mean_anomaly_deg_hex),
+    ref.norad_cat_id,
+    {
+      ccsdsOmmVers: ref.ccsds_omm_vers,
+      creationDate: ref.creation_date,
+      originator: ref.originator,
+      objectName: ref.object_name,
+      objectId: ref.object_id,
+      centerName: ref.center_name,
+      refFrame: ref.ref_frame,
+      timeSystem: ref.time_system,
+      meanElementTheory: ref.mean_element_theory,
+      ephemerisType: ref.ephemeris_type,
+      classificationType: ref.classification_type,
+      elementSetNo: ref.element_set_no,
+      revAtEpoch: ref.rev_at_epoch,
+      bstar: hexToF64(ref.bstar_hex),
+      meanMotionDot: hexToF64(ref.mean_motion_dot_hex),
+      meanMotionDdot: hexToF64(ref.mean_motion_ddot_hex),
+      ...retained,
+    },
+  );
+
+  assertOmm(omm, {
+    ...ref,
+    classification: retained.classification,
+    message_id: retained.messageId,
+    ref_frame_epoch: retained.refFrameEpoch,
+    semi_major_axis_km: retained.semiMajorAxisKm,
+    gm_km3_s2: retained.gmKm3S2,
+    spacecraft: retained.spacecraft,
+    bterm_m2_kg: retained.btermM2Kg,
+    agom_m2_kg: retained.agomM2Kg,
+    covariance: retained.covariance,
+    user_defined: retained.userDefined,
+    comments: retained.comments,
+  });
+});
+
+test("OMM non-wire SGP4 side channels stay outside the public wrapper", () => {
+  const ref = FX.fixtures[0].from_kvn;
+  const e = ref.epoch;
+  const epoch = new OmmEpoch(e.year, e.month, e.day, e.hour, e.minute, e.second, e.microsecond);
+  const parsed = parseOmmKvn(load(FX.fixtures[0].kvn_fixture));
+  const build = (extra) =>
+    new Omm(
+      epoch,
+      hexToF64(ref.mean_motion_hex),
+      hexToF64(ref.eccentricity_hex),
+      hexToF64(ref.inclination_deg_hex),
+      hexToF64(ref.ra_of_asc_node_deg_hex),
+      hexToF64(ref.arg_of_pericenter_deg_hex),
+      hexToF64(ref.mean_anomaly_deg_hex),
+      ref.norad_cat_id,
+      extra,
+    );
+
+  for (const [property, value] of [
+    ["exactSgp4Epoch", [2_460_000, 0.25]],
+    ["quantizeTleDerivedFields", false],
+  ]) {
+    assert.equal(property in parsed, false);
+    assert.throws(
+      () => build({ [property]: value }),
+      (error) => error instanceof TypeError && error.message.includes(property),
+    );
+  }
 });
 
 test("OMM parse and constructor errors throw", () => {

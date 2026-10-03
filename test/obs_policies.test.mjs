@@ -419,7 +419,8 @@ test("the strict writer refuses a scaled version 2 product and the downgrade rep
   assert.deepEqual(error.detail, {
     kind: "SCALE_FACTORS_IN_VERSION_TWO",
     count: 1,
-    message: error.message,
+    message:
+      "RINEX OBS version 2 would carry 1 SYS / SCALE FACTOR records, which version 2 readers that do not apply them read as physical values; downgrade_to_rinex2 removes them",
   });
 
   const result = obs.downgradeToRinex2(2.11);
@@ -450,6 +451,61 @@ test("the strict writer refuses a scaled version 2 product and the downgrade rep
   assert.equal(textError.detail.count, 1);
   const crinexError = thrown(() => repair.toCrinexString(), "RinexObsWriteError");
   assert.deepEqual(crinexError.detail, textError.detail);
+});
+
+test("the public downgrade reports nested changes made by an event list", () => {
+  const source = obsText(
+    3.05,
+    [
+      headerLine("G    2 C1C L1C", "SYS / # / OBS TYPES"),
+      headerLine("R    1 C1C", "SYS / # / OBS TYPES"),
+    ],
+    [
+      "> 2020 01 01 00 00  0.0000000  0  2",
+      obsRecord("G01", [20_000_000, 100_000]),
+      obsRecord("R02", [21_000_000]),
+      blankEvent(4, [headerLine("G    3 L1C C1C S1C", "SYS / # / OBS TYPES")]),
+      "> 2020 01 01 00 00 30.0000000  0  2",
+      obsRecord("G01", [100_030, 20_000_030, 45]),
+      obsRecord("R02", [21_000_030]),
+      blankEvent(4, [headerLine("G    1 C1C", "SYS / # / OBS TYPES")]),
+      "> 2020 01 01 00 01  0.0000000  0  1",
+      obsRecord("G01", [20_000_060]),
+    ],
+  );
+  const result = parse(source).downgradeToRinex2(2.11);
+
+  assert.deepEqual(result.changes, [
+    { kind: "CODE_ADDED", system: "R", code: "L1C" },
+    {
+      kind: "IN_EVENT_LISTS",
+      epochIndex: 1,
+      change: { kind: "CODE_ADDED", system: "R", code: "L1C" },
+    },
+    {
+      kind: "IN_EVENT_LISTS",
+      epochIndex: 1,
+      change: { kind: "CODE_MOVED", system: "R", code: "C1C", from: 0, to: 1 },
+    },
+    {
+      kind: "IN_EVENT_LISTS",
+      epochIndex: 1,
+      change: { kind: "CODE_ADDED", system: "R", code: "S1C" },
+    },
+    {
+      kind: "EVENT_RECORDS_REWRITTEN",
+      epochIndex: 1,
+      from: ["G    3 L1C C1C S1C                                          SYS / # / OBS TYPES"],
+      to: ["     3    L1    C1    S1                                    # / TYPES OF OBSERV"],
+    },
+    {
+      kind: "EVENT_RECORDS_REWRITTEN",
+      epochIndex: 3,
+      from: ["G    1 C1C                                                  SYS / # / OBS TYPES"],
+      to: ["     1    C1                                                # / TYPES OF OBSERV"],
+    },
+  ]);
+  assert.equal(result.value, result.obs);
 });
 
 test("the downgrade refuses what version 2 cannot state and leaves the source alone", () => {

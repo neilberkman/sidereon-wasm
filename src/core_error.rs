@@ -2220,6 +2220,14 @@ mod tests {
 
     #[test]
     fn test_core_error_all_variants_mapped() {
+        use sidereon_core::atmosphere::ionosphere::{
+            IonexMappingDeclaration, IonexNodeGap, IonexSlantRefusal,
+        };
+        use sidereon_core::rinex::observations::RinexObsWriteError;
+        use sidereon_core::rtcm::{RtcmConversionError, RtcmEncodeError};
+        use sidereon_core::sbas::SbasEncodeError;
+        use sidereon_core::terrain::DtedTileError;
+
         let sat = "G01".parse::<GnssSatelliteId>().expect("valid sat");
 
         // 1. Parse
@@ -2315,6 +2323,20 @@ mod tests {
             }
         );
 
+        let e = CoreError::TerrainTile {
+            lat_index: 36,
+            lon_index: -107,
+            error: Box::new(DtedTileError::InvalidField("bad field".into())),
+        };
+        assert_eq!(
+            CoreErrorDetail::from(&e),
+            CoreErrorDetail::TerrainTile {
+                lat_index: 36,
+                lon_index: -107,
+                cause: serde_json::json!({"kind":"invalidField","message":"bad field"}),
+            }
+        );
+
         // 8. IonexOutOfCoverage
         let e = CoreError::IonexOutOfCoverage(IonexCoverageError::EpochBeforeFirstMap);
         let d = CoreErrorDetail::from(&e);
@@ -2326,6 +2348,28 @@ mod tests {
                 )
             }
         );
+
+        let e = CoreError::IonexNodesNotAvailable(Box::new(IonexNodeGap {
+            earlier: None,
+            later: None,
+        }));
+        if let CoreErrorDetail::IonexNodesNotAvailable { cause } = CoreErrorDetail::from(&e) {
+            let value = serde_json::to_value(cause).unwrap();
+            assert_eq!(value["earlier"], serde_json::Value::Null);
+            assert_eq!(value["later"], serde_json::Value::Null);
+        } else {
+            panic!("expected typed IONEX node-gap detail");
+        }
+
+        let e = CoreError::IonexSlantUnavailable(IonexSlantRefusal::MappingFunction(
+            IonexMappingDeclaration::Absent,
+        ));
+        if let CoreErrorDetail::IonexSlantUnavailable { cause } = CoreErrorDetail::from(&e) {
+            let value = serde_json::to_value(cause).unwrap();
+            assert_eq!(value["kind"], "MAPPING_FUNCTION");
+        } else {
+            panic!("expected typed IONEX slant-refusal detail");
+        }
 
         // 9. IonexEpoch
         let e = CoreError::IonexEpoch(IonexEpochError::NotWholeSecond {
@@ -2428,6 +2472,82 @@ mod tests {
                 reason: "beforeCoverage"
             }
         );
+
+        let e = CoreError::SbasEncode(Box::new(SbasEncodeError::UnrecognizedPreamble {
+            preamble: 0x42,
+        }));
+        assert_eq!(
+            CoreErrorDetail::from(&e),
+            CoreErrorDetail::SbasEncode {
+                cause: serde_json::json!({"kind":"unrecognizedPreamble","preamble":0x42}),
+            }
+        );
+
+        let e = CoreError::RtcmEncode(Box::new(RtcmEncodeError::NegativeZeroWithValue {
+            message_number: 1020,
+            field: "df001".into(),
+            value: 42,
+        }));
+        if let CoreErrorDetail::RtcmEncode { cause } = CoreErrorDetail::from(&e) {
+            assert_eq!(cause["kind"], "negativeZeroWithValue");
+            assert_eq!(cause["messageNumber"], 1020);
+            assert_eq!(cause["field"], "df001");
+            assert_eq!(cause["value"], "42");
+        } else {
+            panic!("expected typed RTCM encode detail");
+        }
+
+        let e = CoreError::RtcmConversion(Box::new(RtcmConversionError::GalileoWeekOverflow));
+        assert_eq!(
+            CoreErrorDetail::from(&e),
+            CoreErrorDetail::RtcmConversion {
+                cause: serde_json::json!({"kind":"galileoWeekOverflow"}),
+            }
+        );
+
+        assert_eq!(
+            CoreError::Parse("bad line".into()).to_string(),
+            "parse error: bad line"
+        );
+
+        let rinex_source = RinexObsWriteError::NotVersionTwo { version: 3.0 };
+        let rinex_message = rinex_source.to_string();
+        assert_eq!(
+            CoreError::from(rinex_source),
+            CoreError::InvalidInput(rinex_message)
+        );
+
+        let rtcm_encode_source = RtcmEncodeError::NegativeZeroWithValue {
+            message_number: 1020,
+            field: "df001".into(),
+            value: 42,
+        };
+        let rtcm_encode_expected = rtcm_encode_source.clone();
+        assert_eq!(
+            CoreError::from(rtcm_encode_source),
+            CoreError::RtcmEncode(Box::new(rtcm_encode_expected))
+        );
+
+        let rtcm_conversion_source = RtcmConversionError::GalileoWeekOverflow;
+        let rtcm_conversion_expected = rtcm_conversion_source.clone();
+        assert_eq!(
+            CoreError::from(rtcm_conversion_source),
+            CoreError::RtcmConversion(Box::new(rtcm_conversion_expected))
+        );
+
+        let sbas_source = SbasEncodeError::UnrecognizedPreamble { preamble: 0x42 };
+        let sbas_expected = sbas_source.clone();
+        assert_eq!(
+            CoreError::from(sbas_source),
+            CoreError::SbasEncode(Box::new(sbas_expected))
+        );
+
+        let truncated = sidereon_core::rtcm::Message::decode(&[0x3e, 0xd0])
+            .expect_err("recognized RTCM 1005 body must be truncated");
+        match truncated {
+            CoreError::Parse(message) => assert!(message.contains("RTCM body truncated")),
+            other => panic!("expected parse error from truncated RTCM body, got {other:?}"),
+        }
     }
 
     #[test]
