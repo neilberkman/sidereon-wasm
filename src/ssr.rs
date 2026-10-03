@@ -9,10 +9,10 @@ use sidereon_core::astro::time::ValidityMode;
 use sidereon_core::positioning::EphemerisSource;
 use sidereon_core::rtcm::{decode_frame, Message, SsrKind, SsrMessage};
 use sidereon_core::ssr::{
-    MissingCorrectionAction, SsrCorrectedEphemeris, SsrCorrectionSize,
+    MissingCorrectionAction, OrbitBasis, SsrCorrectedEphemeris, SsrCorrectionSize,
     SsrCorrectionSizePolicy as CoreCorrectionSizePolicy,
     SsrCorrectionStore as CoreSsrCorrectionStore, SsrFallbackPolicy, SsrNavigationMessage,
-    SsrOversizedCorrection, SsrSource as CoreSsrSource,
+    SsrOversizedCorrection, SsrReferencePoint, SsrSource as CoreSsrSource,
 };
 use sidereon_core::GnssSatelliteId;
 
@@ -59,6 +59,37 @@ export interface SsrIngestRefusal {
   error: Error & { detail: CoreErrorDetail; cause: CoreErrorDetail };
 }
 
+/** Stored orbit fields projected from the core correction store. */
+export interface SsrOrbitCorrection {
+  source: "rtcmSsr" | "galileoHas" | "igsSsr";
+  providerId: number;
+  solutionId: number;
+  navMessage: "rtcm" | "has" | "igsSsr";
+  hasNavMessageIndex: number | undefined;
+  iode: number;
+  /** Native SBAS IOD CRC, when transmitted. */
+  iodCrc: number | undefined;
+  iodSsr: number;
+  /** Core OrbitBasis tag; currently "velocityAligned". */
+  basis: "velocityAligned";
+  /** Whether the reference datum identifies a regional CRS. */
+  crsRegional: boolean;
+  /** Stable core tag: 0 is antenna phase center, 1 is center of mass. */
+  referencePoint: 0 | 1;
+  radialM: number;
+  alongM: number;
+  crossM: number;
+  radialRateMS: number;
+  alongRateMS: number;
+  crossRateMS: number;
+  refEpochJ2000S: number;
+  transmittedEpochJ2000S: number;
+  updateIntervalS: number;
+}
+
+/** Optional constructor tag: 0 is APC and 1 is CoM; other numbers reject. */
+export type SsrReferencePointTag = 0 | 1;
+
 export interface SsrRtcmIngestReport {
   store: SsrCorrectionStore;
   diagnostics: RtcmStreamDiagnostics;
@@ -77,13 +108,34 @@ struct CorrectedStateJs {
     ut1_degraded: Option<&'static str>,
 }
 
-/// `("rtcm", None)` for an RTCM SSR correction, `("has", Some(index))` for a
-/// Galileo HAS correction with its navigation-message index as transmitted.
+/// `("rtcm", None)` for RTCM, `("has", Some(index))` for Galileo HAS, and
+/// `("igsSsr", None)` for IGS SSR. The optional index serializes as undefined
+/// when the navigation message does not carry one.
 fn nav_message_parts(message: SsrNavigationMessage) -> (&'static str, Option<u8>) {
     match message {
         SsrNavigationMessage::Rtcm => ("rtcm", None),
         SsrNavigationMessage::Has(index) => ("has", Some(index)),
         SsrNavigationMessage::IgsSsr => ("igsSsr", None),
+    }
+}
+
+fn orbit_basis_tag(basis: OrbitBasis) -> &'static str {
+    match basis {
+        OrbitBasis::VelocityAligned => "velocityAligned",
+    }
+}
+
+fn reference_point_tag(point: SsrReferencePoint) -> u8 {
+    point.tag()
+}
+
+fn reference_point_from_tag(tag: Option<f64>) -> Result<SsrReferencePoint, JsValue> {
+    match tag {
+        None | Some(0.0) => Ok(SsrReferencePoint::AntennaPhaseCenter),
+        Some(1.0) => Ok(SsrReferencePoint::CenterOfMass),
+        Some(_) => Err(type_error(
+            "reference point tag must be exactly 0 (antenna phase center) or 1 (center of mass)",
+        )),
     }
 }
 
@@ -95,10 +147,14 @@ struct SsrOrbitJs {
     solution_id: u8,
     /// `"rtcm"` or `"has"`: the navigation message the correction refers to.
     nav_message: &'static str,
-    /// The Galileo HAS navigation-message index as transmitted, or `null`.
+    /// The Galileo HAS navigation-message index as transmitted, or undefined.
     has_nav_message_index: Option<u8>,
     iode: u32,
+    iod_crc: Option<u32>,
     iod_ssr: u8,
+    basis: &'static str,
+    crs_regional: bool,
+    reference_point: u8,
     radial_m: f64,
     along_m: f64,
     cross_m: f64,
@@ -497,19 +553,26 @@ impl From<SsrOversizedCorrection> for SsrOversizedCorrectionJs {
 
 impl Default for SsrCorrectionStore {
     fn default() -> Self {
-        Self::new()
+        Self {
+            inner: CoreSsrCorrectionStore::new(),
+            size_policy: SsrCorrectionSizePolicy::Strict,
+            oversized: RefCell::new(Vec::new()),
+        }
     }
 }
 
 #[wasm_bindgen]
 impl SsrCorrectionStore {
+    /// Optional stable tag: omitted or 0 selects APC; 1 selects CoM.
+    #[allow(non_snake_case)]
     #[wasm_bindgen(constructor)]
-    pub fn new() -> SsrCorrectionStore {
-        SsrCorrectionStore {
-            inner: CoreSsrCorrectionStore::new(),
+    pub fn new(referencePointTag: Option<f64>) -> Result<SsrCorrectionStore, JsValue> {
+        let reference_point = reference_point_from_tag(referencePointTag)?;
+        Ok(SsrCorrectionStore {
+            inner: CoreSsrCorrectionStore::new().with_reference_point(reference_point),
             size_policy: SsrCorrectionSizePolicy::Strict,
             oversized: RefCell::new(Vec::new()),
-        }
+        })
     }
 
     #[wasm_bindgen(js_name = setCorrectionSizePolicy)]
@@ -550,6 +613,7 @@ impl SsrCorrectionStore {
         self.inner.ingest(&message, epoch).map_err(engine_error)
     }
 
+    #[wasm_bindgen(unchecked_return_type = "SsrOrbitCorrection | null")]
     pub fn orbit(&self, sat: &str) -> Result<JsValue, JsValue> {
         let sat = parse_sat(sat)?;
         let Some(orbit) = self.inner.orbit(sat) else {
@@ -563,7 +627,11 @@ impl SsrCorrectionStore {
             nav_message,
             has_nav_message_index,
             iode: orbit.iode,
+            iod_crc: orbit.iod_crc,
             iod_ssr: orbit.iod_ssr,
+            basis: orbit_basis_tag(orbit.basis),
+            crs_regional: orbit.crs_regional,
+            reference_point: reference_point_tag(orbit.reference_point),
             radial_m: orbit.radial_m,
             along_m: orbit.along_m,
             cross_m: orbit.cross_m,

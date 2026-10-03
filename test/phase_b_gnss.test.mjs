@@ -273,9 +273,222 @@ test("SBAS decode, store, corrected state, and corrected SPP route through core"
   assert.ok(solution.usedSats.length >= 4);
 });
 
+test("CRC-valid SSR phase-bias and orbit frames preserve every public field", () => {
+  // These valid message bodies use literal values from the C-backed public
+  // builders in the matching Go lane. Expected projections are fixed here.
+  const phaseBias = hexToBytes("d30012fec2fc021c254000c381c0214ff3c9ffff40462b6c");
+  assert.deepEqual(decodeSsr(phaseBias, true), {
+    messageNumber: 4076,
+    igsSsrVersion: 1,
+    system: "SBAS",
+    kind: "phaseBias",
+    header: {
+      epochTimeS: 4321,
+      updateInterval: 2,
+      multipleMessage: true,
+      iodSsr: 4,
+      providerId: 12,
+      solutionId: 3,
+      satelliteReferenceDatum: undefined,
+      dispersiveBiasConsistency: true,
+      mwConsistency: false,
+      satelliteCount: 1,
+    },
+    orbit: [],
+    clock: [],
+    codeBias: [],
+    phaseBias: [
+      {
+        satelliteId: 48,
+        yawAngle: 20,
+        yawRate: -1,
+        biases: [
+          {
+            signalId: 7,
+            integerIndicator: 1,
+            wideLaneIntegerIndicator: 0,
+            discontinuityCounter: 9,
+            bias: -12,
+          },
+        ],
+      },
+    ],
+    ura: [],
+    paddingBitCount: 4,
+  });
+
+  const orbitFrame = hexToBytes("d3001a421186a01500030c10447ffffd00004ffffb000037fff9000100f41ef3");
+  assert.deepEqual(decodeSsr(orbitFrame, true), {
+    messageNumber: 1057,
+    igsSsrVersion: undefined,
+    system: "GPS",
+    kind: "orbit",
+    header: {
+      epochTimeS: 100000,
+      updateInterval: 1,
+      multipleMessage: false,
+      iodSsr: 4,
+      providerId: 12,
+      solutionId: 3,
+      satelliteReferenceDatum: true,
+      dispersiveBiasConsistency: undefined,
+      mwConsistency: undefined,
+      satelliteCount: 1,
+    },
+    orbit: [
+      {
+        satelliteId: 1,
+        iode: 17,
+        iodCrc: undefined,
+        deltaRadial: -3,
+        deltaAlong: 4,
+        deltaCross: -5,
+        dotDeltaRadial: 6,
+        dotDeltaAlong: -7,
+        dotDeltaCross: 8,
+      },
+    ],
+    clock: [],
+    codeBias: [],
+    phaseBias: [],
+    ura: [],
+    paddingBitCount: 5,
+  });
+
+  const store = new SsrCorrectionStore();
+  store.ingest(orbitFrame, true, 2400, 100000, "gpst");
+  const expectedOrbit = {
+    source: "rtcmSsr",
+    providerId: 12,
+    solutionId: 3,
+    navMessage: "rtcm",
+    hasNavMessageIndex: undefined,
+    iode: 17,
+    iodCrc: undefined,
+    iodSsr: 4,
+    basis: "velocityAligned",
+    crsRegional: true,
+    referencePoint: 0,
+    radialM: 0.00030000000000000003,
+    alongM: -0.0016,
+    crossM: 0.002,
+    radialRateMS: -0.000006,
+    alongRateMS: 0.000028,
+    crossRateMS: -0.000032,
+    refEpochJ2000S: 820856801,
+    transmittedEpochJ2000S: 820856800,
+    updateIntervalS: 2,
+  };
+  assert.deepEqual(store.orbit("G01"), expectedOrbit);
+
+  const comStore = new SsrCorrectionStore(1);
+  comStore.ingest(orbitFrame, true, 2400, 100000, "gpst");
+  assert.deepEqual(comStore.orbit("G01"), {
+    ...expectedOrbit,
+    referencePoint: 1,
+  });
+
+  const sbasOrbitFrame = hexToBytes(
+    "d3001d4e4186a01500030c107ff579bdfffffe800027fffd80001bfffc800080014d49",
+  );
+  assert.deepEqual(decodeSsr(sbasOrbitFrame, true).orbit, [
+    {
+      satelliteId: 1,
+      iode: 511,
+      iodCrc: 0xabcdef,
+      deltaRadial: -3,
+      deltaAlong: 4,
+      deltaCross: -5,
+      dotDeltaRadial: 6,
+      dotDeltaAlong: -7,
+      dotDeltaCross: 8,
+    },
+  ]);
+  const sbasStore = new SsrCorrectionStore();
+  sbasStore.ingest(sbasOrbitFrame, true, 2400, 100000, "gpst");
+  assert.deepEqual(sbasStore.orbit("S20"), {
+    source: "rtcmSsr",
+    providerId: 12,
+    solutionId: 3,
+    navMessage: "rtcm",
+    hasNavMessageIndex: undefined,
+    iode: 511,
+    iodCrc: 0xabcdef,
+    iodSsr: 4,
+    basis: "velocityAligned",
+    crsRegional: true,
+    referencePoint: 0,
+    radialM: 0.00030000000000000003,
+    alongM: -0.0016,
+    crossM: 0.002,
+    radialRateMS: -0.000006,
+    alongRateMS: 0.000028,
+    crossRateMS: -0.000032,
+    refEpochJ2000S: 820856801,
+    transmittedEpochJ2000S: 820856800,
+    updateIntervalS: 2,
+  });
+
+  for (const invalidTag of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => new SsrCorrectionStore(invalidTag), {
+      name: "TypeError",
+    });
+  }
+});
+
 test("SSR decode, correction store, and corrected state route through core", () => {
   const frame = hexToBytes(coreFixture("ssr/SSRA02IGS0_2026181234930_1060.hex").toString("utf8"));
   const decoded = decodeSsr(frame, true);
+  assert.deepEqual(decoded, {
+    messageNumber: 1060,
+    igsSsrVersion: undefined,
+    system: "GPS",
+    kind: "combinedOrbitClock",
+    header: {
+      epochTimeS: 344970,
+      updateInterval: 3,
+      multipleMessage: false,
+      iodSsr: 1,
+      providerId: 0,
+      solutionId: 2,
+      satelliteReferenceDatum: false,
+      dispersiveBiasConsistency: undefined,
+      mwConsistency: undefined,
+      satelliteCount: 2,
+    },
+    orbit: [
+      {
+        satelliteId: 30,
+        iode: 90,
+        iodCrc: undefined,
+        deltaRadial: 807,
+        deltaAlong: 621,
+        deltaCross: -349,
+        dotDeltaRadial: 30,
+        dotDeltaAlong: -10,
+        dotDeltaCross: -8,
+      },
+      {
+        satelliteId: 31,
+        iode: 67,
+        iodCrc: undefined,
+        deltaRadial: -227,
+        deltaAlong: -1752,
+        deltaCross: 1423,
+        dotDeltaRadial: -43,
+        dotDeltaAlong: -7,
+        dotDeltaCross: 3,
+      },
+    ],
+    clock: [
+      { satelliteId: 30, c0: 166, c1: 0, c2: 0 },
+      { satelliteId: 31, c0: 4170, c1: 0, c2: 0 },
+    ],
+    codeBias: [],
+    phaseBias: [],
+    ura: [],
+    paddingBitCount: 2,
+  });
   assert.equal(decoded.messageNumber, 1060);
   assert.equal(decoded.system, "GPS");
   assert.equal(decoded.kind, "combinedOrbitClock");
@@ -294,6 +507,43 @@ test("SSR decode, correction store, and corrected state route through core", () 
   const clock = store.clock(sat);
   assert.ok(orbit);
   assert.ok(clock);
+  assert.deepEqual(orbit, {
+    source: "rtcmSsr",
+    providerId: 0,
+    solutionId: 2,
+    navMessage: "rtcm",
+    hasNavMessageIndex: undefined,
+    iode: 90,
+    iodCrc: undefined,
+    iodSsr: 1,
+    basis: "velocityAligned",
+    crsRegional: false,
+    referencePoint: 0,
+    radialM: -0.08070000000000001,
+    alongM: -0.2484,
+    crossM: 0.1396,
+    radialRateMS: -0.000029999999999999997,
+    alongRateMS: 0.000039999999999999996,
+    crossRateMS: 0.000032,
+    refEpochJ2000S: 836221775,
+    transmittedEpochJ2000S: 836221770,
+    updateIntervalS: 10,
+  });
+  assert.deepEqual(clock, {
+    source: "rtcmSsr",
+    providerId: 0,
+    solutionId: 2,
+    navMessage: "rtcm",
+    hasNavMessageIndex: undefined,
+    iodSsr: 1,
+    c0M: 0.0166,
+    c1MS: 0,
+    c2MS2: 0,
+    highRateC0M: undefined,
+    refEpochJ2000S: 836221775,
+    transmittedEpochJ2000S: 836221770,
+    updateIntervalS: 10,
+  });
   assert.equal(orbit.source, "rtcmSsr");
   assert.equal(clock.source, "rtcmSsr");
   assert.ok(Number.isFinite(orbit.radialM));
