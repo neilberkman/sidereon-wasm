@@ -720,3 +720,30 @@ test("Bias-SINEX departures retain typed details in strict and lenient modes", (
   });
   assert.ok(parsed.notices.some((notice) => notice.includes("HeaderLayout")));
 });
+
+test("SSR clock retains the complete attached high-rate correction", () => {
+  const baseClock = hexToBytes(
+    "d30024fec22e30d40060123702088fffffa00009ffff600006ffff200023ffff60000a7ffffe20482165",
+  );
+  const highRateClock = hexToBytes("d3000efec23030d4006012370410001340495867");
+  const store = new SsrCorrectionStore();
+
+  store.ingest(baseClock, true, 2400, 100000, "gpst");
+  store.ingest(highRateClock, true, 2400, 100000, "gpst");
+
+  const clock = store.clock("G01");
+  assert.ok(clock);
+  assert.deepEqual(clock.highRate, {
+    solution: {
+      source: "igsSsr",
+      providerId: 0x123,
+      solutionId: 7,
+    },
+    iodSsr: 6,
+    c0M: 0.0077,
+    refEpochJ2000S: 820856800,
+    transmittedEpochJ2000S: 820856800,
+    updateIntervalS: 1,
+  });
+  assert.equal(clock.highRateC0M, 0.0077);
+});

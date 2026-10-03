@@ -59,6 +59,43 @@ export interface SsrIngestRefusal {
   error: Error & { detail: CoreErrorDetail; cause: CoreErrorDetail };
 }
 
+/** Stored clock fields projected from the core correction store. */
+export interface SsrClockCorrection {
+  source: "rtcmSsr" | "galileoHas" | "igsSsr";
+  providerId: number;
+  solutionId: number;
+  navMessage: "rtcm" | "has" | "igsSsr";
+  hasNavMessageIndex: number | undefined;
+  iodSsr: number;
+  c0M: number;
+  c1MS: number;
+  c2MS2: number;
+  /** Full core high-rate record when one is attached. */
+  highRate?: SsrHighRateClock;
+  /** Backward-compatible scalar alias for highRate.c0M. */
+  highRateC0M: number | undefined;
+  refEpochJ2000S: number;
+  transmittedEpochJ2000S: number;
+  updateIntervalS: number;
+}
+
+/** Provider and solution identity copied from a stored SSR correction. */
+export interface SsrSolution {
+  source: "rtcmSsr" | "galileoHas" | "igsSsr";
+  providerId: number;
+  solutionId: number;
+}
+
+/** Stored high-rate clock correction copied from the core record. */
+export interface SsrHighRateClock {
+  solution: SsrSolution;
+  iodSsr: number;
+  c0M: number;
+  refEpochJ2000S: number;
+  transmittedEpochJ2000S: number;
+  updateIntervalS: number;
+}
+
 /** Stored orbit fields projected from the core correction store. */
 export interface SsrOrbitCorrection {
   source: "rtcmSsr" | "galileoHas" | "igsSsr";
@@ -170,6 +207,25 @@ struct SsrOrbitJs {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct SsrSolutionJs {
+    source: &'static str,
+    provider_id: u16,
+    solution_id: u8,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SsrHighRateClockJs {
+    solution: SsrSolutionJs,
+    iod_ssr: u8,
+    c0_m: f64,
+    ref_epoch_j2000_s: f64,
+    transmitted_epoch_j2000_s: f64,
+    update_interval_s: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SsrClockJs {
     source: &'static str,
     provider_id: u16,
@@ -180,6 +236,8 @@ struct SsrClockJs {
     c0_m: f64,
     c1_m_s: f64,
     c2_m_s2: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    high_rate: Option<SsrHighRateClockJs>,
     high_rate_c0_m: Option<f64>,
     ref_epoch_j2000_s: f64,
     transmitted_epoch_j2000_s: f64,
@@ -645,6 +703,7 @@ impl SsrCorrectionStore {
         .map_err(|e| type_error(&e.to_string()))
     }
 
+    #[wasm_bindgen(unchecked_return_type = "SsrClockCorrection | null")]
     pub fn clock(&self, sat: &str) -> Result<JsValue, JsValue> {
         let sat = parse_sat(sat)?;
         let Some(clock) = self.inner.clock(sat) else {
@@ -661,6 +720,18 @@ impl SsrCorrectionStore {
             c0_m: clock.c0_m,
             c1_m_s: clock.c1_m_s,
             c2_m_s2: clock.c2_m_s2,
+            high_rate: clock.high_rate.map(|hr| SsrHighRateClockJs {
+                solution: SsrSolutionJs {
+                    source: source_label(hr.solution.source),
+                    provider_id: hr.solution.provider_id,
+                    solution_id: hr.solution.solution_id,
+                },
+                iod_ssr: hr.iod_ssr,
+                c0_m: hr.c0_m,
+                ref_epoch_j2000_s: hr.ref_epoch_j2000_s,
+                transmitted_epoch_j2000_s: hr.transmitted_epoch_j2000_s,
+                update_interval_s: hr.update_interval_s,
+            }),
             high_rate_c0_m: clock.high_rate.map(|hr| hr.c0_m),
             ref_epoch_j2000_s: clock.ref_epoch_j2000_s,
             transmitted_epoch_j2000_s: clock.transmitted_epoch_j2000_s,
