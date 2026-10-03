@@ -17,6 +17,7 @@ import {
   loadBiasSinex,
   loadBiasSinexLossy,
   loadCodeDcb,
+  loadCodeDcbLossy,
   loadRinexNav,
   loadSp3,
   pppCorrectionsWithCodeBias,
@@ -26,8 +27,10 @@ import {
   solveSppSbas,
   ssrCorrectedState,
   ssrSourceLabel,
+  ssrStoreFromRtcm,
+  ssrStoreFromRtcmStrict,
 } from "../pkg-node/sidereon.js";
-import { coreGoldens, fixture, hexToF64 } from "./helpers.mjs";
+import { coreGoldens, fixture, fixtureJson, hexToF64 } from "./helpers.mjs";
 
 const CORE_FIXTURES = fileURLToPath(new URL("./fixtures", import.meta.url));
 const C_M_S = 299792458.0;
@@ -309,6 +312,59 @@ test("SSR decode, correction store, and corrected state route through core", () 
   assert.ok(state.positionEcefM.every(Number.isFinite));
 });
 
+test("SSR stream constructors preserve lenient accounting and strict refusal", () => {
+  const frame = hexToBytes(coreFixture("ssr/SSRA02IGS0_2026181234930_1060.hex").toString("utf8"));
+  const nonSsr = hexToBytes(fixtureJson("rtcm.json").stream);
+  const corrupt = frame.slice();
+  corrupt[corrupt.length - 1] ^= 1;
+  const trailing = frame.slice(0, -1);
+  const bytes = Uint8Array.from([0x00, ...frame, ...nonSsr, ...corrupt, ...trailing]);
+
+  const ingest = ssrStoreFromRtcm(bytes, 2425, 344970, "gpst");
+  assert.equal(ingest.isComplete, false);
+  assert.ok(ingest.store instanceof SsrCorrectionStore);
+  assert.ok(ingest.store.orbit("G30"));
+  assert.ok(ingest.store.clock("G30"));
+  assert.ok(ingest.diagnostics.resyncBytes > 0);
+  assert.equal(ingest.diagnostics.crcFailures, 1);
+  assert.deepEqual(ingest.diagnostics.skippedFrames, []);
+  assert.equal(ingest.trailingPartialFrameLen, trailing.length);
+  assert.deepEqual(ingest.ingestRefusals, []);
+
+  const cleanLenient = ssrStoreFromRtcm(frame, 2425, 344970, "gpst");
+  assert.equal(cleanLenient.isComplete, true);
+  assert.equal(cleanLenient.trailingPartialFrameLen, 0);
+  assert.deepEqual(cleanLenient.diagnostics, {
+    resyncBytes: 0,
+    crcFailures: 0,
+    skippedFrames: [],
+    departures: [],
+  });
+  assert.deepEqual(cleanLenient.ingestRefusals, []);
+  assert.ok(cleanLenient.store.orbit("G30"));
+
+  const clean = ssrStoreFromRtcmStrict(frame, 2425, 344970, "gpst");
+  assert.ok(clean instanceof SsrCorrectionStore);
+  assert.ok(clean.orbit("G30"));
+  assert.ok(clean.clock("G30"));
+  assert.throws(() => ssrStoreFromRtcmStrict(bytes, 2425, 344970, "gpst"), Error);
+  assert.throws(
+    () => ssrStoreFromRtcmStrict(new Uint8Array([0x00]), 2425, 344970, "gpst"),
+    (error) => {
+      const detail = {
+        kind: "PARSE",
+        message:
+          "RTCM input has 1 bytes outside CRC-valid frames (0 CRC-24Q failures, 0 bytes from an unfinished frame at the end)",
+      };
+      assert.equal(error.name, "Error");
+      assert.deepEqual(error.detail, detail);
+      assert.deepEqual(error.cause, detail);
+      return true;
+    },
+  );
+  assert.throws(() => ssrStoreFromRtcmStrict(trailing, 2425, 344970, "gpst"), Error);
+});
+
 test("Bias-SINEX and CODE DCB products write back what they read", () => {
   // The real CODE product carries one Latin-1 byte, 0xe4 ("ä" of "Jäggi") on
   // line 29 of its reference block, so it is not UTF-8 text.
@@ -317,6 +373,10 @@ test("Bias-SINEX and CODE DCB products write back what they read", () => {
   assert.notEqual(latin1, -1);
   assert.equal(bytes.indexOf(0xe4, latin1 + 1), -1);
   const sinex = loadBiasSinex(bytes);
+  const sinexLossy = loadBiasSinexLossy(bytes);
+  assert.deepEqual(sinexLossy.records, sinex.records);
+  assert.deepEqual(sinexLossy.notices, sinex.notices);
+  assert.deepEqual(loadBiasSinexLossy(bytes, "lenient").records, sinex.records);
   // Every line the reader kept is the writer's authority.
   assert.ok(Buffer.from(sinex.toBiasSinex()).equals(bytes));
   assert.ok(Buffer.from(sinex.toBiasSinexBytes()).equals(bytes));
@@ -347,9 +407,26 @@ test("Bias-SINEX and CODE DCB products write back what they read", () => {
 
   const dcb_text = coreFixture("bias/P1C1_RINEX.DCB");
   const dcb = loadCodeDcb(dcb_text, null);
+  const dcbLossy = loadCodeDcbLossy(dcb_text, null);
+  assert.deepEqual(dcbLossy.records, dcb.records);
+  assert.deepEqual(dcbLossy.notices, dcb.notices);
   assert.ok(Buffer.from(dcb.toCodeDcb()).equals(dcb_text));
   assert.ok(Buffer.from(dcb.toCodeDcbBytes()).equals(dcb_text));
   assert.equal(dcb.toCodeDcbText(), dcb_text.toString("utf8"));
+  const unknownTimeSystem = Buffer.from(
+    "# DCB P1-C1 2026-06 XYZ\nG01                           0.626       0.000\n",
+    "ascii",
+  );
+  assert.throws(
+    () => loadCodeDcb(unknownTimeSystem, null),
+    (error) => error.name === "BiasError" && error.detail.kind === "departure",
+  );
+  const lenientDcb = loadCodeDcb(unknownTimeSystem, null, "lenient");
+  const lenientDcbLossy = loadCodeDcbLossy(unknownTimeSystem, null, "lenient");
+  assert.equal(lenientDcb.recordCount, 1);
+  assert.equal(lenientDcb.timeScale, undefined);
+  assert.deepEqual(lenientDcbLossy.records, lenientDcb.records);
+  assert.deepEqual(lenientDcbLossy.noticeDetails, lenientDcb.noticeDetails);
   const again = loadCodeDcb(Buffer.from(dcb.toCodeDcbText(), "utf8"), null);
   assert.equal(again.recordCount, dcb.recordCount);
   const epoch = j2000FromUtc(2026, 6, 2);

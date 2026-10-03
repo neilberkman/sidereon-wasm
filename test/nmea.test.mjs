@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { NmeaAccumulator, nmeaWriteGga, parseNmea } from "../pkg-node/sidereon.js";
+import { NmeaAccumulator, nmeaEpochs, nmeaWriteGga, parseNmea } from "../pkg-node/sidereon.js";
 
 const SAMPLE = [
   "$GPRMC,123520,A,4807.038,N,01131.000,E,22.4,84.4,230394,3.1,W,A,S*72",
@@ -16,6 +16,7 @@ const bytes = (text) => Buffer.from(text, "utf8");
 
 test("parseNmea groups sentences into core epochs", () => {
   const parsed = parseNmea(bytes(SAMPLE));
+  assert.deepEqual(nmeaEpochs(bytes(SAMPLE)), parsed.epochs);
 
   assert.equal(parsed.sentenceCount, 4);
   assert.equal(parsed.epochCount, 2);

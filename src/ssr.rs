@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use js_sys::{Array, Object, Reflect};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -51,6 +52,19 @@ export interface SsrCorrectionSizeRefusalDetail {
   epochJ2000S: number;
   selectionEpochJ2000S: number;
   size: SsrCorrectionSize;
+}
+
+export interface SsrIngestRefusal {
+  messageNumber: number;
+  error: Error & { detail: CoreErrorDetail; cause: CoreErrorDetail };
+}
+
+export interface SsrRtcmIngestReport {
+  store: SsrCorrectionStore;
+  diagnostics: RtcmStreamDiagnostics;
+  trailingPartialFrameLen: number;
+  ingestRefusals: SsrIngestRefusal[];
+  isComplete: boolean;
 }
 "#;
 
@@ -591,6 +605,122 @@ impl SsrCorrectionStore {
     pub fn ura_index(&self, sat: &str) -> Result<Option<u8>, JsValue> {
         Ok(self.inner.ura_index(parse_sat(sat)?))
     }
+}
+
+#[wasm_bindgen]
+pub struct SsrRtcmIngest {
+    store: SsrCorrectionStore,
+    diagnostics: JsValue,
+    trailing_partial_frame_len: usize,
+    ingest_refusals: JsValue,
+    is_complete: bool,
+}
+
+#[wasm_bindgen]
+impl SsrRtcmIngest {
+    #[wasm_bindgen(getter)]
+    pub fn store(&self) -> SsrCorrectionStore {
+        SsrCorrectionStore {
+            inner: self.store.inner.clone(),
+            size_policy: self.store.size_policy,
+            oversized: RefCell::new(self.store.oversized.borrow().clone()),
+        }
+    }
+
+    #[wasm_bindgen(getter, unchecked_return_type = "RtcmStreamDiagnostics")]
+    pub fn diagnostics(&self) -> JsValue {
+        self.diagnostics.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = trailingPartialFrameLen)]
+    pub fn trailing_partial_frame_len(&self) -> usize {
+        self.trailing_partial_frame_len
+    }
+
+    #[wasm_bindgen(getter, js_name = ingestRefusals, unchecked_return_type = "SsrIngestRefusal[]")]
+    pub fn ingest_refusals(&self) -> JsValue {
+        self.ingest_refusals.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = isComplete)]
+    pub fn is_complete(&self) -> bool {
+        self.is_complete
+    }
+}
+
+fn gnss_week_tow(
+    week: u32,
+    tow_s: f64,
+    time_scale: Option<String>,
+) -> Result<GnssWeekTow, JsValue> {
+    GnssWeekTow::new(parse_time_scale(time_scale)?, week, tow_s)
+        .and_then(GnssWeekTow::normalized)
+        .map_err(engine_error)
+}
+
+fn ingest_refusals_to_js(
+    refusals: impl IntoIterator<Item = sidereon::SsrIngestRefusal>,
+) -> Result<JsValue, JsValue> {
+    let values = Array::new();
+    for refusal in refusals {
+        let object = Object::new();
+        Reflect::set(
+            &object,
+            &JsValue::from_str("messageNumber"),
+            &JsValue::from_f64(f64::from(refusal.message_number)),
+        )?;
+        Reflect::set(
+            &object,
+            &JsValue::from_str("error"),
+            &crate::core_error::core_error_js(&refusal.error),
+        )?;
+        values.push(&object);
+    }
+    Ok(values.into())
+}
+
+#[wasm_bindgen(js_name = ssrStoreFromRtcm)]
+pub fn ssr_store_from_rtcm(
+    bytes: &[u8],
+    week: u32,
+    tow_s: f64,
+    time_scale: Option<String>,
+) -> Result<SsrRtcmIngest, JsValue> {
+    let ingest = sidereon::ssr_store_from_rtcm(bytes, gnss_week_tow(week, tow_s, time_scale)?);
+    let diagnostics = crate::rtcm::stream_diagnostics_to_js(&ingest.diagnostics)?;
+    let is_complete = ingest.is_complete();
+    let ingest_refusals = ingest_refusals_to_js(ingest.ingest_refusals)?;
+    Ok(SsrRtcmIngest {
+        store: SsrCorrectionStore {
+            inner: ingest.store,
+            size_policy: SsrCorrectionSizePolicy::Strict,
+            oversized: RefCell::new(Vec::new()),
+        },
+        diagnostics,
+        trailing_partial_frame_len: ingest.trailing_partial_frame_len,
+        ingest_refusals,
+        is_complete,
+    })
+}
+
+#[wasm_bindgen(js_name = ssrStoreFromRtcmStrict)]
+pub fn ssr_store_from_rtcm_strict(
+    bytes: &[u8],
+    week: u32,
+    tow_s: f64,
+    time_scale: Option<String>,
+) -> Result<SsrCorrectionStore, JsValue> {
+    let inner =
+        sidereon::ssr_store_from_rtcm_strict(bytes, gnss_week_tow(week, tow_s, time_scale)?)
+            .map_err(|error| match error {
+                sidereon::Error::Ssr(core) => crate::core_error::core_error_js(&core),
+                other => engine_error(other),
+            })?;
+    Ok(SsrCorrectionStore {
+        inner,
+        size_policy: SsrCorrectionSizePolicy::Strict,
+        oversized: RefCell::new(Vec::new()),
+    })
 }
 
 impl SsrCorrectionStore {

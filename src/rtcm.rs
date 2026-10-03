@@ -2452,6 +2452,14 @@ pub fn decode_rtcm_stream(bytes: &[u8], policy: Option<String>) -> Result<JsValu
         .map_err(|e| type_error(&e.to_string()))
 }
 
+pub(crate) fn stream_diagnostics_to_js(
+    diagnostics: &sidereon_core::rtcm::StreamDiagnostics,
+) -> Result<JsValue, JsValue> {
+    StreamDiagnosticsObject::from(diagnostics)
+        .serialize(&serializer())
+        .map_err(|e| type_error(&e.to_string()))
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LliBitsObject {
