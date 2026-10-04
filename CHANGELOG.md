@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 3.0.1 - 2026-10-04
+
+### Changed
+
+- Updates the Rust engine dependencies to sidereon and sidereon-core 3.0.1. This coordinates the binding and crate versions; the engine patch does not change numerical algorithms or the JavaScript API.
+
 ## 3.0.0 - 2026-10-04
 
 Engine update: sidereon / sidereon-core 3.0.0. Every entry below
