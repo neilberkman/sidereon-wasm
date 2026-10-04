@@ -31,6 +31,7 @@ const assertEpoch = (epoch, ref) => {
   assert.equal(epoch.minute, ref.minute);
   assert.equal(epoch.second, ref.second);
   assert.equal(epoch.microsecond, ref.microsecond);
+  assert.equal(epoch.femtosecond, ref.femtosecond ?? 0);
   assert.equal(epoch.iso8601, ref.iso8601);
 };
 
@@ -264,6 +265,34 @@ test("OMM non-wire SGP4 side channels stay outside the public wrapper", () => {
   }
 });
 
+test("OMM epoch preserves sub-microsecond calendar fields", () => {
+  const epoch = new OmmEpoch(2026, 6, 28, 1, 2, 3, 123456, 789012345);
+  assert.deepEqual(
+    {
+      year: epoch.year,
+      month: epoch.month,
+      day: epoch.day,
+      hour: epoch.hour,
+      minute: epoch.minute,
+      second: epoch.second,
+      microsecond: epoch.microsecond,
+      femtosecond: epoch.femtosecond,
+      iso8601: epoch.iso8601,
+    },
+    {
+      year: 2026,
+      month: 6,
+      day: 28,
+      hour: 1,
+      minute: 2,
+      second: 3,
+      microsecond: 123456,
+      femtosecond: 789012345,
+      iso8601: "2026-06-28T01:02:03.123456789012345",
+    },
+  );
+});
+
 test("OMM parse and constructor errors throw", () => {
   assert.throws(() => parseOmmKvn("CCSDS_OMM_VERS = 2.0\n"));
   assert.throws(() => parseOmmXml("<not xml"));
@@ -462,9 +491,28 @@ test("the array readers keep every record they can read and report the rest", ()
     parsed.omms.map((omm) => omm.noradCatId),
     FX.fixtures.map((fx) => fx.from_json.norad_cat_id),
   );
-  assert.equal(parsed.skipped.length, 1);
-  assert.equal(parsed.skipped[0].index, records.length);
-  assert.equal(typeof parsed.skipped[0].reason.kind, "string");
+  parsed.omms.forEach((omm, index) => assertOmm(omm, FX.fixtures[index].from_json));
+  assert.deepEqual(parsed.skipped, [
+    {
+      index: records.length,
+      reason: {
+        kind: "MISSING_FIELD",
+        message: "OMM missing required field EPOCH",
+        field: "EPOCH",
+        value: null,
+        issue: null,
+        line: null,
+        unit: null,
+        expectedUnit: null,
+        first: null,
+        second: null,
+        count: null,
+        expectedCount: null,
+        index: null,
+        source: null,
+      },
+    },
+  ]);
 
   const xml = parseOmmXmlAll(load(FX.fixtures[0].xml_fixture));
   assert.equal(xml.omms.length, 1);

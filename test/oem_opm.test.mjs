@@ -99,6 +99,206 @@ test("parse OPM KVN exposes the typed blocks and round-trips", () => {
   assert.equal(parseOpmXml(opm.toXmlString()).state.positionKm[0], 7000);
 });
 
+test("OPM KVN exposes every header and typed-block getter", () => {
+  const fixture = `CCSDS_OPM_VERS = 2.0
+COMMENT header note
+CLASSIFICATION = UNCLASSIFIED
+CREATION_DATE = 2026-06-28T00:00:00
+ORIGINATOR = SIDEREON
+MESSAGE_ID = OPM-COMPLETE
+COMMENT metadata note
+OBJECT_NAME = SAT
+OBJECT_ID = 2026-001A
+CENTER_NAME = EARTH
+REF_FRAME = EME2000
+REF_FRAME_EPOCH = 2000-01-01T12:00:00
+TIME_SYSTEM = UTC
+COMMENT state note
+EPOCH = 2026-06-28T00:00:00
+X = 7000
+Y = 0
+Z = 0
+X_DOT = 0
+Y_DOT = 7.5
+Z_DOT = 1
+COMMENT keplerian note
+SEMI_MAJOR_AXIS = 7000
+ECCENTRICITY = 0.001
+INCLINATION = 51.6
+RA_OF_ASC_NODE = 120
+ARG_OF_PERICENTER = 90
+TRUE_ANOMALY = 42
+GM = 398600.4418
+COMMENT spacecraft note
+MASS = 425
+SOLAR_RAD_AREA = 12.5
+SOLAR_RAD_COEFF = 1.7
+DRAG_AREA = 8.25
+DRAG_COEFF = 2.2
+COMMENT covariance note
+COV_REF_FRAME = RTN
+CX_X = 1
+CY_X = 2
+CY_Y = 3
+CZ_X = 4
+CZ_Y = 5
+CZ_Z = 6
+CX_DOT_X = 7
+CX_DOT_Y = 8
+CX_DOT_Z = 9
+CX_DOT_X_DOT = 10
+CY_DOT_X = 11
+CY_DOT_Y = 12
+CY_DOT_Z = 13
+CY_DOT_X_DOT = 14
+CY_DOT_Y_DOT = 15
+CZ_DOT_X = 16
+CZ_DOT_Y = 17
+CZ_DOT_Z = 18
+CZ_DOT_X_DOT = 19
+CZ_DOT_Y_DOT = 20
+CZ_DOT_Z_DOT = 21
+MAN_EPOCH_IGNITION = 2026-06-28T00:10:00
+COMMENT maneuver note
+MAN_DURATION = 10
+MAN_DELTA_MASS = -0.5
+MAN_REF_FRAME = TNW
+MAN_DV_1 = 0.001
+MAN_DV_2 = 0
+MAN_DV_3 = 0
+COMMENT user-defined note
+USER_DEFINED_OWNER = SIDEREON
+USER_DEFINED_PURPOSE = COVERAGE
+`;
+  const opm = parseOpmKvn(fixture);
+  assert.equal(opm.ccsdsOpmVers, "2.0");
+  assert.deepEqual(opm.comments, ["header note"]);
+  assert.equal(opm.classification, "UNCLASSIFIED");
+  assert.equal(opm.creationDate, "2026-06-28T00:00:00");
+  assert.equal(opm.originator, "SIDEREON");
+  assert.equal(opm.messageId, "OPM-COMPLETE");
+  assert.deepEqual(opm.userDefinedComments, ["user-defined note"]);
+  assert.deepEqual(opm.userDefined, [
+    { parameter: "OWNER", value: "SIDEREON" },
+    { parameter: "PURPOSE", value: "COVERAGE" },
+  ]);
+
+  assert.deepEqual(
+    {
+      comments: opm.metadata.comments,
+      objectName: opm.metadata.objectName,
+      objectId: opm.metadata.objectId,
+      centerName: opm.metadata.centerName,
+      refFrame: opm.metadata.refFrame,
+      refFrameEpoch: opm.metadata.refFrameEpoch,
+      timeSystem: opm.metadata.timeSystem,
+    },
+    {
+      comments: ["metadata note"],
+      objectName: "SAT",
+      objectId: "2026-001A",
+      centerName: "EARTH",
+      refFrame: "EME2000",
+      refFrameEpoch: "2000-01-01T12:00:00",
+      timeSystem: "UTC",
+    },
+  );
+  assert.deepEqual(
+    {
+      comments: opm.state.comments,
+      epoch: opm.state.epoch,
+      positionKm: Array.from(opm.state.positionKm),
+      velocityKmS: Array.from(opm.state.velocityKmS),
+    },
+    {
+      comments: ["state note"],
+      epoch: "2026-06-28T00:00:00",
+      positionKm: [7000, 0, 0],
+      velocityKmS: [0, 7.5, 1],
+    },
+  );
+  assert.deepEqual(
+    {
+      comments: opm.keplerian.comments,
+      semiMajorAxisKm: opm.keplerian.semiMajorAxisKm,
+      eccentricity: opm.keplerian.eccentricity,
+      inclinationDeg: opm.keplerian.inclinationDeg,
+      raOfAscNodeDeg: opm.keplerian.raOfAscNodeDeg,
+      argOfPericenterDeg: opm.keplerian.argOfPericenterDeg,
+      trueAnomalyDeg: opm.keplerian.trueAnomalyDeg,
+      meanAnomalyDeg: opm.keplerian.meanAnomalyDeg,
+      gmKm3S2: opm.keplerian.gmKm3S2,
+    },
+    {
+      comments: ["keplerian note"],
+      semiMajorAxisKm: 7000,
+      eccentricity: 0.001,
+      inclinationDeg: 51.6,
+      raOfAscNodeDeg: 120,
+      argOfPericenterDeg: 90,
+      trueAnomalyDeg: 42,
+      meanAnomalyDeg: undefined,
+      gmKm3S2: 398600.4418,
+    },
+  );
+  assert.deepEqual(
+    {
+      comments: opm.spacecraft.comments,
+      massKg: opm.spacecraft.massKg,
+      solarRadAreaM2: opm.spacecraft.solarRadAreaM2,
+      solarRadCoeff: opm.spacecraft.solarRadCoeff,
+      dragAreaM2: opm.spacecraft.dragAreaM2,
+      dragCoeff: opm.spacecraft.dragCoeff,
+    },
+    {
+      comments: ["spacecraft note"],
+      massKg: 425,
+      solarRadAreaM2: 12.5,
+      solarRadCoeff: 1.7,
+      dragAreaM2: 8.25,
+      dragCoeff: 2.2,
+    },
+  );
+  const lowerTriangle = Array.from({ length: 21 }, (_, index) => index + 1);
+  assert.deepEqual(
+    {
+      comments: opm.covariance.comments,
+      covRefFrame: opm.covariance.covRefFrame,
+      lowerTriangle: Array.from(opm.covariance.lowerTriangle),
+      matrix: Array.from(opm.covariance.matrix),
+    },
+    {
+      comments: ["covariance note"],
+      covRefFrame: "RTN",
+      lowerTriangle,
+      matrix: [
+        1, 2, 4, 7, 11, 16, 2, 3, 5, 8, 12, 17, 4, 5, 6, 9, 13, 18, 7, 8, 9, 10, 14, 19, 11, 12, 13,
+        14, 15, 20, 16, 17, 18, 19, 20, 21,
+      ],
+    },
+  );
+  assert.equal(opm.maneuvers.length, 1);
+  assert.deepEqual(
+    {
+      comments: opm.maneuvers[0].comments,
+      epochIgnition: opm.maneuvers[0].epochIgnition,
+      durationS: opm.maneuvers[0].durationS,
+      deltaMassKg: opm.maneuvers[0].deltaMassKg,
+      refFrame: opm.maneuvers[0].refFrame,
+      dvKmS: Array.from(opm.maneuvers[0].dvKmS),
+    },
+    {
+      comments: ["maneuver note"],
+      epochIgnition: "2026-06-28T00:10:00",
+      durationS: 10,
+      deltaMassKg: -0.5,
+      refFrame: "TNW",
+      dvKmS: [0.001, 0, 0],
+    },
+  );
+  assert.equal(parseOpmKvn(opm.toKvnString()).toKvnString(), opm.toKvnString());
+});
+
 test("build an OPM from scratch and re-parse it", () => {
   const md = new OpmMetadata("SAT", "2026-9Z", "EARTH", "EME2000", "UTC");
   const st = new OpmState(
@@ -164,6 +364,194 @@ test("parse OEM KVN is forgiving and round-trips", () => {
     parseOemXml(oem.toXmlString()).segments[0].metadata.startTime,
     "2026-06-28T00:00:00",
   );
+});
+
+test("OEM KVN exposes every header, segment, state and covariance getter", () => {
+  const fixture = `CCSDS_OEM_VERS = 2.0
+COMMENT header note
+CLASSIFICATION = UNCLASSIFIED
+CREATION_DATE = 2026-06-28T00:00:00
+ORIGINATOR = SIDEREON
+MESSAGE_ID = OEM-COMPLETE
+META_START
+COMMENT metadata note
+OBJECT_NAME = SAT
+OBJECT_ID = 2026-001A
+CENTER_NAME = EARTH
+REF_FRAME = EME2000
+REF_FRAME_EPOCH = 2000-01-01T12:00:00
+TIME_SYSTEM = UTC
+START_TIME = 2026-06-28T00:00:00
+USEABLE_START_TIME = 2026-06-28T00:00:30
+USEABLE_STOP_TIME = 2026-06-28T00:09:30
+STOP_TIME = 2026-06-28T00:10:00
+INTERPOLATION = LAGRANGE
+INTERPOLATION_DEGREE = 5
+META_STOP
+COMMENT before first state
+2026-06-28T00:00:00 1 2 3 0.1 0.2 0.3 0.01 0.02 0.03
+COMMENT between states
+2026-06-28T00:10:00 4 5 6 0.4 0.5 0.6
+COVARIANCE_START
+COMMENT before covariance
+EPOCH = 2026-06-28T00:00:00
+COV_REF_FRAME = RTN
+CX_X = 1
+CY_X = 2
+CY_Y = 3
+CZ_X = 4
+CZ_Y = 5
+CZ_Z = 6
+CX_DOT_X = 7
+CX_DOT_Y = 8
+CX_DOT_Z = 9
+CX_DOT_X_DOT = 10
+CY_DOT_X = 11
+CY_DOT_Y = 12
+CY_DOT_Z = 13
+CY_DOT_X_DOT = 14
+CY_DOT_Y_DOT = 15
+CZ_DOT_X = 16
+CZ_DOT_Y = 17
+CZ_DOT_Z = 18
+CZ_DOT_X_DOT = 19
+CZ_DOT_Y_DOT = 20
+CZ_DOT_Z_DOT = 21
+EPOCH = 2026-06-28T00:10:00
+COMMENT between covariance matrices
+COV_REF_FRAME = RTN
+CX_X = 101
+CY_X = 102
+CY_Y = 103
+CZ_X = 104
+CZ_Y = 105
+CZ_Z = 106
+CX_DOT_X = 107
+CX_DOT_Y = 108
+CX_DOT_Z = 109
+CX_DOT_X_DOT = 110
+CY_DOT_X = 111
+CY_DOT_Y = 112
+CY_DOT_Z = 113
+CY_DOT_X_DOT = 114
+CY_DOT_Y_DOT = 115
+CZ_DOT_X = 116
+CZ_DOT_Y = 117
+CZ_DOT_Z = 118
+CZ_DOT_X_DOT = 119
+CZ_DOT_Y_DOT = 120
+CZ_DOT_Z_DOT = 121
+COVARIANCE_STOP
+`;
+  const oem = parseOemKvn(fixture);
+  assert.equal(oem.ccsdsOemVers, "2.0");
+  assert.deepEqual(oem.comments, ["header note"]);
+  assert.equal(oem.classification, "UNCLASSIFIED");
+  assert.equal(oem.creationDate, "2026-06-28T00:00:00");
+  assert.equal(oem.originator, "SIDEREON");
+  assert.equal(oem.messageId, "OEM-COMPLETE");
+  assert.equal(oem.segmentCount, 1);
+  assert.deepEqual(oem.skippedStates, []);
+  assert.equal(oem.skippedStateCount, 0);
+
+  const [segment] = oem.segments;
+  assert.deepEqual(
+    {
+      dataComments: segment.dataComments,
+      covarianceComments: segment.covarianceComments,
+      states: segment.states.map((state) => ({
+        epoch: state.epoch,
+        positionKm: Array.from(state.positionKm),
+        velocityKmS: Array.from(state.velocityKmS),
+        accelerationKmS2: state.accelerationKmS2 && Array.from(state.accelerationKmS2),
+      })),
+    },
+    {
+      dataComments: [
+        { position: 0, text: "before first state" },
+        { position: 1, text: "between states" },
+      ],
+      covarianceComments: [
+        { position: 0, text: "before covariance" },
+        { position: 1, text: "between covariance matrices" },
+      ],
+      states: [
+        {
+          epoch: "2026-06-28T00:00:00",
+          positionKm: [1, 2, 3],
+          velocityKmS: [0.1, 0.2, 0.3],
+          accelerationKmS2: [0.01, 0.02, 0.03],
+        },
+        {
+          epoch: "2026-06-28T00:10:00",
+          positionKm: [4, 5, 6],
+          velocityKmS: [0.4, 0.5, 0.6],
+          accelerationKmS2: undefined,
+        },
+      ],
+    },
+  );
+  assert.deepEqual(
+    {
+      comments: segment.metadata.comments,
+      objectName: segment.metadata.objectName,
+      objectId: segment.metadata.objectId,
+      centerName: segment.metadata.centerName,
+      refFrame: segment.metadata.refFrame,
+      refFrameEpoch: segment.metadata.refFrameEpoch,
+      timeSystem: segment.metadata.timeSystem,
+      startTime: segment.metadata.startTime,
+      stopTime: segment.metadata.stopTime,
+      useableStartTime: segment.metadata.useableStartTime,
+      useableStopTime: segment.metadata.useableStopTime,
+      interpolation: segment.metadata.interpolation,
+      interpolationDegree: segment.metadata.interpolationDegree,
+    },
+    {
+      comments: ["metadata note"],
+      objectName: "SAT",
+      objectId: "2026-001A",
+      centerName: "EARTH",
+      refFrame: "EME2000",
+      refFrameEpoch: "2000-01-01T12:00:00",
+      timeSystem: "UTC",
+      startTime: "2026-06-28T00:00:00",
+      stopTime: "2026-06-28T00:10:00",
+      useableStartTime: "2026-06-28T00:00:30",
+      useableStopTime: "2026-06-28T00:09:30",
+      interpolation: "LAGRANGE",
+      interpolationDegree: 5,
+    },
+  );
+  assert.deepEqual(
+    segment.covariances.map((covariance) => ({
+      epoch: covariance.epoch,
+      covRefFrame: covariance.covRefFrame,
+      lowerTriangle: Array.from(covariance.lowerTriangle),
+      matrix: Array.from(covariance.matrix),
+    })),
+    [
+      {
+        epoch: "2026-06-28T00:00:00",
+        covRefFrame: "RTN",
+        lowerTriangle: Array.from({ length: 21 }, (_, index) => index + 1),
+        matrix: [
+          1, 2, 4, 7, 11, 16, 2, 3, 5, 8, 12, 17, 4, 5, 6, 9, 13, 18, 7, 8, 9, 10, 14, 19, 11, 12,
+          13, 14, 15, 20, 16, 17, 18, 19, 20, 21,
+        ],
+      },
+      {
+        epoch: "2026-06-28T00:10:00",
+        covRefFrame: "RTN",
+        lowerTriangle: Array.from({ length: 21 }, (_, index) => index + 101),
+        matrix: [
+          101, 102, 104, 107, 111, 116, 102, 103, 105, 108, 112, 117, 104, 105, 106, 109, 113, 118,
+          107, 108, 109, 110, 114, 119, 111, 112, 113, 114, 115, 120, 116, 117, 118, 119, 120, 121,
+        ],
+      },
+    ],
+  );
+  assert.equal(parseOemKvn(oem.toKvnString()).toKvnString(), oem.toKvnString());
 });
 
 test("build an OEM with a covariance and re-parse it", () => {
