@@ -1180,7 +1180,7 @@ impl BroadcastEphemeris {
     ) -> Result<JsValue, JsValue> {
         let geo = parse_sat(geo)?;
         let satellite = parse_sat(satellite)?;
-        let source = SbasCorrectedEphemeris::new(&self.inner, store.core(), geo)
+        let source = SbasCorrectedEphemeris::new(self.inner.as_ref(), store.core(), geo)
             .with_mode(parse_mode(mode)?);
         crate::sp3::selected_position_clock_at_queries(
             &source,
@@ -1204,7 +1204,7 @@ impl BroadcastEphemeris {
     ) -> Result<JsValue, JsValue> {
         let geo = parse_sat(geo)?;
         let satellite = parse_sat(satellite)?;
-        let source = SbasCorrectedEphemeris::new(&self.inner, store.core(), geo)
+        let source = SbasCorrectedEphemeris::new(self.inner.as_ref(), store.core(), geo)
             .with_mode(parse_mode(mode)?);
         crate::sp3::transmit_epoch_clock_at_queries(
             &source,
@@ -1228,7 +1228,7 @@ impl BroadcastEphemeris {
     ) -> Result<f64, JsValue> {
         let geo = parse_sat(geo)?;
         let satellite = parse_sat(satellite)?;
-        let source = SbasCorrectedEphemeris::new(&self.inner, store.core(), geo)
+        let source = SbasCorrectedEphemeris::new(self.inner.as_ref(), store.core(), geo)
             .with_mode(parse_mode(mode)?);
         Ok(crate::sp3::precise_variance_at_queries(
             &source,
@@ -1255,7 +1255,7 @@ impl BroadcastEphemeris {
         let position_ecef_m: [f64; 3] = position_ecef_m
             .try_into()
             .map_err(|_| type_error("positionEcefM must contain exactly three coordinates"))?;
-        let source = SbasCorrectedEphemeris::new(&self.inner, store.core(), geo)
+        let source = SbasCorrectedEphemeris::new(self.inner.as_ref(), store.core(), geo)
             .with_mode(parse_mode(mode)?);
         crate::sp3::precise_clock_relativity_at_query(
             &source,
@@ -1302,7 +1302,7 @@ pub fn sbas_corrected_state(
 ) -> Result<JsValue, JsValue> {
     let geo = parse_sat(geo)?;
     let sat = parse_sat(sat)?;
-    let eph = SbasCorrectedEphemeris::new(&broadcast.inner, store.core(), geo)
+    let eph = SbasCorrectedEphemeris::new(broadcast.inner.as_ref(), store.core(), geo)
         .with_mode(parse_mode(mode)?);
     let Some((position_ecef_m, clock_s)) = eph.position_clock_at_j2000_s(sat, t_j2000_s) else {
         return Ok(JsValue::NULL);
@@ -1329,7 +1329,7 @@ pub fn solve_spp_sbas(
 ) -> Result<SppSolution, JsValue> {
     let geo = parse_sat(geo)?;
     let (mut inputs, with_geodetic) = spp::build_inputs(request)?;
-    let eph = SbasCorrectedEphemeris::new(&broadcast.inner, store.core(), geo)
+    let eph = SbasCorrectedEphemeris::new(broadcast.inner.as_ref(), store.core(), geo)
         .with_mode(parse_mode(mode)?);
     inputs.sbas_iono = eph.iono_grid().cloned();
     let solution = sidereon::solve_spp(

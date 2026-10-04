@@ -649,7 +649,7 @@ impl BroadcastEphemeris {
     /// `sidereon_core::quality::fde_spp` over the broadcast store.
     #[wasm_bindgen(js_name = fde)]
     pub fn fde(&self, request: JsValue) -> Result<crate::qc::FdeSolution, JsValue> {
-        crate::qc::fde(&self.inner, request)
+        crate::qc::fde(self.inner.as_ref(), request)
     }
 }
 
@@ -672,8 +672,14 @@ pub fn solve_with_fallback_js(
     let policy = parse_policy(policy)?;
     let (inputs, with_geodetic) = spp::build_inputs(request)?;
     let core: Vec<_> = precise.into_iter().map(|p| p.inner).collect();
-    let sourced = core_solve_with_fallback(&core, &broadcast.inner, &inputs, policy, with_geodetic)
-        .map_err(|e| fallback_error(&e))?;
+    let sourced = core_solve_with_fallback(
+        &core,
+        broadcast.inner.as_ref(),
+        &inputs,
+        policy,
+        with_geodetic,
+    )
+    .map_err(|e| fallback_error(&e))?;
     Ok(SourcedSolution {
         solution: SppSolution::from_inner(sourced.solution),
         source: sourced.source,

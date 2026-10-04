@@ -6,14 +6,17 @@ import { fileURLToPath } from "node:url";
 import {
   CarrierBand,
   DtedTerrain,
+  ExactEpochQuery,
   GnssSystem,
   SbasCorrectionStore,
   SsrCorrectionStore,
+  SsrCorrectedEphemeris,
   SsrSource,
   carrierBandName,
   decodeSbasMessage,
   decodeSsr,
   gnssSystemLabel,
+  loadAntex,
   loadBiasSinex,
   loadBiasSinexLossy,
   loadCodeDcb,
@@ -46,6 +49,52 @@ const hexToBytes = (hex) =>
       .match(/.{2}/g)
       .map((b) => parseInt(b, 16)),
   );
+const readBits = (bytes, offset, count) => {
+  let value = 0;
+  for (let i = 0; i < count; i += 1) {
+    const bit = offset + i;
+    value = (value << 1) | ((bytes[3 + Math.floor(bit / 8)] >> (7 - (bit % 8))) & 1);
+  }
+  return value;
+};
+const writeBits = (bytes, offset, count, value) => {
+  for (let i = 0; i < count; i += 1) {
+    const bit = offset + i;
+    const mask = 1 << (7 - (bit % 8));
+    const index = 3 + Math.floor(bit / 8);
+    const set = (value >> (count - i - 1)) & 1;
+    bytes[index] = set ? bytes[index] | mask : bytes[index] & ~mask;
+  }
+};
+const crc24q = (bytes) => {
+  let crc = 0;
+  for (const byte of bytes.subarray(0, -3)) {
+    crc ^= byte << 16;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc << 1) ^ (crc & 0x800000 ? 0x1864cfb : 0);
+    }
+  }
+  crc &= 0xffffff;
+  bytes[bytes.length - 3] = (crc >> 16) & 0xff;
+  bytes[bytes.length - 2] = (crc >> 8) & 0xff;
+  bytes[bytes.length - 1] = crc & 0xff;
+};
+const frameWithLargeG30Orbit = (frame) => {
+  const changed = frame.slice();
+  const deltaRadialOffset = 82;
+  assert.equal(readBits(changed, deltaRadialOffset, 22), 807);
+  writeBits(changed, deltaRadialOffset, 22, 150000);
+  crc24q(changed);
+  return changed;
+};
+const frameWithChangedG30Clock = (frame) => {
+  const changed = frame.slice();
+  const c0Offset = 203;
+  assert.equal(readBits(changed, c0Offset, 22), 166);
+  writeBits(changed, c0Offset, 22, 10166);
+  crc24q(changed);
+  return changed;
+};
 const close = (actual, expected, tol, label) =>
   assert.ok(Math.abs(actual - expected) <= tol, `${label}: ${actual} vs ${expected}`);
 const norm3 = (v) => Math.hypot(v[0], v[1], v[2]);
@@ -560,6 +609,151 @@ test("SSR decode, correction store, and corrected state route through core", () 
   );
   assert.ok(state);
   assert.ok(state.positionEcefM.every(Number.isFinite));
+});
+
+test("owned SSR corrected source has an independent core numeric oracle and survives freed inputs", () => {
+  const frame = hexToBytes(coreFixture("ssr/SSRA02IGS0_2026181234930_1060.hex").toString("utf8"));
+  const store = new SsrCorrectionStore();
+  store.ingest(frame, true, 2425, 344970, "gpst");
+  const nav = loadRinexNav(coreFixture("ssr/BRDC00WRD_S_20261820000_G30_G31.rnx"));
+  let source = new SsrCorrectedEphemeris(nav, store);
+  const antex = loadAntex(coreFixture("antex/igs20_wettzell_trim.atx"));
+  source = source.withSatelliteAntennas(antex);
+  const epoch = ExactEpochQuery.fromBinaryJ2000Seconds(836221752);
+  antex.free();
+  nav.free();
+  store.free();
+
+  const state = source.correctedStateAtQueries("G30", epoch, epoch);
+  assert.deepEqual(state, {
+    positionEcefM: [-6296153.684045405, 15837450.006500244, -20103648.508187104],
+    clockS: 0.0002800863540204331,
+    ut1Degraded: undefined,
+  });
+  const selected = source.selectedPositionClockAtQueries("G30", epoch, epoch);
+  assert.equal(selected.value.positionEcefM[0], -6296153.684045405);
+  assert.equal(selected.value.clockS, 0.0002800863540204331);
+  assert.equal(selected.value.groupDelayS, 4.19095158577e-9);
+  assert.deepEqual(source.transmitEpochClockAtQueries("G30", epoch, epoch), {
+    value: 0.0002800929432812776,
+    ut1Degraded: null,
+  });
+  assert.equal(source.ephemerisVarianceAtQueries("G30", epoch, epoch), 0.0225);
+  assert.deepEqual(source.clockRelativityAtQuery("G30", epoch, state.positionEcefM), {
+    kind: "notApplicable",
+  });
+  assert.equal(source.correctionSizePolicy, 0);
+  assert.equal(source.ut1Departure, undefined);
+  assert.deepEqual(source.oversizedCorrections, []);
+});
+
+test("owned SSR corrected source validates policy options before narrowing and owns a store snapshot", () => {
+  const frame = hexToBytes(coreFixture("ssr/SSRA02IGS0_2026181234930_1060.hex").toString("utf8"));
+  const nav = loadRinexNav(coreFixture("ssr/BRDC00WRD_S_20261820000_G30_G31.rnx"));
+  const invalidOptions = [
+    { maxStalenessS: -1 },
+    { maxStalenessS: Number.NaN },
+    { maxStalenessS: Number.POSITIVE_INFINITY },
+    { allowRegionalProviders: [1.5] },
+    { allowRegionalProviders: [-1] },
+    { allowRegionalProviders: [65536] },
+    { allowRegionalProviders: [Number.NaN] },
+    { allowRegionalProviders: [Number.POSITIVE_INFINITY] },
+    { fallback: "guess" },
+    { ut1Validity: "guess" },
+    { correctionSizePolicy: "guess" },
+    { satelliteAttitude: "guess" },
+  ];
+  for (const options of invalidOptions) {
+    const store = new SsrCorrectionStore();
+    assert.throws(() => new SsrCorrectedEphemeris(nav, store, options));
+    store.free();
+  }
+
+  const fallbackStore = new SsrCorrectionStore();
+  const fallbackSource = new SsrCorrectedEphemeris(nav, fallbackStore, { fallback: "broadcast" });
+  assert.ok(fallbackSource.correctedStateAtJ2000("G30", 836221752));
+  fallbackSource.free();
+  fallbackStore.free();
+
+  const store = new SsrCorrectionStore();
+  store.ingest(frame, true, 2425, 344970, "gpst");
+  const source = new SsrCorrectedEphemeris(nav, store, {
+    fallback: "broadcast",
+    maxStalenessS: 120,
+    ut1Validity: "strict",
+    correctionSizePolicy: "lenient",
+    satelliteAttitude: "unavailable",
+    allowRegionalProviders: [7, 65535],
+  });
+  const epoch = ExactEpochQuery.fromBinaryJ2000Seconds(836221752);
+  const before = source.correctedStateAtQueries("G30", epoch, epoch);
+  const changedFrame = frameWithChangedG30Clock(frame);
+  assert.equal(decodeSsr(changedFrame, true).clock[0].c0, 10166);
+  store.ingest(changedFrame, true, 2425, 344970, "gpst");
+  const after = source.correctedStateAtQueries("G30", epoch, epoch);
+  assert.deepEqual(after, before);
+  const updated = new SsrCorrectedEphemeris(nav, store);
+  const updatedState = updated.correctedStateAtQueries("G30", epoch, epoch);
+  assert.notDeepEqual(updatedState, before);
+
+  const staleEpoch = ExactEpochQuery.fromBinaryJ2000Seconds(836222052);
+  const staleFallback = new SsrCorrectedEphemeris(nav, store, {
+    fallback: "broadcast",
+    maxStalenessS: 120,
+  });
+  assert.ok(staleFallback.correctedStateAtQueries("G30", staleEpoch, staleEpoch));
+  const staleDecline = new SsrCorrectedEphemeris(nav, store, {
+    fallback: "decline",
+    maxStalenessS: 120,
+  });
+  assert.equal(staleDecline.correctedStateAtQueries("G30", staleEpoch, staleEpoch), null);
+  staleFallback.free();
+  staleDecline.free();
+
+  assert.equal(source.correctionSizePolicy, 1);
+  nav.free();
+  store.free();
+  updated.free();
+  assert.deepEqual(source.correctedStateAtQueries("G30", epoch, epoch), before);
+});
+
+test("owned SSR source returns strict size errors and retains lenient oversized reports", () => {
+  const original = hexToBytes(
+    coreFixture("ssr/SSRA02IGS0_2026181234930_1060.hex").toString("utf8"),
+  );
+  const frame = frameWithLargeG30Orbit(original);
+  assert.equal(decodeSsr(frame, true).orbit[0].deltaRadial, 150000);
+  const nav = loadRinexNav(coreFixture("ssr/BRDC00WRD_S_20261820000_G30_G31.rnx"));
+  const strictStore = new SsrCorrectionStore();
+  strictStore.ingest(frame, true, 2425, 344970, "gpst");
+  const strict = new SsrCorrectedEphemeris(nav, strictStore);
+  const epoch = ExactEpochQuery.fromBinaryJ2000Seconds(836221752);
+  assert.throws(() => strict.correctedStateAtQueries("G30", epoch, epoch), {
+    name: "SsrCorrectionSizeRefusal",
+  });
+  const refusal = strict.correctionSizeRefusalAtQueries("G30", epoch, epoch);
+  assert.equal(refusal.satellite, "G30");
+  assert.equal(refusal.size.orbitExceedsLimit, true);
+  assert.equal(refusal.size.clockExceedsLimit, false);
+
+  const lenientStore = new SsrCorrectionStore();
+  lenientStore.ingest(frame, true, 2425, 344970, "gpst");
+  const lenient = new SsrCorrectedEphemeris(nav, lenientStore, {
+    correctionSizePolicy: "lenient",
+  });
+  assert.ok(lenient.correctedStateAtQueries("G30", epoch, epoch));
+  const reports = lenient.oversizedCorrections;
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].satellite, "G30");
+  assert.equal(reports[0].source, "rtcmSsr");
+  assert.equal(reports[0].providerId, 0);
+  assert.equal(reports[0].solutionId, 2);
+  assert.equal(reports[0].size.orbitExceedsLimit, true);
+  assert.equal(reports[0].size.clockExceedsLimit, false);
+  assert.ok(reports[0].size.orbitM > 15);
+  assert.ok(lenient.correctedStateAtQueries("G30", epoch, epoch));
+  assert.deepEqual(lenient.oversizedCorrections, reports);
 });
 
 test("SSR stream constructors preserve lenient accounting and strict refusal", () => {

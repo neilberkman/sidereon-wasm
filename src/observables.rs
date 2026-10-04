@@ -1248,7 +1248,7 @@ pub fn solve_velocity_broadcast(
     let receiver = receiver_ecef(receiver_ecef_m)?;
     let options = velocity_options(options)?;
     let inner = velocity::solve(
-        &broadcast.inner,
+        broadcast.inner.as_ref(),
         &observations,
         receiver,
         t_rx_j2000_s,
@@ -1408,7 +1408,7 @@ pub fn observables_broadcast(
     options: JsValue,
 ) -> Result<PredictedObservables, JsValue> {
     predict_from_source(
-        &broadcast.inner,
+        broadcast.inner.as_ref(),
         satellite,
         receiver_ecef_m,
         t_rx_j2000_s,
@@ -1596,7 +1596,7 @@ pub fn predict_batch_broadcast(
     options: JsValue,
 ) -> Result<PredictBatch, JsValue> {
     predict_batch_from_source(
-        &broadcast.inner,
+        broadcast.inner.as_ref(),
         satellites,
         receivers_ecef_m,
         epochs_j2000_s,

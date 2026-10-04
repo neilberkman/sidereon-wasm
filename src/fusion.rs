@@ -736,7 +736,7 @@ impl GnssInsFilter {
     ) -> Result<JsValue, JsValue> {
         let update = self
             .inner
-            .update_tight(&broadcast.inner, &parse_tight_epoch(epoch)?)
+            .update_tight(broadcast.inner.as_ref(), &parse_tight_epoch(epoch)?)
             .map_err(fusion_error)?;
         to_js(&update_js(update))
     }
@@ -752,7 +752,7 @@ impl GnssInsFilter {
         let update = self
             .inner
             .update_tight_recorded(
-                &broadcast.inner,
+                broadcast.inner.as_ref(),
                 &parse_tight_epoch(epoch)?,
                 &mut history.inner,
             )
@@ -783,7 +783,7 @@ impl GnssInsFilter {
     ) -> Result<JsValue, JsValue> {
         let update = self
             .inner
-            .update_tight_time_sync(&broadcast.inner, &parse_tight_epoch(epoch)?)
+            .update_tight_time_sync(broadcast.inner.as_ref(), &parse_tight_epoch(epoch)?)
             .map_err(fusion_error)?;
         to_js(&TimeSyncUpdateJs::from(update))
     }

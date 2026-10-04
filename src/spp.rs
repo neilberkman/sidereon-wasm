@@ -544,7 +544,7 @@ pub fn solve_spp_with_ssr_exact_epoch_js(
         },
         ..Default::default()
     };
-    let mut source = SsrCorrectedEphemeris::new(&broadcast.inner, store.core())
+    let mut source = SsrCorrectedEphemeris::new(broadcast.inner.as_ref(), store.core())
         .with_fallback(fallback)
         .with_validity(validity)
         .with_correction_size_policy(store.correction_size_policy().into());
@@ -811,7 +811,7 @@ pub fn spp_inputs_from_rinex_obs_js(
     options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let options = rinex_spp_options(obs, options)?;
-    let epochs = core_spp_inputs_from_rinex_obs(&obs.inner, &source.inner, &options)
+    let epochs = core_spp_inputs_from_rinex_obs(&obs.inner, source.inner.as_ref(), &options)
         .map_err(|e| positioning_error(&rinex_spp_detail(&e)))?;
     let out: Vec<RinexSppEpochInputsObject> =
         epochs.iter().map(RinexSppEpochInputsObject::from).collect();
@@ -834,7 +834,7 @@ pub fn solve_spp_from_rinex_obs_js(
     let rinex_options = rinex_spp_options(obs, rinex_options)?;
     let (with_geodetic, policy) = rinex_solve_policy(solve_options)?;
     let epochs = core_solve_spp_from_rinex_obs_exact_with_policy(
-        &source.inner,
+        source.inner.as_ref(),
         &obs.inner,
         &rinex_options,
         with_geodetic,

@@ -475,6 +475,12 @@ pub struct Antex {
     inner: CoreAntex,
 }
 
+impl Antex {
+    pub(crate) fn core(&self) -> &CoreAntex {
+        &self.inner
+    }
+}
+
 #[wasm_bindgen]
 impl Antex {
     /// Number of distinct `TYPE / SERIAL` ids. Each id's latest block is the

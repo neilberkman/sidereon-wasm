@@ -9,12 +9,15 @@ use sidereon_core::astro::time::ValidityMode;
 use sidereon_core::positioning::EphemerisSource;
 use sidereon_core::rtcm::{decode_frame, Message, SsrKind, SsrMessage};
 use sidereon_core::ssr::{
-    MissingCorrectionAction, OrbitBasis, SsrCorrectedEphemeris, SsrCorrectionSize,
+    MissingCorrectionAction, OrbitBasis, SsrCorrectedEphemeris as CoreSsrCorrectedEphemeris,
+    SsrCorrectedEphemerisOwned, SsrCorrectionSize,
     SsrCorrectionSizePolicy as CoreCorrectionSizePolicy,
     SsrCorrectionStore as CoreSsrCorrectionStore, SsrFallbackPolicy, SsrNavigationMessage,
-    SsrOversizedCorrection, SsrReferencePoint, SsrSource as CoreSsrSource,
+    SsrOversizedCorrection, SsrReferencePoint, SsrSatelliteAttitude, SsrSource as CoreSsrSource,
 };
+use sidereon_core::staleness::StalenessPolicy;
 use sidereon_core::GnssSatelliteId;
+use std::sync::Arc;
 
 use crate::error::{engine_error, error_with_detail, type_error};
 use crate::frames::ExactEpochQueryValue;
@@ -126,6 +129,22 @@ export interface SsrOrbitCorrection {
 
 /** Optional constructor tag: 0 is APC and 1 is CoM; other numbers reject. */
 export type SsrReferencePointTag = 0 | 1;
+
+/** Configuration for an owned corrected ephemeris source. */
+export interface SsrCorrectedEphemerisOptions {
+  /** Missing or stale corrections: "decline" (default) or "broadcast". */
+  fallback?: "decline" | "broadcast";
+  /** Maximum correction age in seconds; finite and non-negative. */
+  maxStalenessS?: number;
+  /** UT1 policy: "strict" (default) or "permissive". */
+  ut1Validity?: "strict" | "permissive";
+  /** Correction size policy: "strict" (default) or "lenient". */
+  correctionSizePolicy?: "strict" | "lenient";
+  /** Satellite attitude for CoM-to-APC conversion. */
+  satelliteAttitude?: "unavailable" | "nominalSunFixed";
+  /** Providers allowed for regional CRS corrections; each integer is 0..65535. */
+  allowRegionalProviders?: number[];
+}
 
 export interface SsrRtcmIngestReport {
   store: SsrCorrectionStore;
@@ -911,7 +930,7 @@ pub fn ssr_corrected_state(
         },
         ..Default::default()
     };
-    let mut eph = SsrCorrectedEphemeris::new(&broadcast.inner, store.core())
+    let mut eph = CoreSsrCorrectedEphemeris::new(&broadcast.inner, store.core())
         .with_fallback(fallback)
         .with_validity(validity)
         .with_correction_size_policy(store.size_policy.into());
@@ -974,7 +993,7 @@ pub fn ssr_corrected_state_exact(
         },
         ..Default::default()
     };
-    let mut eph = SsrCorrectedEphemeris::new(&broadcast.inner, store.core())
+    let mut eph = CoreSsrCorrectedEphemeris::new(&broadcast.inner, store.core())
         .with_fallback(fallback)
         .with_validity(validity)
         .with_correction_size_policy(store.size_policy.into());
@@ -1016,7 +1035,7 @@ fn exact_ssr_source<'a>(
     fallback_to_broadcast: Option<bool>,
     allow_regional_provider: Option<u16>,
     validity: Option<String>,
-) -> Result<SsrCorrectedEphemeris<'a>, JsValue> {
+) -> Result<CoreSsrCorrectedEphemeris<'a>, JsValue> {
     let fallback = SsrFallbackPolicy {
         on_missing_correction: if fallback_to_broadcast.unwrap_or(false) {
             MissingCorrectionAction::FallBackToBroadcast
@@ -1025,7 +1044,7 @@ fn exact_ssr_source<'a>(
         },
         ..Default::default()
     };
-    let mut source = SsrCorrectedEphemeris::new(&broadcast.inner, store.core())
+    let mut source = CoreSsrCorrectedEphemeris::new(&broadcast.inner, store.core())
         .with_fallback(fallback)
         .with_validity(crate::error::ut1_validity(validity)?)
         .with_correction_size_policy(store.size_policy.into());
@@ -1098,5 +1117,321 @@ impl BroadcastEphemeris {
             state_epoch,
             position_ecef_m,
         )
+    }
+}
+
+fn source_option(options: &JsValue, key: &str) -> Result<JsValue, JsValue> {
+    if options.is_undefined() || options.is_null() {
+        return Ok(JsValue::UNDEFINED);
+    }
+    if !options.is_object() || Array::is_array(options) {
+        return Err(type_error("options must be an object"));
+    }
+    Reflect::get(options, &JsValue::from_str(key))
+        .map_err(|_| type_error(&format!("could not read options.{key}")))
+}
+fn optional_string_option(options: &JsValue, key: &str) -> Result<Option<String>, JsValue> {
+    let value = source_option(options, key)?;
+    if value.is_undefined() || value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_string()
+        .map(Some)
+        .ok_or_else(|| type_error(&format!("options.{key} must be a string")))
+}
+fn regional_providers(options: &JsValue) -> Result<Vec<u16>, JsValue> {
+    let value = source_option(options, "allowRegionalProviders")?;
+    if value.is_undefined() || value.is_null() {
+        return Ok(Vec::new());
+    }
+    if !Array::is_array(&value) {
+        return Err(type_error(
+            "options.allowRegionalProviders must be an array",
+        ));
+    }
+    Array::from(&value).iter().enumerate().map(|(index, item)| {
+        let Some(provider) = item.as_f64() else { return Err(type_error(&format!("options.allowRegionalProviders[{index}] must be a number"))); };
+        if !provider.is_finite() || provider.fract() != 0.0 || !(0.0..=f64::from(u16::MAX)).contains(&provider) {
+            return Err(type_error(&format!("options.allowRegionalProviders[{index}] must be an integer from 0 through 65535")));
+        }
+        Ok(provider as u16)
+    }).collect()
+}
+fn optional_staleness(options: &JsValue) -> Result<Option<StalenessPolicy>, JsValue> {
+    let value = source_option(options, "maxStalenessS")?;
+    if value.is_undefined() || value.is_null() {
+        return Ok(None);
+    }
+    let Some(seconds) = value.as_f64() else {
+        return Err(type_error("options.maxStalenessS must be a number"));
+    };
+    if !seconds.is_finite() || seconds < 0.0 {
+        return Err(type_error(
+            "options.maxStalenessS must be finite and non-negative",
+        ));
+    }
+    Ok(Some(StalenessPolicy::seconds(seconds)))
+}
+
+/// Owned corrected source. It retains broadcast, ANTEX and policy settings; the
+/// SSR store is cloned at construction, so later input-store ingestion is not visible.
+#[wasm_bindgen]
+pub struct SsrCorrectedEphemeris {
+    inner: SsrCorrectedEphemerisOwned,
+}
+
+#[wasm_bindgen]
+impl SsrCorrectedEphemeris {
+    /// Input wrappers may be freed after construction. Options include fallback,
+    /// staleness, UT1, size, attitude and regional-provider settings.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        broadcast: &BroadcastEphemeris,
+        store: &SsrCorrectionStore,
+        options: Option<JsValue>,
+    ) -> Result<SsrCorrectedEphemeris, JsValue> {
+        let options = options.unwrap_or(JsValue::UNDEFINED);
+        let fallback_action = match optional_string_option(&options, "fallback")?.as_deref() {
+            None | Some("decline") => MissingCorrectionAction::Decline,
+            Some("broadcast") => MissingCorrectionAction::FallBackToBroadcast,
+            Some(other) => {
+                return Err(type_error(&format!(
+                    "invalid options.fallback {other:?}: expected decline or broadcast"
+                )))
+            }
+        };
+        let validity =
+            crate::error::ut1_validity(optional_string_option(&options, "ut1Validity")?)?;
+        let size_policy = match optional_string_option(&options, "correctionSizePolicy")?.as_deref()
+        {
+            None | Some("strict") => CoreCorrectionSizePolicy::Strict,
+            Some("lenient") => CoreCorrectionSizePolicy::Lenient,
+            Some(other) => {
+                return Err(type_error(&format!(
+                    "invalid options.correctionSizePolicy {other:?}: expected strict or lenient"
+                )))
+            }
+        };
+        let attitude = match optional_string_option(&options, "satelliteAttitude")?.as_deref() {
+            None | Some("unavailable") => SsrSatelliteAttitude::Unavailable,
+            Some("nominalSunFixed") => SsrSatelliteAttitude::NominalSunFixed,
+            Some(other) => return Err(type_error(&format!("invalid options.satelliteAttitude {other:?}: expected unavailable or nominalSunFixed"))),
+        };
+        let fallback = SsrFallbackPolicy {
+            on_missing_correction: fallback_action,
+            ..Default::default()
+        };
+        let providers = regional_providers(&options)?;
+        let mut inner = SsrCorrectedEphemerisOwned::new(
+            Arc::clone(&broadcast.inner),
+            Arc::new(store.inner.clone()),
+        )
+        .with_fallback(fallback)
+        .with_validity(validity)
+        .with_correction_size_policy(size_policy)
+        .with_satellite_attitude(attitude);
+        if let Some(staleness) = optional_staleness(&options)? {
+            inner = inner.with_staleness(staleness);
+        }
+        for provider in providers {
+            inner = inner.allow_regional_provider(provider);
+        }
+        Ok(Self { inner })
+    }
+
+    /// Return this source with a cloned ANTEX calibration for CoM-to-APC conversion.
+    #[wasm_bindgen(js_name = withSatelliteAntennas)]
+    pub fn with_satellite_antennas(mut self, antex: &crate::antex::Antex) -> Self {
+        self.inner = self
+            .inner
+            .with_satellite_antennas(Arc::new(antex.core().clone()));
+        self
+    }
+
+    #[wasm_bindgen(js_name = correctedStateAtJ2000, unchecked_return_type = "SsrCorrectedState | null")]
+    pub fn corrected_state_at_j2000(
+        &self,
+        satellite: &str,
+        epoch_j2000_s: f64,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        let size_refusal =
+            self.inner
+                .correction_size_refusal(satellite, epoch_j2000_s, epoch_j2000_s);
+        let checked = self
+            .inner
+            .corrected_state_checked(satellite, epoch_j2000_s)
+            .map_err(|error| crate::positioning_error::core_source_error(&error))?;
+        let Some((position_ecef_m, clock_s)) = checked.value else {
+            if self.inner.correction_size_policy() == CoreCorrectionSizePolicy::Strict {
+                if let Some(size) = size_refusal {
+                    return Err(correction_size_refusal_error(
+                        satellite,
+                        epoch_j2000_s,
+                        epoch_j2000_s,
+                        size,
+                    ));
+                }
+            }
+            return Ok(JsValue::NULL);
+        };
+        serde_wasm_bindgen::to_value(&CorrectedStateJs {
+            position_ecef_m,
+            clock_s,
+            ut1_degraded: checked.degraded.map(crate::spp::degrade_reason_label),
+        })
+        .map_err(engine_error)
+    }
+
+    #[wasm_bindgen(js_name = correctedStateAtQueries, unchecked_return_type = "SsrCorrectedState | null")]
+    pub fn corrected_state_at_queries(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        let size_refusal = self.inner.correction_size_refusal_at_epoch_query(
+            satellite,
+            &state_epoch.core(),
+            &selection_epoch.core(),
+        );
+        let checked = self
+            .inner
+            .as_borrowed()
+            .corrected_state_with_group_delay_checked_selected_query(
+                satellite,
+                &state_epoch.core(),
+                &selection_epoch.core(),
+            )
+            .map_err(|error| crate::positioning_error::core_source_error(&error))?;
+        let Some((position_ecef_m, clock_s, _)) = checked.value else {
+            if self.inner.correction_size_policy() == CoreCorrectionSizePolicy::Strict {
+                if let Some(size) = size_refusal {
+                    return Err(correction_size_refusal_error(
+                        satellite,
+                        state_epoch.j2000_seconds(),
+                        selection_epoch.j2000_seconds(),
+                        size,
+                    ));
+                }
+            }
+            return Ok(JsValue::NULL);
+        };
+        serde_wasm_bindgen::to_value(&CorrectedStateJs {
+            position_ecef_m,
+            clock_s,
+            ut1_degraded: checked.degraded.map(crate::spp::degrade_reason_label),
+        })
+        .map_err(engine_error)
+    }
+
+    #[wasm_bindgen(js_name = correctionSizeRefusalAtQueries, unchecked_return_type = "SsrCorrectionSizeRefusalDetail | null")]
+    pub fn correction_size_refusal_at_queries(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        let Some(size) = self.inner.correction_size_refusal_at_epoch_query(
+            satellite,
+            &state_epoch.core(),
+            &selection_epoch.core(),
+        ) else {
+            return Ok(JsValue::NULL);
+        };
+        let refusal = SsrCorrectionSizeRefusalJs {
+            satellite: satellite.to_string(),
+            epoch_j2000_s: state_epoch.j2000_seconds(),
+            selection_epoch_j2000_s: selection_epoch.j2000_seconds(),
+            size: size.into(),
+        };
+        serde_wasm_bindgen::to_value(&refusal).map_err(engine_error)
+    }
+
+    #[wasm_bindgen(js_name = selectedPositionClockAtQueries)]
+    pub fn selected_position_clock_at_queries(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<JsValue, JsValue> {
+        crate::sp3::selected_position_clock_at_queries(
+            &self.inner,
+            parse_sat(satellite)?,
+            state_epoch,
+            selection_epoch,
+        )
+    }
+    #[wasm_bindgen(js_name = transmitEpochClockAtQueries)]
+    pub fn transmit_epoch_clock_at_queries(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<JsValue, JsValue> {
+        crate::sp3::transmit_epoch_clock_at_queries(
+            &self.inner,
+            parse_sat(satellite)?,
+            state_epoch,
+            selection_epoch,
+        )
+    }
+    #[wasm_bindgen(js_name = ephemerisVarianceAtQueries)]
+    pub fn ephemeris_variance_at_queries(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<f64, JsValue> {
+        Ok(crate::sp3::precise_variance_at_queries(
+            &self.inner,
+            parse_sat(satellite)?,
+            state_epoch,
+            selection_epoch,
+        ))
+    }
+    #[wasm_bindgen(js_name = clockRelativityAtQuery)]
+    pub fn clock_relativity_at_query(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        position_ecef_m: Vec<f64>,
+    ) -> Result<JsValue, JsValue> {
+        let position: [f64; 3] = position_ecef_m
+            .try_into()
+            .map_err(|_| type_error("positionEcefM must contain exactly three coordinates"))?;
+        crate::sp3::precise_clock_relativity_at_query(
+            &self.inner,
+            parse_sat(satellite)?,
+            state_epoch,
+            position,
+        )
+    }
+    #[wasm_bindgen(getter, js_name = ut1Departure)]
+    pub fn ut1_departure(&self) -> Option<String> {
+        self.inner
+            .ut1_departure()
+            .map(crate::spp::degrade_reason_label)
+            .map(str::to_owned)
+    }
+    #[wasm_bindgen(getter, js_name = correctionSizePolicy)]
+    pub fn correction_size_policy(&self) -> SsrCorrectionSizePolicy {
+        match self.inner.correction_size_policy() {
+            CoreCorrectionSizePolicy::Strict => SsrCorrectionSizePolicy::Strict,
+            CoreCorrectionSizePolicy::Lenient => SsrCorrectionSizePolicy::Lenient,
+        }
+    }
+    #[wasm_bindgen(getter, js_name = oversizedCorrections, unchecked_return_type = "SsrOversizedCorrection[]")]
+    pub fn oversized_corrections(&self) -> Result<JsValue, JsValue> {
+        let rows: Vec<SsrOversizedCorrectionJs> = self
+            .inner
+            .oversized_corrections()
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        serde_wasm_bindgen::to_value(&rows).map_err(engine_error)
     }
 }

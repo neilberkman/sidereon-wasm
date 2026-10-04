@@ -1076,7 +1076,7 @@ pub fn sample_broadcast_ephemeris(
     step_s: f64,
 ) -> Result<JsValue, JsValue> {
     sample_over(
-        &broadcast.inner,
+        broadcast.inner.as_ref(),
         satellites,
         start_j2000_s,
         stop_j2000_s,
@@ -1155,7 +1155,7 @@ impl BroadcastEphemeris {
         satellites: JsValue,
         epochs_j2000_s: JsValue,
     ) -> Result<JsValue, JsValue> {
-        observable_states_at_j2000_s_over(&self.inner, satellites, epochs_j2000_s)
+        observable_states_at_j2000_s_over(self.inner.as_ref(), satellites, epochs_j2000_s)
     }
 
     /// Query ECEF position and clock for many satellites at one epoch against
@@ -1173,7 +1173,7 @@ impl BroadcastEphemeris {
         satellites: JsValue,
         epoch_j2000_s: f64,
     ) -> Result<JsValue, JsValue> {
-        observable_states_at_shared_j2000_s_over(&self.inner, satellites, epoch_j2000_s)
+        observable_states_at_shared_j2000_s_over(self.inner.as_ref(), satellites, epoch_j2000_s)
     }
 }
 

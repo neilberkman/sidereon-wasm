@@ -17,7 +17,7 @@ use sidereon_core::rinex::nav::{
     parse_nav_lenient, NavParse as CoreNavParse, SkippedNavBlock as CoreSkippedNavBlock,
 };
 use sidereon_core::{astro::time::GnssWeekTow, GnssSatelliteId};
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use crate::error::{engine_error, range_error, type_error, utf8_text};
 use crate::frames::ExactEpochQueryValue;
@@ -820,7 +820,7 @@ impl IonoCorrectionsJs {
 /// usable GPS/Galileo/BeiDou records selected by the core default SPP policy.
 #[wasm_bindgen]
 pub struct BroadcastEphemeris {
-    pub(crate) inner: CoreBroadcastStore,
+    pub(crate) inner: Arc<CoreBroadcastStore>,
     leap_seconds: Option<f64>,
 }
 
@@ -1004,7 +1004,7 @@ impl BroadcastEphemeris {
         let satellite = GnssSatelliteId::from_str(satellite)
             .map_err(|_| type_error("invalid satellite token"))?;
         crate::sp3::selected_position_clock_at_queries(
-            &self.inner,
+            self.inner.as_ref(),
             satellite,
             state_epoch,
             selection_epoch,
@@ -1021,7 +1021,7 @@ impl BroadcastEphemeris {
         let satellite = GnssSatelliteId::from_str(satellite)
             .map_err(|_| type_error("invalid satellite token"))?;
         crate::sp3::transmit_epoch_clock_at_queries(
-            &self.inner,
+            self.inner.as_ref(),
             satellite,
             state_epoch,
             selection_epoch,
@@ -1038,7 +1038,7 @@ impl BroadcastEphemeris {
         let satellite = GnssSatelliteId::from_str(satellite)
             .map_err(|_| type_error("invalid satellite token"))?;
         Ok(crate::sp3::precise_variance_at_queries(
-            &self.inner,
+            self.inner.as_ref(),
             satellite,
             state_epoch,
             selection_epoch,
@@ -1058,7 +1058,7 @@ impl BroadcastEphemeris {
             .try_into()
             .map_err(|_| type_error("positionEcefM must contain exactly three coordinates"))?;
         crate::sp3::precise_clock_relativity_at_query(
-            &self.inner,
+            self.inner.as_ref(),
             satellite,
             state_epoch,
             position_ecef_m,
@@ -1191,7 +1191,7 @@ impl BroadcastEphemeris {
 #[wasm_bindgen(js_name = parseRinexNav)]
 pub fn parse_rinex_nav(bytes: &[u8]) -> Result<BroadcastEphemeris, JsValue> {
     let text = utf8_text(bytes, "RINEX NAV source")?;
-    let inner = CoreBroadcastStore::from_nav(&text).map_err(engine_error)?;
+    let inner = Arc::new(CoreBroadcastStore::from_nav(&text).map_err(engine_error)?);
     // A malformed LEAP SECONDS row leaves the value absent, as the store
     // leaves every malformed optional header row, and is reported in the
     // store's `departures`.
