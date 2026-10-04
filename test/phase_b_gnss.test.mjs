@@ -721,6 +721,125 @@ test("Bias-SINEX departures retain typed details in strict and lenient modes", (
   assert.ok(parsed.notices.some((notice) => notice.includes("HeaderLayout")));
 });
 
+test("Bias-SINEX departure DTO maps every reachable variant field", () => {
+  const base = coreFixture("bias/CODE.BIA").toString("utf8");
+  const replaceOnce = (text, before, after) => {
+    assert.ok(text.includes(before), `fixture text is missing ${before}`);
+    return text.replace(before, after);
+  };
+  const insertBefore = (text, before, inserted) =>
+    replaceOnce(text, before, `${inserted}${before}`);
+  const removeBetween = (text, start, end) => {
+    const a = text.indexOf(start);
+    const b = text.indexOf(end, a);
+    assert.ok(a >= 0 && b > a);
+    return `${text.slice(0, a)}${text.slice(b)}`;
+  };
+  const cases = [
+    [replaceOnce(base, "%=BIA 1.00", "%=BIA 2.00"), { kind: "otherVersion", version: "2.00" }],
+    [base.replace("%=ENDBIA\n", ""), { kind: "missingFooter" }],
+    [`${base}after-footer\n`, { kind: "contentAfterFooter", line: 424 }],
+    [
+      insertBefore(base, "%=ENDBIA", "%=UNEXPECTED\n"),
+      { kind: "unexpectedControlLine", line: 423 },
+    ],
+    [
+      replaceOnce(base, "-BIAS/SOLUTION\n", ""),
+      { kind: "unclosedBlock", name: "BIAS/SOLUTION", line: 69 },
+    ],
+    [
+      insertBefore(base, "%=ENDBIA", "-NO/SUCH/BLOCK\n"),
+      { kind: "unopenedBlockEnd", name: "NO/SUCH/BLOCK", line: 423 },
+    ],
+    [
+      replaceOnce(base, "-BIAS/SOLUTION\n", "-NO/SUCH/BLOCK\n"),
+      { kind: "mismatchedBlockEnd", open: "BIAS/SOLUTION", close: "NO/SUCH/BLOCK", line: 422 },
+    ],
+    [
+      insertBefore(base, "*BIAS SVN_", "+INNER/BLOCK\n"),
+      { kind: "nestedBlock", open: "BIAS/SOLUTION", inner: "INNER/BLOCK", line: 70 },
+    ],
+    [
+      removeBetween(base, "+FILE/REFERENCE", "-FILE/REFERENCE"),
+      { kind: "missingBlock", name: "FILE/REFERENCE" },
+    ],
+    [
+      insertBefore(base, "%=ENDBIA", "+UNKNOWN/BLOCK\n-UNKNOWN/BLOCK\n"),
+      { kind: "unknownBlock", name: "UNKNOWN/BLOCK", line: 423 },
+    ],
+    [
+      replaceOnce(base, "+BIAS/SOLUTION\n", "+BIAS/SOLUTION 351\n"),
+      { kind: "blockStartSuffix", line: 69 },
+    ],
+    [insertBefore(base, "+BIAS/SOLUTION", "orphan row\n"), { kind: "dataOutsideBlock", line: 69 }],
+    [
+      replaceOnce(base, " BIAS_MODE                               ABSOLUTE\n", ""),
+      { kind: "missingDeclaration", keyword: "BIAS_MODE" },
+    ],
+    [
+      replaceOnce(
+        base,
+        " BIAS_MODE                               ABSOLUTE",
+        " BIAS_MODE                               RELATIVE",
+      ),
+      { kind: "headerModeMismatch", header: "A", description: "relative" },
+    ],
+    [
+      replaceOnce(
+        base,
+        " BIAS_MODE                               ABSOLUTE",
+        " BIAS_MODE                               UNKNOWN",
+      ),
+      { kind: "unsupportedBiasMode", line: 60, label: "UNKNOWN" },
+    ],
+    [
+      replaceOnce(
+        base,
+        " TIME_SYSTEM                             G  ",
+        " TIME_SYSTEM                             XYZ",
+      ),
+      { kind: "nonStandardTimeSystem", line: 62, label: "XYZ" },
+    ],
+    [
+      replaceOnce(
+        base,
+        "%=BIA 1.00 COD 2026:182:31588 IGS 2026:152:00000 2026:182:00000 A 00000351",
+        "%=BIA 1.00 COD 2026:182:31588 IGS 2026:152:00000 2026:182:00000 A 00000352",
+      ),
+      { kind: "estimateCountMismatch", declared: 352, solutionRows: 351 },
+    ],
+  ];
+
+  for (const [text, expected] of cases) {
+    const parsed = loadBiasSinex(Buffer.from(text, "utf8"), "lenient");
+    const notice = parsed.noticeDetails.find(
+      (item) => item.kind === "departure" && item.departure.kind === expected.kind,
+    );
+    assert.deepEqual(notice, { kind: "departure", departure: expected });
+  }
+
+  const generated = "# DCB P1-C1 2026-06 MARS\nABMF97103M001                 -1.365       0.050\n";
+  const parsedDcb = loadCodeDcbLossy(Buffer.from(generated, "utf8"), null, "lenient");
+  const dcbNotice = parsedDcb.noticeDetails.find(
+    (item) => item.kind === "departure" && item.departure.kind === "unknownDcbTimeSystem",
+  );
+  assert.deepEqual(dcbNotice, {
+    kind: "departure",
+    departure: { kind: "unknownDcbTimeSystem", line: 1, label: "MARS" },
+  });
+  assert.throws(
+    () => loadCodeDcb(Buffer.from(generated, "utf8")),
+    (error) => {
+      assert.equal(error.name, "BiasError");
+      assert.deepEqual(error.detail, {
+        kind: "departure",
+        departure: { kind: "unknownDcbTimeSystem", line: 1, label: "MARS" },
+      });
+      return true;
+    },
+  );
+});
+
 test("SSR 4076 store retains complete IGS orbit, clock, and high-rate records", () => {
   const baseClock = hexToBytes(
     "d30024fec22e30d40060123702088fffffa00009ffff600006ffff200023ffff60000a7ffffe20482165",

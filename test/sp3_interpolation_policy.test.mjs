@@ -36,6 +36,77 @@ function gappedSp3Bytes() {
   return new TextEncoder().encode(gappedLines.join("\n"));
 }
 
+test("Sp3 public DTO routes retain literal fixture metadata and state values", () => {
+  const source = fixture("GRG0MGXFIN_20201760000_01D_15M_ORB.SP3");
+  const sp3 = loadSp3(source);
+
+  assert.equal(sp3.epochCount, 96);
+  assert.equal(sp3.declaredEpochCount, 96);
+  assert.equal(sp3.declaredStartJ2000Seconds, 646228800);
+  assert.deepEqual(sp3.satellites.slice(0, 10), [
+    "E01",
+    "E02",
+    "E03",
+    "E04",
+    "E05",
+    "E07",
+    "E08",
+    "E09",
+    "E11",
+    "E12",
+  ]);
+  assert.equal(sp3.gapThresholdFactor, 1.5);
+  assert.deepEqual(
+    Array.from(sp3.epochsJ2000Seconds()).slice(0, 6),
+    [646228800, 646229700, 646230600, 646231500, 646232400, 646233300],
+  );
+  const state = sp3.state("G01", 0);
+  assert.deepEqual(
+    Array.from(state.positionM),
+    [-10438032.216, 19508882.933000002, -14665718.188000001],
+  );
+  assert.equal(state.clockS, 0.000015315889);
+  assert.equal(state.velocityMS, undefined);
+  assert.deepEqual(sp3.recordAccuracyCodes("G01", 0), {
+    p: {
+      axisExponents: [undefined, undefined, undefined],
+      clockExponent: undefined,
+      positionVelocityBase: 0,
+      clockRateBase: 0,
+    },
+    v: undefined,
+  });
+  assert.deepEqual(sp3.recordAccuracy("G01", 0), {
+    p: {
+      positionSigmaM: [{ kind: "unknown" }, { kind: "unknown" }, { kind: "unknown" }],
+      clockSigmaM: { kind: "unknown" },
+      positionVarianceM2: [{ kind: "unknown" }, { kind: "unknown" }, { kind: "unknown" }],
+      clockVarianceM2: { kind: "unknown" },
+    },
+    v: undefined,
+  });
+  const summary = sp3.predictionSummary();
+  assert.equal(summary.epochs.length, 96);
+  assert.deepEqual(summary.epochs[0], {
+    epochJ2000Seconds: 646228800,
+    observed: true,
+    orbitPredictedSatellites: [],
+    clockPredictedSatellites: [],
+  });
+  assert.equal(summary.observedThroughJ2000Seconds, 646314300);
+
+  const adjusted = sp3.withInterpolationOptions(2.0);
+  assert.equal(sp3.gapThresholdFactor, 1.5);
+  assert.equal(adjusted.gapThresholdFactor, 2.0);
+  assert.deepEqual(adjusted.epochsJ2000Seconds(), sp3.epochsJ2000Seconds());
+  const written = sp3.toSp3String();
+  assert.equal(typeof written, "string");
+  const reread = loadSp3(Buffer.from(written, "utf8"));
+  assert.equal(reread.epochCount, sp3.epochCount);
+  assert.deepEqual(reread.satellites, sp3.satellites);
+  assert.deepEqual(reread.state("G01", 0).positionM, state.positionM);
+});
+
 test("loadSp3 interpolation policy", () => {
   const bytes = gappedSp3Bytes();
   const sp3Default = loadSp3(bytes);
