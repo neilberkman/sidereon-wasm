@@ -9,7 +9,8 @@ test("Tle.lookAngles retains SGP4 propagation details", () => {
   const tle = new Tle(line1, line2);
   const station = new GroundStation(37, -122, 0);
   try {
-    const epoch = BigInt(Date.UTC(2005, 0, 1)) * 1000n +
+    const epoch =
+      BigInt(Date.UTC(2005, 0, 1)) * 1000n +
       BigInt(Math.round((333.02012661 - 1) * 86_400_000_000));
     const decay = epoch + 1440n * 60n * 1_000_000n;
     let failure;
