@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-Engine update: sidereon / sidereon-core 3.0.0 (pending release). Every entry below
+## 3.0.0 - 2026-10-04
+
+Engine update: sidereon / sidereon-core 3.0.0. Every entry below
 restates an engine change as it reaches the JavaScript API.
 
 ### Labels
