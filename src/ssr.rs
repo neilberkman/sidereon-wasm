@@ -14,6 +14,7 @@ use sidereon_core::ssr::{
     SsrCorrectionSizePolicy as CoreCorrectionSizePolicy,
     SsrCorrectionStore as CoreSsrCorrectionStore, SsrFallbackPolicy, SsrNavigationMessage,
     SsrOversizedCorrection, SsrReferencePoint, SsrSatelliteAttitude, SsrSource as CoreSsrSource,
+    SsrStateUnavailable,
 };
 use sidereon_core::staleness::StalenessPolicy;
 use sidereon_core::GnssSatelliteId;
@@ -87,6 +88,40 @@ export interface SsrSolution {
   source: "rtcmSsr" | "galileoHas" | "igsSsr";
   providerId: number;
   solutionId: number;
+}
+
+export type SsrStateUnavailableReason =
+  | { kind: "excludedByHas" }
+  | { kind: "noOrbitCorrection" }
+  | { kind: "noClockCorrection" }
+  | { kind: "orbitClockMismatch" }
+  | { kind: "reservedNavigationMessage"; index: number }
+  | { kind: "orbitNotFresh" }
+  | { kind: "clockNotFresh" }
+  | { kind: "regionalProviderNotAllowed" }
+  | { kind: "correctionExceedsLimit"; size: SsrCorrectionSize }
+  | { kind: "noBroadcastModel" }
+  | { kind: "noMatchingBroadcastRecord"; iode: number }
+  | { kind: "invalidBroadcastState" }
+  | { kind: "degenerateOrbitFrame" }
+  | { kind: "centerOfMassUnresolved" }
+  | { kind: "ut1OutsideCoverage"; reason: "beforeCoverage" | "afterCoverage" }
+  | { kind: "other" };
+
+export type SsrAppliedOrbitClockStatus =
+  | { status: "available"; solution: SsrSolution }
+  | { status: "unavailable"; reason: SsrStateUnavailableReason };
+
+export interface SsrCorrectedStateWithGroupDelay {
+  positionEcefM: [number, number, number];
+  clockS: number;
+  groupDelayS: number | undefined;
+}
+
+/** Checked exact-epoch state, clock, group delay, and UT1 degradation. */
+export interface SsrCorrectedStateWithGroupDelayChecked {
+  value: SsrCorrectedStateWithGroupDelay;
+  ut1Degraded: "beforeCoverage" | "afterCoverage" | null;
 }
 
 /** Stored high-rate clock correction copied from the core record. */
@@ -230,6 +265,72 @@ struct SsrSolutionJs {
     source: &'static str,
     provider_id: u16,
     solution_id: u8,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+enum SsrStateUnavailableJs {
+    ExcludedByHas,
+    NoOrbitCorrection,
+    NoClockCorrection,
+    OrbitClockMismatch,
+    ReservedNavigationMessage { index: u8 },
+    OrbitNotFresh,
+    ClockNotFresh,
+    RegionalProviderNotAllowed,
+    CorrectionExceedsLimit { size: SsrCorrectionSizeJs },
+    NoBroadcastModel,
+    NoMatchingBroadcastRecord { iode: u32 },
+    InvalidBroadcastState,
+    DegenerateOrbitFrame,
+    CenterOfMassUnresolved,
+    Ut1OutsideCoverage { reason: &'static str },
+    Other,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", tag = "status")]
+enum SsrAppliedOrbitClockStatusJs {
+    Available { solution: SsrSolutionJs },
+    Unavailable { reason: SsrStateUnavailableJs },
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CorrectedStateWithGroupDelayJs {
+    position_ecef_m: [f64; 3],
+    clock_s: f64,
+    group_delay_s: Option<f64>,
+}
+
+fn ssr_state_unavailable_js(unavailable: SsrStateUnavailable) -> SsrStateUnavailableJs {
+    use SsrStateUnavailable as U;
+    match unavailable {
+        U::ExcludedByHas => SsrStateUnavailableJs::ExcludedByHas,
+        U::NoOrbitCorrection => SsrStateUnavailableJs::NoOrbitCorrection,
+        U::NoClockCorrection => SsrStateUnavailableJs::NoClockCorrection,
+        U::OrbitClockMismatch => SsrStateUnavailableJs::OrbitClockMismatch,
+        U::ReservedNavigationMessage { index } => {
+            SsrStateUnavailableJs::ReservedNavigationMessage { index }
+        }
+        U::OrbitNotFresh => SsrStateUnavailableJs::OrbitNotFresh,
+        U::ClockNotFresh => SsrStateUnavailableJs::ClockNotFresh,
+        U::RegionalProviderNotAllowed => SsrStateUnavailableJs::RegionalProviderNotAllowed,
+        U::CorrectionExceedsLimit(size) => {
+            SsrStateUnavailableJs::CorrectionExceedsLimit { size: size.into() }
+        }
+        U::NoBroadcastModel => SsrStateUnavailableJs::NoBroadcastModel,
+        U::NoMatchingBroadcastRecord { iode } => {
+            SsrStateUnavailableJs::NoMatchingBroadcastRecord { iode }
+        }
+        U::InvalidBroadcastState => SsrStateUnavailableJs::InvalidBroadcastState,
+        U::DegenerateOrbitFrame => SsrStateUnavailableJs::DegenerateOrbitFrame,
+        U::CenterOfMassUnresolved => SsrStateUnavailableJs::CenterOfMassUnresolved,
+        U::Ut1OutsideCoverage(reason) => SsrStateUnavailableJs::Ut1OutsideCoverage {
+            reason: crate::spp::degrade_reason_label(reason),
+        },
+        _ => SsrStateUnavailableJs::Other,
+    }
 }
 
 #[derive(Serialize)]
@@ -1249,6 +1350,107 @@ impl SsrCorrectedEphemeris {
         self
     }
 
+    /// Velocity of the broadcast record selected by the applied SSR orbit IODE.
+    #[wasm_bindgen(js_name = correctedVelocityAtJ2000, unchecked_return_type = "[number, number, number] | null")]
+    pub fn corrected_velocity_at_j2000(
+        &self,
+        satellite: &str,
+        epoch_j2000_s: f64,
+    ) -> Result<JsValue, JsValue> {
+        match self
+            .inner
+            .corrected_velocity(parse_sat(satellite)?, epoch_j2000_s)
+        {
+            Some(value) => serde_wasm_bindgen::to_value(&value).map_err(engine_error),
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Identify the SSR orbit and clock solution applied to the satellite state.
+    #[wasm_bindgen(js_name = appliedOrbitClockSolutionAtJ2000, unchecked_return_type = "SsrSolution | null")]
+    pub fn applied_orbit_clock_solution_at_j2000(
+        &self,
+        satellite: &str,
+        epoch_j2000_s: f64,
+    ) -> Result<JsValue, JsValue> {
+        match self
+            .inner
+            .applied_orbit_clock_solution(parse_sat(satellite)?, epoch_j2000_s)
+        {
+            Some(solution) => serde_wasm_bindgen::to_value(&SsrSolutionJs {
+                source: source_label(solution.source),
+                provider_id: solution.provider_id,
+                solution_id: solution.solution_id,
+            })
+            .map_err(engine_error),
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Return the applied SSR solution or the core reason it is unavailable.
+    #[wasm_bindgen(js_name = appliedOrbitClockStatusAtJ2000, unchecked_return_type = "SsrAppliedOrbitClockStatus")]
+    pub fn applied_orbit_clock_status_at_j2000(
+        &self,
+        satellite: &str,
+        epoch_j2000_s: f64,
+    ) -> Result<JsValue, JsValue> {
+        let status = match self
+            .inner
+            .applied_orbit_clock_status(parse_sat(satellite)?, epoch_j2000_s)
+        {
+            Ok(solution) => SsrAppliedOrbitClockStatusJs::Available {
+                solution: SsrSolutionJs {
+                    source: source_label(solution.source),
+                    provider_id: solution.provider_id,
+                    solution_id: solution.solution_id,
+                },
+            },
+            Err(unavailable) => SsrAppliedOrbitClockStatusJs::Unavailable {
+                reason: ssr_state_unavailable_js(unavailable),
+            },
+        };
+        serde_wasm_bindgen::to_value(&status).map_err(engine_error)
+    }
+
+    /// Return corrected position, clock and broadcast single-frequency group delay.
+    #[wasm_bindgen(js_name = correctedStateWithGroupDelayAtJ2000, unchecked_return_type = "SsrCorrectedStateWithGroupDelay | null")]
+    pub fn corrected_state_with_group_delay_at_j2000(
+        &self,
+        satellite: &str,
+        epoch_j2000_s: f64,
+    ) -> Result<JsValue, JsValue> {
+        let state = self
+            .inner
+            .corrected_state_with_group_delay(parse_sat(satellite)?, epoch_j2000_s)
+            .map(
+                |(position_ecef_m, clock_s, group_delay_s)| CorrectedStateWithGroupDelayJs {
+                    position_ecef_m,
+                    clock_s,
+                    group_delay_s,
+                },
+            );
+        match state {
+            Some(state) => serde_wasm_bindgen::to_value(&state).map_err(engine_error),
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Return the single-frequency group delay of the selected broadcast record.
+    #[wasm_bindgen(js_name = singleFrequencyGroupDelayAtJ2000, unchecked_return_type = "number | null")]
+    pub fn single_frequency_group_delay_at_j2000(
+        &self,
+        satellite: &str,
+        epoch_j2000_s: f64,
+    ) -> Result<JsValue, JsValue> {
+        match self
+            .inner
+            .single_frequency_group_delay_s(parse_sat(satellite)?, epoch_j2000_s)
+        {
+            Some(delay) => serde_wasm_bindgen::to_value(&delay).map_err(engine_error),
+            None => Ok(JsValue::NULL),
+        }
+    }
+
     #[wasm_bindgen(js_name = correctedStateAtJ2000, unchecked_return_type = "SsrCorrectedState | null")]
     pub fn corrected_state_at_j2000(
         &self,
@@ -1349,6 +1551,25 @@ impl SsrCorrectedEphemeris {
             size: size.into(),
         };
         serde_wasm_bindgen::to_value(&refusal).map_err(engine_error)
+    }
+
+    /// Checked exact-epoch corrected position, clock and group delay.
+    #[wasm_bindgen(
+        js_name = correctedStateWithGroupDelayAtQueries,
+        unchecked_return_type = "SsrCorrectedStateWithGroupDelayChecked | null"
+    )]
+    pub fn corrected_state_with_group_delay_at_queries(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<JsValue, JsValue> {
+        crate::sp3::selected_position_clock_at_queries(
+            &self.inner,
+            parse_sat(satellite)?,
+            state_epoch,
+            selection_epoch,
+        )
     }
 
     #[wasm_bindgen(js_name = selectedPositionClockAtQueries)]

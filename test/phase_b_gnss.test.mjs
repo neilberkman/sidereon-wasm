@@ -95,6 +95,23 @@ const frameWithChangedG30Clock = (frame) => {
   crc24q(changed);
   return changed;
 };
+const frameWithRegionalG30Datum = (frame) => {
+  const changed = frame.slice();
+  // RTCM SSR places this flag immediately after multipleMessage and before IOD SSR.
+  const datumOffset = 37;
+  assert.equal(readBits(changed, datumOffset, 1), 0);
+  writeBits(changed, datumOffset, 1, 1);
+  crc24q(changed);
+  return changed;
+};
+const frameAtGpsTow = (frame, originalTow, changedTow) => {
+  const changed = frame.slice();
+  const epochOffset = 12;
+  assert.equal(readBits(changed, epochOffset, 20), originalTow);
+  writeBits(changed, epochOffset, 20, changedTow);
+  crc24q(changed);
+  return changed;
+};
 const close = (actual, expected, tol, label) =>
   assert.ok(Math.abs(actual - expected) <= tol, `${label}: ${actual} vs ${expected}`);
 const norm3 = (v) => Math.hypot(v[0], v[1], v[2]);
@@ -631,9 +648,22 @@ test("owned SSR corrected source has an independent core numeric oracle and surv
     ut1Degraded: undefined,
   });
   const selected = source.selectedPositionClockAtQueries("G30", epoch, epoch);
-  assert.equal(selected.value.positionEcefM[0], -6296153.684045405);
-  assert.equal(selected.value.clockS, 0.0002800863540204331);
-  assert.equal(selected.value.groupDelayS, 4.19095158577e-9);
+  assert.deepEqual(selected, {
+    value: {
+      positionEcefM: [-6296153.684045405, 15837450.006500244, -20103648.508187104],
+      clockS: 0.0002800863540204331,
+      groupDelayS: 4.19095158577e-9,
+    },
+    ut1Degraded: null,
+  });
+  assert.deepEqual(source.correctedStateWithGroupDelayAtQueries("G30", epoch, epoch), {
+    value: {
+      positionEcefM: [-6296153.684045405, 15837450.006500244, -20103648.508187104],
+      clockS: 0.0002800863540204331,
+      groupDelayS: 4.19095158577e-9,
+    },
+    ut1Degraded: null,
+  });
   assert.deepEqual(source.transmitEpochClockAtQueries("G30", epoch, epoch), {
     value: 0.0002800929432812776,
     ut1Degraded: null,
@@ -645,6 +675,167 @@ test("owned SSR corrected source has an independent core numeric oracle and surv
   assert.equal(source.correctionSizePolicy, 0);
   assert.equal(source.ut1Departure, undefined);
   assert.deepEqual(source.oversizedCorrections, []);
+});
+
+test("owned SSR exposes velocity, applied solution status, and full group-delay results", () => {
+  const frame = hexToBytes(coreFixture("ssr/SSRA02IGS0_2026181234930_1060.hex").toString("utf8"));
+  const store = new SsrCorrectionStore();
+  store.ingest(frame, true, 2425, 344970, "gpst");
+  const nav = loadRinexNav(coreFixture("ssr/BRDC00WRD_S_20261820000_G30_G31.rnx"));
+  const source = new SsrCorrectedEphemeris(nav, store);
+  const epoch = 836221752;
+
+  assert.deepEqual(
+    source.correctedVelocityAtJ2000("G30", epoch),
+    [-1733.2327608019114, -1962.167527526617, -1017.806526273489],
+  );
+  const solution = { source: "rtcmSsr", providerId: 0, solutionId: 2 };
+  assert.deepEqual(source.appliedOrbitClockSolutionAtJ2000("G30", epoch), solution);
+  assert.deepEqual(source.appliedOrbitClockStatusAtJ2000("G30", epoch), {
+    status: "available",
+    solution,
+  });
+  assert.deepEqual(source.correctedStateWithGroupDelayAtJ2000("G30", epoch), {
+    positionEcefM: [-6296153.684045405, 15837450.006500244, -20103648.508187104],
+    clockS: 0.0002800863540204331,
+    groupDelayS: 4.19095158577e-9,
+  });
+  assert.equal(source.singleFrequencyGroupDelayAtJ2000("G30", epoch), 4.19095158577e-9);
+
+  const emptyStore = new SsrCorrectionStore();
+  const noRecord = new SsrCorrectedEphemeris(nav, emptyStore);
+  assert.equal(noRecord.correctedVelocityAtJ2000("G01", epoch), null);
+  assert.equal(noRecord.appliedOrbitClockSolutionAtJ2000("G01", epoch), null);
+  assert.equal(noRecord.correctedStateWithGroupDelayAtJ2000("G01", epoch), null);
+  assert.equal(noRecord.singleFrequencyGroupDelayAtJ2000("G01", epoch), null);
+  const exactEpoch = ExactEpochQuery.fromBinaryJ2000Seconds(epoch);
+  assert.equal(noRecord.correctedStateWithGroupDelayAtQueries("G01", exactEpoch, exactEpoch), null);
+  noRecord.free();
+  emptyStore.free();
+
+  source.free();
+  nav.free();
+  store.free();
+});
+
+test("owned SSR applies regional provider, UT1, and nominal CoM attitude policies", () => {
+  const frame = hexToBytes(coreFixture("ssr/SSRA02IGS0_2026181234930_1060.hex").toString("utf8"));
+  const nav = loadRinexNav(coreFixture("ssr/BRDC00WRD_S_20261820000_G30_G31.rnx"));
+  const epoch = 836221752;
+  const regionalFrame = frameWithRegionalG30Datum(frame);
+  assert.equal(decodeSsr(regionalFrame, true).header.satelliteReferenceDatum, true);
+
+  const regionalStore = new SsrCorrectionStore();
+  regionalStore.ingest(regionalFrame, true, 2425, 344970, "gpst");
+  assert.equal(regionalStore.orbit("G30").crsRegional, true);
+  const regionalDecline = new SsrCorrectedEphemeris(nav, regionalStore);
+  assert.deepEqual(regionalDecline.appliedOrbitClockStatusAtJ2000("G30", epoch), {
+    status: "unavailable",
+    reason: { kind: "regionalProviderNotAllowed" },
+  });
+  assert.equal(regionalDecline.appliedOrbitClockSolutionAtJ2000("G30", epoch), null);
+
+  const regionalAllowed = new SsrCorrectedEphemeris(nav, regionalStore, {
+    allowRegionalProviders: [0],
+  });
+  assert.deepEqual(regionalAllowed.appliedOrbitClockStatusAtJ2000("G30", epoch), {
+    status: "available",
+    solution: { source: "rtcmSsr", providerId: 0, solutionId: 2 },
+  });
+  assert.deepEqual(regionalAllowed.correctedStateAtJ2000("G30", epoch), {
+    positionEcefM: [-6296153.684045405, 15837450.006500244, -20103648.508187104],
+    clockS: 0.0002800863540204331,
+    ut1Degraded: undefined,
+  });
+
+  const comFrame = frame;
+  const comStore = new SsrCorrectionStore(1);
+  comStore.ingest(comFrame, true, 2425, 344970, "gpst");
+  const antex = loadAntex(coreFixture("antex/igs20_wettzell_trim.atx"));
+  const unavailableAttitude = new SsrCorrectedEphemeris(nav, comStore).withSatelliteAntennas(antex);
+  assert.deepEqual(unavailableAttitude.appliedOrbitClockStatusAtJ2000("G30", 836221770), {
+    status: "unavailable",
+    reason: { kind: "centerOfMassUnresolved" },
+  });
+  const nominal = new SsrCorrectedEphemeris(nav, comStore, {
+    maxStalenessS: 60,
+    satelliteAttitude: "nominalSunFixed",
+  }).withSatelliteAntennas(antex);
+  assert.deepEqual(nominal.correctedStateAtJ2000("G30", 836221770), {
+    positionEcefM: [-6327381.448161609, 15802128.916795386, -20121896.861226305],
+    clockS: 0.0002800865527753679,
+    ut1Degraded: undefined,
+  });
+
+  // Roll the real G30 RINEX record and RTCM epoch together beyond the pinned
+  // UT1 table end (MJD 61589), retaining the record's broadcast parameters and IODE.
+  const navLines = coreFixture("ssr/BRDC00WRD_S_20261820000_G30_G31.rnx")
+    .toString("utf8")
+    .split(/\r?\n/);
+  const g30Line = navLines.findIndex((line) => line.startsWith("G30 2026 07 02"));
+  assert.notEqual(g30Line, -1);
+  navLines[g30Line] = navLines[g30Line].replace("2026 07 02", "2027 07 22");
+  navLines[g30Line + 5] = navLines[g30Line + 5].replace("2.425000000000e+03", "2.480000000000e+03");
+  const futureNav = loadRinexNav(new TextEncoder().encode(navLines.join("\n")));
+  const futureFrame = frameAtGpsTow(frame, 344970, 345600);
+  const futureWeek = 2480;
+  const futureTow = 345600;
+  const futureEpoch = gpsJ2000FromWeekTow(futureWeek, futureTow);
+  const futureStore = new SsrCorrectionStore(1);
+  futureStore.ingest(futureFrame, true, futureWeek, futureTow, "gpst");
+  const futureAntex = loadAntex(coreFixture("antex/igs20_wettzell_trim.atx"));
+  const strictUt1 = new SsrCorrectedEphemeris(futureNav, futureStore, {
+    maxStalenessS: 60,
+    satelliteAttitude: "nominalSunFixed",
+    ut1Validity: "strict",
+  }).withSatelliteAntennas(futureAntex);
+  assert.deepEqual(strictUt1.appliedOrbitClockStatusAtJ2000("G30", futureEpoch), {
+    status: "unavailable",
+    reason: { kind: "ut1OutsideCoverage", reason: "afterCoverage" },
+  });
+  const permissiveUt1 = new SsrCorrectedEphemeris(futureNav, futureStore, {
+    maxStalenessS: 60,
+    satelliteAttitude: "nominalSunFixed",
+    ut1Validity: "permissive",
+  }).withSatelliteAntennas(futureAntex);
+  const query = ExactEpochQuery.fromBinaryJ2000Seconds(futureEpoch);
+  assert.throws(
+    () => strictUt1.correctedStateWithGroupDelayAtQueries("G30", query, query),
+    (error) => {
+      assert.equal(error.name, "PositioningError");
+      assert.deepEqual(error.detail, {
+        kind: "UT1_OUTSIDE_COVERAGE",
+        message: "UT1 outside the table: instant follows the UT1 table coverage",
+        reason: "afterCoverage",
+      });
+      return true;
+    },
+  );
+  const checkedDegraded = permissiveUt1.correctedStateWithGroupDelayAtQueries("G30", query, query);
+  assert.equal(checkedDegraded.ut1Degraded, "afterCoverage");
+  assert.ok(checkedDegraded.value.positionEcefM.every(Number.isFinite));
+  assert.ok(Number.isFinite(checkedDegraded.value.clockS));
+  assert.equal(checkedDegraded.value.groupDelayS, 4.19095158577e-9);
+  const degraded = permissiveUt1.correctedStateAtQueries("G30", query, query);
+  assert.ok(degraded);
+  assert.ok(degraded.positionEcefM.every(Number.isFinite));
+  assert.ok(Number.isFinite(degraded.clockS));
+  assert.equal(degraded.ut1Degraded, "afterCoverage");
+  assert.equal(permissiveUt1.ut1Departure, "afterCoverage");
+
+  strictUt1.free();
+  permissiveUt1.free();
+  futureAntex.free();
+  futureStore.free();
+  futureNav.free();
+  nominal.free();
+  unavailableAttitude.free();
+  antex.free();
+  regionalAllowed.free();
+  regionalDecline.free();
+  comStore.free();
+  regionalStore.free();
+  nav.free();
 });
 
 test("owned SSR corrected source validates policy options before narrowing and owns a store snapshot", () => {
