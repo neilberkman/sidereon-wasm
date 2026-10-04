@@ -1,3 +1,5 @@
+export type { Sp3Header } from "../pkg/sidereon.js";
+
 export type {
   AstroErrorDetail,
   AstroExactFloat,

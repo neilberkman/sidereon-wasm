@@ -43,6 +43,120 @@ test("Sp3 public DTO routes retain literal fixture metadata and state values", (
   assert.equal(sp3.epochCount, 96);
   assert.equal(sp3.declaredEpochCount, 96);
   assert.equal(sp3.declaredStartJ2000Seconds, 646228800);
+
+  const header = sp3.header;
+  assert.deepEqual(header, {
+    version: "c",
+    dataType: "position",
+    numEpochs: 96,
+    dataUsed: "TRACK",
+    coordinateSystem: "IGb14",
+    orbitType: "FIT",
+    agency: "GRGS",
+    gnssWeek: 2111,
+    secondsOfWeek: 259200,
+    epochIntervalS: 900,
+    mjd: 59024,
+    mjdFraction: 0,
+    fileType: "M",
+    timeSystem: "GPS",
+    timeScale: "gpst",
+    posVelBase: 0,
+    clockRateBase: 0,
+    satellites: [
+      "E01",
+      "E02",
+      "E03",
+      "E04",
+      "E05",
+      "E07",
+      "E08",
+      "E09",
+      "E11",
+      "E12",
+      "E13",
+      "E14",
+      "E15",
+      "E18",
+      "E19",
+      "E21",
+      "E24",
+      "E25",
+      "E26",
+      "E27",
+      "E30",
+      "E31",
+      "E33",
+      "E36",
+      "R01",
+      "R02",
+      "R03",
+      "R04",
+      "R05",
+      "R07",
+      "R08",
+      "R09",
+      "R11",
+      "R12",
+      "R13",
+      "R14",
+      "R15",
+      "R16",
+      "R17",
+      "R18",
+      "R19",
+      "R20",
+      "R21",
+      "R23",
+      "R24",
+      "G01",
+      "G02",
+      "G03",
+      "G05",
+      "G06",
+      "G07",
+      "G08",
+      "G09",
+      "G10",
+      "G11",
+      "G12",
+      "G13",
+      "G14",
+      "G15",
+      "G16",
+      "G17",
+      "G18",
+      "G19",
+      "G20",
+      "G21",
+      "G22",
+      "G24",
+      "G25",
+      "G26",
+      "G27",
+      "G28",
+      "G29",
+      "G30",
+      "G31",
+      "G32",
+    ],
+    satelliteAccuracyCodes: [
+      4, 4, 4, 4, 4, 5, 4, 4, 5, 5, 5, 4, 5, 4, 4, 4, 4, 4, 5, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 5, 5,
+      5, 6, 6, 6, 6, 6, 5, 5, 6, 6, 5, 4, 5, 5, 4, 5, 4, 4, 5, 4, 4, 4, 4, 4, 5, 4, 4, 3, 4, 4, 4,
+      4, 4, 5, 5, 4, 5, 4, 4, 4, 4, 4, 4, 3,
+    ],
+  });
+  assert.deepEqual(sp3.comments, [
+    "CNES/CLS/GRGS - TOULOUSE,FRANCE - Contact : igs-ac@cls.fr",
+    "PCV:IGS14_2108 OL/AL:FES2012  NONE     NN ORB:CoN CLK:CoN",
+    "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+    "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+  ]);
+  assert.equal(sp3.skippedRecords, 0);
+  assert.deepEqual(
+    Array.from(sp3.epochsJ2000Seconds()),
+    Array.from({ length: 96 }, (_, index) => 646228800 + 900 * index),
+  );
   assert.deepEqual(sp3.satellites.slice(0, 10), [
     "E01",
     "E02",
@@ -105,6 +219,34 @@ test("Sp3 public DTO routes retain literal fixture metadata and state values", (
   assert.equal(reread.epochCount, sp3.epochCount);
   assert.deepEqual(reread.satellites, sp3.satellites);
   assert.deepEqual(reread.state("G01", 0).positionM, state.positionM);
+});
+
+test("Sp3 header projection preserves absent optional fields as undefined", () => {
+  const lines = fixture("sp3/g02_ecef_two_epoch.sp3").toString("utf8").split(/\r?\n/);
+  lines[0] = `${lines[0].slice(0, 40)}     ${lines[0].slice(45)}`;
+  const cLine = lines.findIndex((line) => line.startsWith("%c"));
+  assert.ok(cLine >= 0);
+  lines[cLine] = `${lines[cLine].slice(0, 3)}  ${lines[cLine].slice(5)}`;
+  const fLine = lines.findIndex((line) => line.startsWith("%f"));
+  assert.ok(fLine >= 0);
+  lines[fLine] = `${lines[fLine].slice(0, 3)}                       ${lines[fLine].slice(26)}`;
+
+  const sp3 = loadSp3(new TextEncoder().encode(lines.join("\n")));
+  assert.deepEqual(
+    [sp3.header.dataUsed, sp3.header.fileType, sp3.header.posVelBase, sp3.header.clockRateBase],
+    [undefined, undefined, undefined, undefined],
+  );
+  sp3.free();
+});
+
+test("Sp3 counts unsupported satellite position records it skips", () => {
+  const source = fixture("GRG0MGXFIN_20201760000_01D_15M_ORB.SP3").toString("utf8");
+  const lines = source.split("\n");
+  const positionRecord = lines.findIndex((line) => line.startsWith("PE01"));
+  assert.notEqual(positionRecord, -1);
+  lines[positionRecord] = lines[positionRecord].replace(/^PE01/, "PL01");
+  const sp3 = loadSp3(Buffer.from(lines.join("\n"), "utf8"));
+  assert.equal(sp3.skippedRecords, 1);
 });
 
 test("loadSp3 interpolation policy", () => {

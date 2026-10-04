@@ -26,11 +26,12 @@ use sidereon_core::ephemeris::{
     MergeContinuityCell, MergeContinuityCellRole, MergeContinuityReport, MergeContinuityViolation,
     MergeToleranceError, MergeToleranceField, OrbitClass,
     Sp3AccuracyCodeGroup as CoreAccuracyCodeGroup, Sp3AccuracyValue as CoreAccuracyValue,
-    Sp3EpochIntervalError, Sp3InterpolationOptions,
-    Sp3PositionClockAccuracy as CorePositionClockAccuracy,
+    Sp3DataType as CoreSp3DataType, Sp3EpochIntervalError, Sp3Header as CoreSp3Header,
+    Sp3InterpolationOptions, Sp3PositionClockAccuracy as CorePositionClockAccuracy,
     Sp3RawRecordAccuracy as CoreRawRecordAccuracy, Sp3RecordAccuracy as CoreRecordAccuracy,
-    Sp3State as CoreState, Sp3VelocityAccuracy as CoreVelocityAccuracy, SpeedBound, StencilExtent,
-    UnusableSampleReason, WindowContinuityDecision, WindowContinuityVerdict,
+    Sp3State as CoreState, Sp3VelocityAccuracy as CoreVelocityAccuracy,
+    Sp3Version as CoreSp3Version, SpeedBound, StencilExtent, UnusableSampleReason,
+    WindowContinuityDecision, WindowContinuityVerdict,
 };
 use sidereon_core::positioning::{ClockRelativity as CoreClockRelativity, EphemerisSource};
 use sidereon_core::DigestProvenance as CoreDigestProvenance;
@@ -647,6 +648,89 @@ fn typed_artifact_error<T: Serialize>(name: &'static str, message: String, detai
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct Sp3HeaderJs {
+    version: &'static str,
+    data_type: &'static str,
+    num_epochs: u64,
+    data_used: Option<String>,
+    coordinate_system: String,
+    orbit_type: String,
+    agency: String,
+    gnss_week: u32,
+    seconds_of_week: f64,
+    epoch_interval_s: f64,
+    mjd: u32,
+    mjd_fraction: f64,
+    file_type: Option<String>,
+    time_system: String,
+    time_scale: String,
+    pos_vel_base: Option<f64>,
+    clock_rate_base: Option<f64>,
+    satellites: Vec<String>,
+    satellite_accuracy_codes: Vec<u16>,
+}
+
+impl From<&CoreSp3Header> for Sp3HeaderJs {
+    fn from(header: &CoreSp3Header) -> Self {
+        Self {
+            version: match header.version {
+                CoreSp3Version::A => "a",
+                CoreSp3Version::B => "b",
+                CoreSp3Version::C => "c",
+                CoreSp3Version::D => "d",
+            },
+            data_type: match header.data_type {
+                CoreSp3DataType::Position => "position",
+                CoreSp3DataType::Velocity => "velocity",
+            },
+            num_epochs: header.num_epochs,
+            data_used: header.data_used.clone(),
+            coordinate_system: header.coordinate_system.clone(),
+            orbit_type: header.orbit_type.clone(),
+            agency: header.agency.clone(),
+            gnss_week: header.gnss_week,
+            seconds_of_week: header.seconds_of_week,
+            epoch_interval_s: header.epoch_interval_s,
+            mjd: header.mjd,
+            mjd_fraction: header.mjd_fraction,
+            file_type: header.file_type.clone(),
+            time_system: header.time_system.label().to_string(),
+            time_scale: crate::bias::time_scale_label(header.time_scale).to_string(),
+            pos_vel_base: header.pos_vel_base,
+            clock_rate_base: header.clock_rate_base,
+            satellites: header.satellites.iter().map(ToString::to_string).collect(),
+            satellite_accuracy_codes: header.satellite_accuracy_codes.clone(),
+        }
+    }
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const TS_SP3_HEADER: &str = r#"
+export interface Sp3Header {
+  version: "a" | "b" | "c" | "d";
+  dataType: "position" | "velocity";
+  numEpochs: number;
+  dataUsed: string | undefined;
+  coordinateSystem: string;
+  orbitType: string;
+  agency: string;
+  gnssWeek: number;
+  secondsOfWeek: number;
+  epochIntervalS: number;
+  mjd: number;
+  mjdFraction: number;
+  fileType: string | undefined;
+  timeSystem: "GPS" | "GLO" | "GAL" | "TAI" | "UTC" | "QZS" | "BDT" | "IRN";
+  timeScale: "utc" | "tai" | "tt" | "tdb" | "gpst" | "gst" | "bdt" | "glonasst" | "qzsst" | "tcg" | "tcb";
+  posVelBase: number | undefined;
+  clockRateBase: number | undefined;
+  satellites: string[];
+  satelliteAccuracyCodes: number[];
+}
+"#;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Sp3EpochPredictionJs {
     epoch_j2000_seconds: f64,
     observed: bool,
@@ -1055,6 +1139,25 @@ impl Sp3 {
     #[wasm_bindgen(getter, js_name = epochCount)]
     pub fn epoch_count(&self) -> usize {
         self.inner.epoch_count()
+    }
+
+    /// Full parsed SP3 header with the values and labels retained by the core.
+    #[wasm_bindgen(getter, unchecked_return_type = "Sp3Header")]
+    pub fn header(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&Sp3HeaderJs::from(&self.inner.header))
+            .map_err(|error| engine_error(error.to_string()))
+    }
+
+    /// Header comments in source order.
+    #[wasm_bindgen(getter)]
+    pub fn comments(&self) -> Vec<String> {
+        self.inner.comments.clone()
+    }
+
+    /// Number of input satellite declarations or records the parser could not retain.
+    #[wasm_bindgen(getter, js_name = skippedRecords)]
+    pub fn skipped_records(&self) -> usize {
+        self.inner.skipped_records
     }
 
     /// Epoch count declared by SP3 header line 1, independent of the parsed
