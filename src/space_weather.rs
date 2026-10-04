@@ -88,6 +88,7 @@ fn class_label(class: ObservationClass) -> &'static str {
     match class {
         ObservationClass::Observed => "observed",
         ObservationClass::Interpolated => "interpolated",
+        ObservationClass::NotObserved => "notObserved",
         ObservationClass::DailyPredicted => "dailyPredicted",
         ObservationClass::MonthlyPredicted => "monthlyPredicted",
     }
@@ -172,10 +173,20 @@ struct SpaceWeatherSampleJs {
     ap_defaulted: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ApHistorySampleJs {
+    ap: [f64; 7],
+    class: &'static str,
+    ap_defaulted: bool,
+    bins_from_daily_ap: u8,
+}
+
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct PolicyInput {
     allow_interpolated: Option<bool>,
+    allow_not_observed: Option<bool>,
     allow_daily_predicted: Option<bool>,
     allow_monthly_predicted: Option<bool>,
     require_geomagnetic: Option<bool>,
@@ -188,6 +199,9 @@ impl PolicyInput {
             allow_interpolated: self
                 .allow_interpolated
                 .unwrap_or(defaults.allow_interpolated),
+            allow_not_observed: self
+                .allow_not_observed
+                .unwrap_or(defaults.allow_not_observed),
             allow_daily_predicted: self
                 .allow_daily_predicted
                 .unwrap_or(defaults.allow_daily_predicted),
@@ -199,6 +213,38 @@ impl PolicyInput {
                 .unwrap_or(defaults.require_geomagnetic),
         }
     }
+}
+
+/// Read a space-weather lookup policy: `undefined`/`null` or `"default"` for
+/// [`SpaceWeatherPolicy::default`], `"lenient"` for
+/// [`SpaceWeatherPolicy::lenient`], or an object overriding default fields.
+fn parse_policy(policy: JsValue) -> Result<SpaceWeatherPolicy, JsValue> {
+    if policy.is_null() || policy.is_undefined() {
+        return Ok(SpaceWeatherPolicy::default());
+    }
+    if let Some(name) = policy.as_string() {
+        return match name.as_str() {
+            "default" => Ok(SpaceWeatherPolicy::default()),
+            "lenient" => Ok(SpaceWeatherPolicy::lenient()),
+            other => Err(type_error(&format!(
+                "invalid space-weather policy {other:?}: expected \"default\", \"lenient\" or an object"
+            ))),
+        };
+    }
+    crate::error::reject_unknown_keys(
+        &policy,
+        "space-weather policy",
+        &[
+            "allowInterpolated",
+            "allowNotObserved",
+            "allowDailyPredicted",
+            "allowMonthlyPredicted",
+            "requireGeomagnetic",
+        ],
+    )?;
+    let input: PolicyInput = serde_wasm_bindgen::from_value(policy)
+        .map_err(|e| type_error(&format!("invalid space-weather policy: {e}")))?;
+    Ok(input.to_core())
 }
 
 /// Parsed CelesTrak CSSI space-weather table.
@@ -289,14 +335,12 @@ impl SpaceWeatherTable {
     }
 
     #[wasm_bindgen(js_name = sampleAt)]
-    pub fn sample_at(&self, epoch_j2000_s: f64, policy: JsValue) -> Result<JsValue, JsValue> {
-        let policy = if policy.is_null() || policy.is_undefined() {
-            SpaceWeatherPolicy::default()
-        } else {
-            let input: PolicyInput = serde_wasm_bindgen::from_value(policy)
-                .map_err(|e| type_error(&format!("invalid space-weather policy: {e}")))?;
-            input.to_core()
-        };
+    pub fn sample_at(
+        &self,
+        epoch_j2000_s: f64,
+        #[wasm_bindgen(unchecked_optional_param_type = "SpaceWeatherPolicyInput")] policy: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let policy = parse_policy(policy)?;
         let sample = self
             .inner
             .sample_at_with_policy(epoch_j2000_s, policy)
@@ -316,6 +360,29 @@ impl SpaceWeatherTable {
             .ap_array_at(epoch_j2000_s)
             .map(|array| array.to_vec())
             .map_err(engine_error)
+    }
+
+    /// The seven-element NRLMSISE-00 Ap history at an epoch under a lookup
+    /// policy (default when omitted), with the least-trusted row class read,
+    /// whether the quiet default Ap was used, and how many three-hour bins
+    /// were filled from a row's daily Ap.
+    #[wasm_bindgen(js_name = apHistoryAt, unchecked_return_type = "SpaceWeatherApHistory")]
+    pub fn ap_history_at(
+        &self,
+        epoch_j2000_s: f64,
+        #[wasm_bindgen(unchecked_optional_param_type = "SpaceWeatherPolicyInput")] policy: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let policy = parse_policy(policy)?;
+        let sample = self
+            .inner
+            .ap_history_at_with_policy(epoch_j2000_s, policy)
+            .map_err(engine_error)?;
+        to_value(&ApHistorySampleJs {
+            ap: sample.ap,
+            class: class_label(sample.class),
+            ap_defaulted: sample.ap_defaulted,
+            bins_from_daily_ap: sample.bins_from_daily_ap,
+        })
     }
 
     #[wasm_bindgen(js_name = toCsv)]
@@ -370,6 +437,10 @@ struct DecayRequest {
     max_duration_s: Option<f64>,
     #[serde(default)]
     max_scan_samples: Option<u32>,
+    /// Space-weather lookup policy for the table, as `sampleAt` takes it.
+    /// Absent reads the table under the default policy.
+    #[serde(default, with = "serde_wasm_bindgen::preserve")]
+    policy: JsValue,
 }
 
 #[derive(Serialize)]
@@ -432,7 +503,11 @@ pub fn estimate_decay_with_space_weather(
         config = config.with_max_scan_samples(value);
     }
 
-    let source = SpaceWeatherSource::Table(table.inner.clone());
+    let source = if req.policy.is_null() || req.policy.is_undefined() {
+        SpaceWeatherSource::Table(table.inner.clone())
+    } else {
+        SpaceWeatherSource::TableWithPolicy(table.inner.clone(), parse_policy(req.policy)?)
+    };
     let estimate = core_estimate_decay_with_source(
         CartesianState::new(req.epoch_s, position, velocity),
         &config,

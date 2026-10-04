@@ -7,7 +7,19 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import init, { loadSp3, loadIonex, Tle, GroundStation } from "../pkg/sidereon.js";
+import init, {
+  loadSp3,
+  loadIonex,
+  Tle,
+  GroundStation,
+  sp3PreciseEphemerisSamples,
+  sp3PreciseEphemerisAccuracySamples,
+  preciseEphemerisSamplesFromSamplesWithAccuracy,
+  preciseEphemerisSamplesFromSamples,
+  PreciseEphemerisInterpolant,
+  ExactEpochQuery,
+} from "../pkg/sidereon.js";
+import { coreGoldens, f64Bits } from "./helpers.mjs";
 
 const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 
@@ -52,6 +64,96 @@ test("loadSp3 parses and queries a real precise-ephemeris product", async () => 
   assert.throws(() => sp3.interpolate("ZZ9", epochs.slice(0, 1)), TypeError);
 });
 
+test("SP3 accuracy sidecars survive sample and cached-interpolant construction", async () => {
+  const sp3 = loadSp3(await readFile(here("./fixtures/GRG0MGXFIN_20201760000_01D_15M_ORB.SP3")));
+  const samples = sp3PreciseEphemerisSamples(sp3);
+  const accuracy = sp3PreciseEphemerisAccuracySamples(sp3);
+  const source = preciseEphemerisSamplesFromSamplesWithAccuracy(samples, accuracy);
+  const cached = PreciseEphemerisInterpolant.fromSamplesWithAccuracy(samples, accuracy);
+  // The product lists its satellites in header order; a sample source holds
+  // them keyed by satellite, so compare membership.
+  assert.deepEqual([...source.satellites].sort(), [...sp3.satellites].sort());
+  assert.equal(accuracy.length, samples.length);
+  assert.equal(samples[0].instant.representation.kind, "julianDate");
+  assert.equal(accuracy[0].instant.representation.kind, "julianDate");
+  assert.deepEqual(
+    accuracy.map(({ sat, epoch, instant }) => [sat, epoch, instant]),
+    samples.map(({ sat, epoch, instant }) => [sat, epoch, instant]),
+  );
+  const first = samples[0];
+  const query = ExactEpochQuery.fromBinaryJ2000Seconds(first.epoch);
+  const parsedState = sp3.stateAtExactQuery(first.sat, query);
+  const cachedState = cached.evaluateExact(first.sat, query);
+  assert.deepEqual(cachedState.positionM, parsedState.positionM);
+  const selected = source.selectedPositionClockAtExactQueries(first.sat, query, query);
+  assert.deepEqual(selected.value.positionEcefM, Array.from(parsedState.positionM));
+  const transmitClock = source.transmitEpochClockAtExactQueries(first.sat, query, query);
+  assert.ok(transmitClock === null || typeof transmitClock === "object");
+  assert.equal(typeof sp3.ephemerisVarianceAtExactQuery(first.sat, query, query), "number");
+  assert.ok(
+    ["term", "unavailable", "notApplicable"].includes(
+      sp3.clockRelativityAtExactQuery(first.sat, query, parsedState.positionM).kind,
+    ),
+  );
+});
+
+test("sample instant DTO preserves distinct exact epochs sharing one rounded second", () => {
+  const instant = (nanos) => ({
+    scale: "GPST",
+    representation: { kind: "nanos", nanos },
+  });
+  const samples = [
+    {
+      sat: "G01",
+      epoch: 1_000_000_000,
+      instant: instant("1000000000000000000"),
+      positionEcefM: [20_000_000, 0, 0],
+      clockS: 0,
+      clockEvent: false,
+    },
+    {
+      sat: "G01",
+      epoch: 1_000_000_000,
+      instant: instant("1000000002000000000"),
+      positionEcefM: [20_000_001, 0, 0],
+      clockS: 0,
+      clockEvent: false,
+    },
+    {
+      sat: "G02",
+      epoch: 1_000_000_000,
+      instant: instant("1000000000000000001"),
+      positionEcefM: [20_000_000, 1, 0],
+      clockS: 0,
+      clockEvent: false,
+    },
+    {
+      sat: "G02",
+      epoch: 1_000_000_000,
+      instant: instant("1000000002000000001"),
+      positionEcefM: [20_000_001, 1, 0],
+      clockS: 0,
+      clockEvent: false,
+    },
+  ];
+  assert.equal(samples[0].epoch, samples[2].epoch);
+  assert.notEqual(samples[0].instant.representation.nanos, samples[2].instant.representation.nanos);
+  assert.equal(
+    Number(BigInt(samples[0].instant.representation.nanos)) / 1e9,
+    Number(BigInt(samples[2].instant.representation.nanos)) / 1e9,
+  );
+  assert.doesNotThrow(() => preciseEphemerisSamplesFromSamples(samples));
+  const unknown = { kind: "unknown" };
+  const accuracy = samples.map((sample) => ({
+    sat: sample.sat,
+    epoch: sample.epoch,
+    instant: sample.instant,
+    positionVarianceM2: [unknown, unknown, unknown],
+    clockVarianceM2: unknown,
+  }));
+  assert.doesNotThrow(() => preciseEphemerisSamplesFromSamplesWithAccuracy(samples, accuracy));
+});
+
 test("solveSpp reproduces the engine reference solution", async () => {
   const fx = JSON.parse(
     await readFile(here("./fixtures/spp_trace_L0_minimal.json"), "utf8"),
@@ -86,19 +188,23 @@ test("solveSpp reproduces the engine reference solution", async () => {
 
   const sol = sp3.solveSpp(request);
 
-  const expected = fx.final_solution.x.map(hexToF64);
+  // The trace's independent solve leaves out the precise-clock relativistic
+  // term -2 r.v / c^2 that positioning applies (RTKLIB peph2pos), so its
+  // final solution is no longer the engine's. The engine's own solve of these
+  // inputs, reproduced natively by test/golden-gen, is the reference, compared
+  // to the bit.
+  const ref = coreGoldens().sppTrace;
   const got = sol.positionM;
   assert.ok(got instanceof Float64Array && got.length === 3);
-
-  const dx = got[0] - expected[0];
-  const dy = got[1] - expected[1];
-  const dz = got[2] - expected[2];
-  const err = Math.hypot(dx, dy, dz);
-  // The fixture documents AGREEMENT_BOUND_M = 1e-6 across an independent solve.
-  assert.ok(err < 1.0e-6, `position agrees within ${err} m`);
-
-  const expectedClock = hexToF64(fx.final_solution.rx_clock_s);
-  assert.ok(Math.abs(sol.rxClockS - expectedClock) < 1.0e-9, "rx clock agrees");
+  assert.deepEqual(
+    Array.from(got, f64Bits),
+    ref.positionM.map((h) => BigInt(h)),
+  );
+  assert.equal(f64Bits(sol.rxClockS), BigInt(ref.rxClockS));
+  // How the solve ended, as the engine reports it for the same inputs.
+  assert.deepEqual(sol.metadata, ref.metadata);
+  assert.equal(sol.metadata.status, "SelectionSettled");
+  assert.equal(sol.metadata.converged, true);
 
   assert.ok(sol.geodetic instanceof Float64Array && sol.geodetic.length === 3);
   assert.equal(sol.usedSats.length, sol.residualsM.length);
@@ -165,4 +271,29 @@ test("Tle propagates SGP4 and reports look angles", async () => {
 
   // Malformed TLE is an Error, never a trap.
   assert.throws(() => new Tle("garbage", "garbage"), Error);
+});
+
+test("sample stateAtExactQuery preserves the same typed missing-satellite cause as evaluateExact", async () => {
+  const sp3 = loadSp3(await readFile(here("./fixtures/GRG0MGXFIN_20201760000_01D_15M_ORB.SP3")));
+  const samples = sp3PreciseEphemerisSamples(sp3);
+  const source = preciseEphemerisSamplesFromSamples(samples);
+  const query = ExactEpochQuery.fromBinaryJ2000Seconds(samples[0].epoch);
+  const capture = (call) => {
+    try {
+      call();
+    } catch (error) {
+      return error;
+    }
+    assert.fail("expected missing-satellite lookup to throw");
+  };
+  const direct = capture(() => source.stateAtExactQuery("G99", query));
+  const cached = capture(() =>
+    PreciseEphemerisInterpolant.fromPreciseEphemerisSamples(source).evaluateExact("G99", query),
+  );
+  assert.equal(direct.name, "Error");
+  assert.equal(direct.message, "unknown satellite: G99");
+  assert.deepEqual(direct.detail, { kind: "UNKNOWN_SATELLITE", satelliteId: "G99" });
+  assert.deepEqual(direct.cause, direct.detail);
+  assert.deepEqual(cached.detail, direct.detail);
+  assert.equal(cached.message, direct.message);
 });

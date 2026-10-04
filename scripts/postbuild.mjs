@@ -164,6 +164,8 @@ export interface Sp3MergeIdentityOptions {
     assertedFrameLabelSets?: string[][];
     helmert?: boolean;
     verifyContinuity?: Sp3ContinuityOptions | null;
+    /** Record per-epoch provenance; omitted or null records none. */
+    provenance?: "summary" | "full" | null;
 }
 
 export type Sp3MergeOptions = Sp3MergeIdentityOptions;
@@ -181,6 +183,26 @@ export interface ContinuityDefect {
     toJ2000S: number | undefined;
     magnitude: number | undefined;
     bound: number | undefined;
+    /** Duplicate epoch or held-out sample epoch, seconds since J2000. */
+    epochJ2000S: number | undefined;
+    /** Duplicate epoch: how many times it occurs. */
+    occurrences: number | undefined;
+    /** Speed bound: the pair's interval, seconds. */
+    intervalS: number | undefined;
+    /** Speed bound: the pair's displacement, meters. */
+    displacementM: number | undefined;
+    /** Speed bound: displacement over interval, meters per second. */
+    impliedSpeedMS: number | undefined;
+    /** Speed bound: the bound it exceeded, meters per second. */
+    boundMS: number | undefined;
+    /** Hold-out residual: the preceding sample epoch, seconds since J2000. */
+    precedingJ2000S: number | undefined;
+    /** Hold-out residual: stored record to prediction, meters. */
+    residualM: number | undefined;
+    /** Hold-out residual: the tolerance it exceeded, meters. */
+    toleranceM: number | undefined;
+    /** Hold-out residual: epochs of the retained nodes the prediction used, ascending. */
+    nodeEpochsJ2000S: number[] | undefined;
 }
 
 export interface ContinuityReport {
@@ -191,11 +213,60 @@ export interface ContinuityReport {
     residualsSkipped: number;
 }
 
+export type CellSelection =
+    | { kind: "single_source"; source: number }
+    | { kind: "precedence"; source: number; members: number[] }
+    | { kind: "combined"; rule: "mean" | "median" | "precedence"; members: number[] };
+
+export interface MergeContinuityCell {
+    epochJ2000S: number;
+    role: "held_out" | "interpolation_node" | "pair_end" | "repeated_epoch";
+    selection: CellSelection | undefined;
+}
+
 export interface MergeContinuityViolation {
     defect: ContinuityDefect;
     fromSources: number[];
     toSources: number[];
+    cells: MergeContinuityCell[];
+    sources: number[];
     crossesContributors: boolean;
+}
+
+export interface MergeContinuityReport extends ContinuityReport {
+    violations: MergeContinuityViolation[];
+    splices: MergeContinuityViolation[];
+}
+
+export interface MergeCellProvenance {
+    epochJ2000Seconds: number;
+    satellite: string;
+    position: CellSelection | undefined;
+    clock: CellSelection | undefined;
+}
+
+export interface MergePrecedenceTransition {
+    satellite: string;
+    epochJ2000Seconds: number;
+    fromSource: number | undefined;
+    toSource: number | undefined;
+    reason: "sole_availability" | "precedence" | "outlier_rejection" | "consensus_change";
+}
+
+export interface MergeContributorCoverage {
+    source: number;
+    cellsContributed: number;
+    cellsSelected: number;
+    firstEpochJ2000Seconds: number | undefined;
+    lastEpochJ2000Seconds: number | undefined;
+    cellsAbsent: number;
+}
+
+export interface MergeProvenance {
+    mode: "summary" | "full";
+    cells: MergeCellProvenance[];
+    transitions: MergePrecedenceTransition[];
+    coverage: MergeContributorCoverage[];
 }
 
 export interface WindowContinuityVerdict {
@@ -254,13 +325,46 @@ export interface SppRequest {
     robust?: RobustOptions;
     coarseSearchSeeds?: number;
     maxPdop?: number;
+    /** Defaults to "singleFrequency"; the broadcast group delay applies to single-frequency code only. */
+    pseudorangeCode?: PseudorangeCode;
+    qzssClock?: QzssClock;
+    troposphereModel?: TroposphereModel;
 }
+
+export type PseudorangeCode = "singleFrequency" | "ionosphereFree";
+export type QzssClock = "gps" | "separate";
+export type TroposphereModel = "rtklib" | "saastamoinenNiell";
 
 export interface FdeRequest extends SppRequest {
     pFa?: number;
-    weights?: Array<{ satelliteId: string; weight: number }>;
+    weights?: RaimWeightsInput | RaimWeights | RaimWeightsMode | {
+        mode: "solution" | "unit" | "bySatellite";
+        satelliteIds?: string[];
+        weights?: number[] | Float64Array;
+        values?: number[] | Float64Array;
+    };
+    weightsMode?: RaimWeightsMode;
     nSystems?: number;
-    maxIterations?: number;
+    weightEntries?: Array<{ satelliteId: string; elevationDeg: number; cn0Dbhz?: number }>;
+    varianceOptions?: { aM?: number; bM?: number; model?: "elevation" | "elevation_cn0"; cn0Dbhz?: number; cn0ScaleM2?: number };
+    maxExclusions?: number;
+    maxExclusionRmsM?: number;
+}
+
+export type RaimWeightsMode = "solution" | "unit" | "bySatellite";
+
+export interface SppSolution {
+    /** Per-used-satellite variance, aligned with usedSats and residualsM. */
+    readonly pseudorangeVariancesM2: Float64Array;
+    /** Effective inverse-variance weight, including robust factors. */
+    readonly weights: Float64Array;
+}
+
+export interface FdeSolution {
+    /** Complete accepted receiver solution and its solve diagnostics. */
+    readonly solution: SppSolution;
+    /** Core RAIM result retained for the accepted solution. */
+    readonly raim: FdeRaimResult;
 }
 
 export interface SppBatchOptions {
@@ -276,6 +380,8 @@ export interface RinexSppOptions {
     satellites?: string[];
     met?: SurfaceMetInput;
     robust?: RobustOptions;
+    qzssClock?: QzssClock;
+    troposphereModel?: TroposphereModel;
 }
 
 export type RinexSppSolveOptions = SppBatchOptions;
@@ -299,22 +405,109 @@ export interface RinexSppEpochInputs {
     initialGuess: [number, number, number, number];
     corrections: Required<SppCorrections>;
     glonassChannels: Array<[number, number]>;
+    qzssClock: QzssClock;
+    troposphereModel: TroposphereModel;
 }
+
+export interface StaticSolveOptions {
+    initialPositionM?: [number, number, number];
+    withGeodetic?: boolean;
+    robust?: RobustOptions;
+    qzssClock?: QzssClock;
+    troposphereModel?: TroposphereModel;
+}
+
+export interface PppCorrectionOptions {
+    solidEarthTide?: boolean;
+    phaseWindup?: boolean;
+    ut1Validity?: "strict" | "permissive";
+    stationTideConstants?: StationTideConstants;
+    satelliteAntenna?: {
+        freq1Label: string;
+        freq1Hz: number;
+        freq2Label: string;
+        freq2Hz: number;
+        antennas: Array<{
+            sat: string;
+            validFrom?: PppCivil;
+            validUntil?: PppCivil;
+            frequencies: Array<{
+                label: string;
+                pcoM: [number, number, number];
+                noaziPcvM: Array<[number, number]>;
+            }>;
+        }>;
+    };
+    poleTide?: { xpArcsec: number; ypArcsec: number };
+    oceanLoading?: { amplitudeM: number[][]; phaseDeg: number[][] };
+}
+
+export interface PppCorrectionEpochVector {
+    epochIndex: number;
+    vectorM: [number, number, number];
+}
+export interface PppCorrectionSatelliteScalar {
+    sat: string;
+    epochIndex: number;
+    valueM: number;
+}
+export interface PppCorrectionSatelliteVector {
+    sat: string;
+    epochIndex: number;
+    vectorM: [number, number, number];
+}
+export interface PppCorrectionEpoch {
+    year: number; month: number; day: number; hour: number; minute: number;
+    second: number; tRxJ2000S: number;
+    observations: Array<{ satelliteId: string; freq1Hz: number; freq2Hz: number; glonassChannel?: number | null }>;
+}
+export interface CodeBiasOptions {
+    usedObservablesPerSat?: Array<{ sat: string; obs1: string; obs2: string }>;
+    usedObservablesDefault?: Array<{ system: string; obs1: string; obs2: string }>;
+    clockReference?: Array<{ system: string; obs1: string; obs2: string }>;
+}
+export interface PppCorrections {
+    tide: PppCorrectionEpochVector[];
+    poleTide: PppCorrectionEpochVector[];
+    oceanLoading: PppCorrectionEpochVector[];
+    windupM: PppCorrectionSatelliteScalar[];
+    satPcoEcef: PppCorrectionSatelliteVector[];
+    satPcvM: PppCorrectionSatelliteScalar[];
+    codeBiasM: PppCorrectionSatelliteScalar[];
+    ut1Degraded: "beforeCoverage" | "afterCoverage" | null;
+    /** Legacy text view, retained for compatibility. */
+    warnings: string[];
+    /** Lossless typed record references and warning/skip variants. */
+    diagnostics: NmeaDiagnostics;
+}
+export type PppCorrectionsErrorDetail =
+    | { family: "PppCorrectionsError"; kind: "INVALID_INPUT"; field: string; reason: string; message: string }
+    | { family: "PppCorrectionsError"; kind: "EPOCH"; epochIndex: number; cause: { kind: "INVALID_INPUT"; field: string; reason: string } | { kind: "OUTSIDE_COVERAGE"; reason: "BEFORE_COVERAGE" | "AFTER_COVERAGE" }; message: string }
+    | { family: "PppCorrectionsError"; kind: "TIDE" | "POLE_TIDE" | "OCEAN_LOADING"; epochIndex: number; cause: TideErrorDetail; message: string }
+    | { family: "PppCorrectionsError"; kind: "WINDUP_FREQUENCY"; epochIndex: number; satellite: string; field: string; reason: string; message: string }
+    | { family: "PppCorrectionsError"; kind: "SATELLITE_ANTENNA_FREQUENCY"; field: string; reason: string; message: string }
+    | { family: "PppCorrectionsError"; kind: "BIAS"; cause: BiasErrorDetail; message: string }
+    | { family: "PppCorrectionsError"; kind: "CODE_BIAS_OBSERVABLE"; epochIndex: number; satellite: string; field: string; reason: string; message: string };
 
 export interface RaimInput {
     usedSats: string[];
     residualsM: number[] | Float64Array;
+    variancesM2?: number[] | Float64Array;
 }
 
 export type RaimWeightsInput =
+    | { isUnit: true }
     | { satelliteIds: string[]; weights: number[] | Float64Array }
     | { satelliteIds: string[]; values: number[] | Float64Array }
     | Array<{ satelliteId: string; weight: number }>
-    | Record<string, number>;
+    | Record<string, number>
+    | RaimWeightsMode
+    | { mode: RaimWeightsMode; satelliteIds?: string[]; weights?: number[] | Float64Array; values?: number[] | Float64Array };
 
 export interface RaimOptions {
     pFa?: number;
     weights?: RaimWeightsInput | RaimWeights;
+    weightsMode?: RaimWeightsMode;
     weightEntries?: Array<{ satelliteId: string; elevationDeg: number; cn0Dbhz?: number }>;
     varianceOptions?: { aM?: number; bM?: number; model?: "elevation" | "elevation_cn0"; cn0Dbhz?: number; cn0ScaleM2?: number };
     nSystems?: number;
@@ -327,6 +520,7 @@ export interface RaimResult {
     worstSat: string | null;
     reducedChiSquare: number | null;
     normalizedResiduals: Record<string, number>;
+    testable: boolean;
     rmsM: number;
     dof: number;
 }
@@ -342,6 +536,7 @@ export interface RangeFdeOptions {
     pFa?: number;
     maxExclusions?: number;
     minRedundancy?: number;
+    maxExclusionRmsM?: number;
 }
 
 export interface RangeFdeResult {
@@ -462,17 +657,21 @@ export interface RtkRinexDualArcOptions {
 
 export interface RtkArcObservation {
     satelliteId: string;
-    roverCodeM: number;
-    baseCodeM: number;
-    roverPhaseCycles: number;
-    basePhaseCycles: number;
-    wavelengthM: number;
-    elevationRad?: number;
+    ambiguityId: string;
+    codeM: number;
+    phaseM: number;
+    lli?: number | null;
 }
 
 export interface RtkArcEpoch {
-    tRxJ2000S: number;
-    observations: RtkArcObservation[];
+    base: RtkArcObservation[];
+    rover: RtkArcObservation[];
+    satellitePositionsM: Record<string, Vec3>;
+    baseSatellitePositionsM?: Record<string, Vec3>;
+    roverSatellitePositionsM?: Record<string, Vec3>;
+    velocityMps?: Vec3 | null;
+    predictionTimeS?: number | null;
+    predictionEpoch?: ExactEpoch | null;
 }
 
 export interface RtkMeasModel {
@@ -512,23 +711,36 @@ export interface RtkStaticArcSolution {
 }
 
 export interface RtkDualFrequencyObservation {
+    ambiguityId: string;
+    p1M: number;
+    p2M: number;
+    phi1Cycles: number;
+    phi2Cycles: number;
+    f1Hz: number;
+    f2Hz: number;
+    lli1?: number | null;
+    lli2?: number | null;
+}
+
+export interface RtkDualFrequencySatelliteObservation {
     satelliteId: string;
-    roverCode1M: number;
-    baseCode1M: number;
-    roverPhase1Cycles: number;
-    basePhase1Cycles: number;
-    roverCode2M: number;
-    baseCode2M: number;
-    roverPhase2Cycles: number;
-    basePhase2Cycles: number;
-    freq1Hz: number;
-    freq2Hz: number;
-    elevationRad?: number;
+    base: RtkDualFrequencyObservation;
+    rover: RtkDualFrequencyObservation;
 }
 
 export interface RtkDualFrequencyArcEpoch {
-    tRxJ2000S: number;
-    observations: RtkDualFrequencyObservation[];
+    jdWhole: number;
+    jdFraction: number;
+    epochSortKey?: string | null;
+    gapTimeS?: number | null;
+    observations: RtkDualFrequencySatelliteObservation[];
+    satellitePositionsM: Record<string, Vec3>;
+    baseSatellitePositionsM?: Record<string, Vec3>;
+    roverSatellitePositionsM?: Record<string, Vec3>;
+    velocityMps?: Vec3 | null;
+    predictionTimeS?: number | null;
+    gapEpoch?: ExactEpoch | null;
+    predictionEpoch?: ExactEpoch | null;
 }
 
 export interface RtkWideLaneArcConfig extends RtkArcConfig {
@@ -568,6 +780,29 @@ export interface PppObservation {
     freq1Hz?: number;
     freq2Hz?: number;
     glonassChannel?: number;
+    /** RINEX 3.04 signal codes ("1C" or "C1C") of the two pseudoranges and two carrier phases. */
+    signals?: PppObservationSignals;
+}
+
+export interface PppObservationSignals {
+    code1: string;
+    code2: string;
+    phase1: string;
+    phase2: string;
+}
+
+/** The iteration cap and convergence tolerances a PPP float solve ran with. */
+export interface PppAppliedSolveOptions {
+    maxIterations: number;
+    positionToleranceM: number;
+    clockToleranceM: number;
+    ambiguityToleranceM: number;
+    ztdToleranceM: number;
+}
+
+export interface PppObservationRef {
+    epochIndex: number;
+    ambiguityId: string;
 }
 
 export interface PppEpoch {
@@ -644,8 +879,10 @@ export interface PppAutoInitOptions {
 }
 
 export interface PppResidual {
+    /** Input epoch index. */
     epochIndex: number;
     satelliteId: string;
+    ambiguityId: string;
     codeM: number;
     phaseM: number;
     codeWeight: number;
@@ -704,6 +941,678 @@ export interface FusionRtsEpoch {
     [key: string]: any;
 }
 
+export type NdmTextIssue =
+    | "lineBreak"
+    | "surroundingWhitespace"
+    | "interiorWhitespace"
+    | "keywordSeparator"
+    | "xmlIllegalCharacter"
+    | "empty"
+    | "detachedComment"
+    | "repeatedParameter"
+    | "commentNotCarried";
+
+/** The detail of an OmmError, OpmError, OemError or CdmError. Fields the kind does not carry are null. */
+export interface NdmErrorDetail {
+    kind:
+        | "MISSING_FIELD"
+        | "INVALID_FIELD"
+        | "FIELD"
+        | "EPOCH"
+        | "DUPLICATE_FIELD"
+        | "UNKNOWN_FIELD"
+        | "CSV_COLUMN_COUNT"
+        | "CSV_EMPTY_BLOCK"
+        | "MALFORMED_LINE"
+        | "UNIT_MISMATCH"
+        | "MULTIPLE_MESSAGES"
+        | "IN_RECORD"
+        | "CSV_COLUMN_ORDER"
+        | "INCOMPATIBLE_METADATA"
+        | "UNWRITABLE_TEXT"
+        | "INCOMPLETE_STATE_VECTOR"
+        | "MALFORMED_XML"
+        | "UNEXPECTED_OBJECT_COUNT"
+        | "UNKNOWN_OBJECT"
+        | "REPEATED_OBJECT"
+        | "HARD_BODY_RADIUS_COMMENT";
+    message: string;
+    field: string | null;
+    value: string | null;
+    /** The validation category of INVALID_FIELD, or an NdmTextIssue for UNWRITABLE_TEXT. */
+    issue: string | null;
+    line: number | null;
+    unit: string | null;
+    expectedUnit: string | null;
+    first: string | null;
+    second: string | null;
+    count: number | null;
+    expectedCount: number | null;
+    index: number | null;
+    source: NdmErrorDetail | null;
+}
+
+export interface OmmSpacecraft {
+    comments?: string[];
+    massKg?: number | null;
+    solarRadAreaM2?: number | null;
+    solarRadCoeff?: number | null;
+    dragAreaM2?: number | null;
+    dragCoeff?: number | null;
+}
+
+export interface OmmCovariance {
+    comments?: string[];
+    covRefFrame?: string | null;
+    /** The 21 lower-triangle values CX_X, CY_X, CY_Y, ... CZ_DOT_Z_DOT as read. */
+    lowerTriangle: number[];
+}
+
+export interface OmmUserDefined {
+    parameter: string;
+    value: string;
+}
+
+export interface OmmComments {
+    header?: string[];
+    metadata?: string[];
+    meanElements?: string[];
+    tleParameters?: string[];
+    userDefined?: string[];
+}
+
+export interface OmmMeta {
+    ccsdsOmmVers?: string;
+    classification?: string;
+    creationDate?: string;
+    originator?: string;
+    messageId?: string;
+    objectName?: string;
+    objectId?: string;
+    centerName?: string;
+    refFrame?: string;
+    refFrameEpoch?: string;
+    timeSystem?: string;
+    meanElementTheory?: string;
+    semiMajorAxisKm?: number;
+    gmKm3S2?: number;
+    spacecraft?: OmmSpacecraft;
+    ephemerisType?: number;
+    classificationType?: string;
+    elementSetNo?: number;
+    revAtEpoch?: number;
+    bstar?: number;
+    btermM2Kg?: number;
+    meanMotionDot?: number;
+    meanMotionDdot?: number;
+    agomM2Kg?: number;
+    covariance?: OmmCovariance;
+    userDefined?: OmmUserDefined[];
+    comments?: OmmComments;
+}
+
+export interface OmmArray {
+    omms: Omm[];
+    skipped: Array<{ index: number; reason: NdmErrorDetail }>;
+}
+
+export interface OpmMeta {
+    ccsdsOpmVers?: string;
+    classification?: string;
+    creationDate?: string;
+    originator?: string;
+    messageId?: string;
+    comments?: string[];
+    userDefined?: OmmUserDefined[];
+    userDefinedComments?: string[];
+}
+
+export interface OemMeta {
+    ccsdsOemVers?: string;
+    classification?: string;
+    creationDate?: string;
+    originator?: string;
+    messageId?: string;
+    comments?: string[];
+}
+
+export interface OemMetadataMeta {
+    refFrameEpoch?: string;
+    useableStartTime?: string;
+    useableStopTime?: string;
+    interpolation?: string;
+    interpolationDegree?: number;
+    comments?: string[];
+}
+
+/** A comment placed after \`position\` state lines or covariance matrices of its segment. */
+export interface OemComment {
+    position: number;
+    text: string;
+}
+
+export interface OemSkippedState {
+    /** One-based line number. */
+    line: number;
+    /** Zero-based segment index. */
+    segment: number;
+    text: string;
+    reason: "itemCount" | "invalidField";
+    itemCount: number | null;
+    field: string | null;
+    issue: string | null;
+}
+
+export interface CdmOdParameters {
+    comments?: string[];
+    timeLastobStart?: string | null;
+    timeLastobEnd?: string | null;
+    recommendedOdSpanD?: number | null;
+    actualOdSpanD?: number | null;
+    obsAvailable?: number | null;
+    obsUsed?: number | null;
+    tracksAvailable?: number | null;
+    tracksUsed?: number | null;
+    residualsAcceptedPct?: number | null;
+    weightedRms?: number | null;
+}
+
+export interface CdmAdditionalParameters {
+    comments?: string[];
+    areaPcM2?: number | null;
+    areaDrgM2?: number | null;
+    areaSrpM2?: number | null;
+    massKg?: number | null;
+    cdAreaOverMassM2Kg?: number | null;
+    crAreaOverMassM2Kg?: number | null;
+    thrustAccelerationMS2?: number | null;
+    sedrWKg?: number | null;
+}
+
+export interface CdmObjectMeta {
+    objectDesignator?: string;
+    catalogName?: string;
+    objectName?: string;
+    internationalDesignator?: string;
+    objectType?: string;
+    operatorContactPosition?: string;
+    operatorOrganization?: string;
+    operatorPhone?: string;
+    operatorEmail?: string;
+    ephemerisName?: string;
+    covarianceMethod?: string;
+    maneuverable?: string;
+    orbitCenter?: string;
+    refFrame?: string;
+    gravityModel?: string;
+    atmosphericModel?: string;
+    nBodyPerturbations?: string;
+    solarRadPressure?: string;
+    earthTides?: string;
+    intrackThrust?: string;
+    velocityCovarianceRtn?: number[] | Float64Array;
+    dragCovarianceRtn?: number[] | Float64Array;
+    srpCovarianceRtn?: number[] | Float64Array;
+    thrustCovarianceRtn?: number[] | Float64Array;
+    metadataComments?: string[];
+    odParameters?: CdmOdParameters;
+    additionalParameters?: CdmAdditionalParameters;
+    stateComments?: string[];
+    covarianceComments?: string[];
+}
+
+export interface CdmMeta {
+    ccsdsCdmVers?: string;
+    comments?: string[];
+    creationDate?: string;
+    originator?: string;
+    messageFor?: string;
+    messageId?: string;
+    relativeComments?: string[];
+    tca?: string;
+    missDistanceM?: number;
+    relativeSpeedMS?: number;
+    relativePositionRtnM?: [number | null, number | null, number | null];
+    relativeVelocityRtnMS?: [number | null, number | null, number | null];
+    startScreenPeriod?: string;
+    stopScreenPeriod?: string;
+    screenVolumeFrame?: string;
+    screenVolumeShape?: string;
+    screenVolumeM?: [number | null, number | null, number | null];
+    screenEntryTime?: string;
+    screenExitTime?: string;
+    collisionProbability?: number;
+    collisionProbabilityMethod?: string;
+    hardBodyRadiusM?: number;
+}
+
+export interface BiasLookup {
+    status:
+        | "available"
+        | "absent"
+        | "unsupportedScale"
+        | "ambiguous"
+        | "carrierFrequencyRequired"
+        | "invalidCarrierFrequency"
+        | "carrierFrequencyUnknown"
+        | "undefinedSlopeReference"
+        | "invalidEpoch"
+        | (string & {});
+    /** Set only when status is "available". */
+    value: number | null;
+    /** Indices into BiasSet.records. */
+    records: number[];
+    overridden: number[];
+    productScale: string | null;
+    queryScale: string | null;
+    observable: string | null;
+}
+
+export type BiasDepartureDetail =
+    | { kind: "headerLayout"; reason: string }
+    | { kind: "otherVersion"; version: string }
+    | { kind: "missingFooter" }
+    | { kind: "contentAfterFooter"; line: number }
+    | { kind: "unexpectedControlLine"; line: number }
+    | { kind: "unclosedBlock"; name: string; line: number }
+    | { kind: "unopenedBlockEnd"; name: string; line: number }
+    | { kind: "mismatchedBlockEnd"; open: string; close: string; line: number }
+    | { kind: "nestedBlock"; open: string; inner: string; line: number }
+    | { kind: "missingBlock"; name: string }
+    | { kind: "unknownBlock"; name: string; line: number }
+    | { kind: "blockStartSuffix"; line: number }
+    | { kind: "dataOutsideBlock"; line: number }
+    | { kind: "missingDeclaration"; keyword: string }
+    | { kind: "unsupportedBiasMode"; line: number; label: string }
+    | { kind: "nonStandardTimeSystem"; line: number; label: string }
+    | { kind: "headerModeMismatch"; header: string; description: "absolute" | "relative" | "unspecified" }
+    | { kind: "unknownDcbTimeSystem"; line: number; label: string }
+    | { kind: "estimateCountMismatch"; declared: number; solutionRows: number }
+    | { kind: "other"; message: string };
+
+export type BiasNoticeDetail =
+    | { kind: "departure"; departure: BiasDepartureDetail }
+    | { kind: "invalidUtf8"; line: number }
+    | { kind: "repeatedDeclaration"; line: number; keyword: string }
+    | { kind: "conflictingDeclaration"; line: number; keyword: string }
+    | { kind: "overlap"; first: number; second: number }
+    | { kind: "dcbTimeSystemAssumed" }
+    | { kind: "dcbTimeSystemAlias"; line: number; label: string }
+    | { kind: "unknown"; message: string };
+
+export type BiasErrorDetail =
+    | { kind: "invalidInput"; field: string; reason: string }
+    | { kind: "invalidEpoch" }
+    | { kind: "unknownObservable"; code: string }
+    | { kind: "unsupportedVersion"; version: string }
+    | { kind: "missingDcbMetadata" }
+    | { kind: "missingClockReference" }
+    | { kind: "missingWriterMetadata"; field: string }
+    | { kind: "utf8" }
+    | { kind: "departure"; departure: BiasDepartureDetail }
+    | { kind: "invalidUtf8Line"; line: number }
+    | { kind: "unsupportedTimeSystem"; scale: string | null }
+    | { kind: "dcbRecordMismatch"; record: number; field: string };
+
+export interface BiasError extends Error {
+    readonly name: "BiasError";
+    readonly detail: BiasErrorDetail;
+}
+
+export interface BiasSet {
+    /** Structured parser findings; notices remains the legacy string view. */
+    readonly noticeDetails: BiasNoticeDetail[];
+}
+
+export interface RinexNavDiagnostic {
+    /** One-based line number. */
+    line: number;
+    satellite: string;
+    message: string;
+}
+
+export interface RinexNavOtherBlock {
+    line: number;
+    satellite: string;
+    messageToken: string | null;
+    kind: string;
+}
+
+export interface SbasSkippedLine {
+    line: number;
+    kind: "blank" | "comment" | "nonRecord";
+}
+
+export interface SbasRefusedLine {
+    line: number;
+    reason: "ambiguousWeek" | "checksumMismatch" | (string & {});
+    week: number | null;
+    written: number | null;
+    computed: number | null;
+}
+
+export interface SbasDeparture {
+    kind: "unrecognizedPreamble" | "declaredMessageType" | (string & {});
+    message: string;
+    preamble: number | null;
+    declared: number | null;
+    carried: number | null;
+    line: number | null;
+}
+
+/** The side of the UT1 table an instant outside it lies on. */
+export type Ut1DegradeReason = "beforeCoverage" | "afterCoverage";
+
+/** A result computed under a UT1 validity policy with the departure from the UT1 table it accepted. */
+export interface Ut1Validated<T> {
+    value: T;
+    ut1Degraded: Ut1DegradeReason | null;
+}
+
+/** The row class of a space-weather sample, least trusted last. */
+export type SpaceWeatherClass =
+    | "observed"
+    | "interpolated"
+    | "notObserved"
+    | "dailyPredicted"
+    | "monthlyPredicted";
+
+/**
+ * A space-weather lookup policy: "default", "lenient", or the default policy
+ * with the named fields overridden. Unknown keys are refused.
+ */
+export type SpaceWeatherPolicyInput =
+    | "default"
+    | "lenient"
+    | {
+          allowInterpolated?: boolean;
+          allowNotObserved?: boolean;
+          allowDailyPredicted?: boolean;
+          allowMonthlyPredicted?: boolean;
+          requireGeomagnetic?: boolean;
+      };
+
+/** The seven-element NRLMSISE-00 Ap history at an epoch. */
+export interface SpaceWeatherApHistory {
+    ap: number[];
+    class: SpaceWeatherClass;
+    apDefaulted: boolean;
+    binsFromDailyAp: number;
+}
+
+/** Count of every physical line of a bias product by what the reader made of it. */
+export interface BiasLineCounts {
+    lines: number;
+    headerFooter: number;
+    comments: number;
+    blank: number;
+    blockDelimiters: number;
+    infoRows: number;
+    records: number;
+    skipped: number;
+    blockBody: number;
+    other: number;
+}
+
+/** Options of the SBAS log readers. */
+export interface SbasLogOptions {
+    policy?: "strict" | "lenient";
+    referenceWeek?: number;
+}
+
+export type Ut1Validity = "strict" | "permissive";
+
+/** A geodetic station for the observe and meridian-transit functions. */
+export interface ObserveStation {
+    latitudeDeg: number;
+    longitudeDeg: number;
+    /** Kilometres above the ellipsoid; 0 when omitted. */
+    altitudeKm?: number;
+}
+
+/** Reduction options of observe; each omitted field takes the engine default. */
+export interface ObserveOptions {
+    polarMotion?: { xpArcsec: number; ypArcsec: number } | null;
+    refraction?: { pressureMbar: number; temperatureC: number } | null;
+    deflection?: boolean | null;
+    aberration?: boolean | null;
+}
+
+/** An equatorial position: right ascension, declination and distance. */
+export interface ObserveEquatorial {
+    rightAscensionDeg: number;
+    rightAscensionHours: number;
+    declinationDeg: number;
+    distanceKm: number;
+}
+
+/** The result of observe, observeSpkBody and their WithValidity variants. */
+export interface ObserveResult {
+    astrometric: ObserveEquatorial;
+    apparentIcrs: ObserveEquatorial;
+    apparent: ObserveEquatorial;
+    horizontal: { azimuthDeg: number; elevationDeg: number; rangeKm: number };
+    hourAngleDeg: number;
+    hourAngleHours: number;
+    ecliptic: { longitudeDeg: number; latitudeDeg: number; distanceKm: number };
+    reduced: boolean;
+}
+
+/** One meridian transit: an upper or lower culmination. */
+export interface MeridianTransitEvent {
+    /** UTC unix microseconds. */
+    timeUnixUs: number;
+    /** Or, for a kind this binding does not name yet, the engine variant's name. */
+    kind: "upper" | "lower" | (string & {});
+    altitudeDeg: number;
+}
+
+export interface BodyAzEl {
+    azimuthDeg: number;
+    elevationDeg: number;
+    rangeKm: number;
+}
+
+export interface MoonIlluminationResult {
+    illuminatedFraction: number;
+    phaseAngleDeg: number;
+}
+
+export interface RejectedTleRecord {
+    /** One-based line number of the first rejected line (the name line when there was one). */
+    lineNumber: number;
+    name: string;
+    issue: "invalid" | "missingLine2" | "orphanLine2" | "orphanName";
+    message: string;
+    detail: TleRecordIssueDetail;
+}
+
+export interface Sgp4ExactFloat { decimal: string; bitsHex: string; }
+export interface Sgp4ExactInteger { decimal: string; }
+export type Sgp4InputErrorKind =
+    | "nonFinite" | "notPositive" | "negative" | "outOfRange" | "missing"
+    | "floatParse" | "intParse" | "invalidCivilDate" | "invalidCivilTime";
+export type Sgp4ErrorCause =
+    | { kind: "invalidInput"; field: string; inputKind: Sgp4InputErrorKind; reason: string }
+    | { kind: "nonFiniteOutput"; field: string }
+    | { kind: "invalidTle"; message: string }
+    | { kind: "sgp4"; code: number }
+    | { kind: "resonanceStepBudget"; budget: string };
+export interface Sgp4ErrorDetail { family: "sgp4"; cause: Sgp4ErrorCause; }
+export type TleErrorCause =
+    | { kind: "nonAscii" } | { kind: "format" } | { kind: "satelliteMismatch" }
+    | { kind: "invalidCatalogNumber"; value: string; reason: string }
+    | { kind: "catalogNumberOutOfRange"; catalogNumber: number }
+    | { kind: "invalidField"; field: string; reason: string }
+    | { kind: "field"; value: string }
+    | { kind: "checksumMismatch"; lineLabel: string; expected: number; computed: number }
+    | { kind: "checksumNotDigit"; lineLabel: string; found: string; computed: number };
+export interface TleErrorDetail { family: "tle"; cause: TleErrorCause; }
+export type TleRecordIssueDetail =
+    | { kind: "invalid"; message: string; cause: Sgp4ErrorCause }
+    | { kind: "missingLine2" } | { kind: "orphanLine2" } | { kind: "orphanName" };
+export type DecayLatchedErrorCause =
+    | { kind: "decayed"; firstFailingEpochMinutes: Sgp4ExactFloat; requestedEpochMinutes: Sgp4ExactFloat }
+    | { kind: "propagation"; message: string; cause: Sgp4ErrorCause };
+export interface DecayLatchedErrorDetail { family: "decayLatched"; cause: DecayLatchedErrorCause; }
+export type LookAngleErrorCause =
+    | { kind: "invalidInput"; field: string; reason: string }
+    | { kind: "init" | "propagate"; message: string; cause: Sgp4ErrorCause }
+    | { kind: "frameTransform"; message: string; cause: FrameTransformCause };
+export interface LookAngleErrorDetail { family: "lookAngle"; cause: LookAngleErrorCause; }
+export type PassErrorCause =
+    | { kind: "invalidInput"; field: string; reason: string }
+    | { kind: "ut1OutsideCoverage"; reason: "beforeCoverage" | "afterCoverage" };
+export interface PassErrorDetail { family: "pass"; cause: PassErrorCause; }
+export type TrfBackendErrorCause =
+    | { kind: "failed"; message: string }
+    | { kind: "badDimensions"; expectedM: number; expectedN: number; got: number };
+export type TrfErrorCause =
+    | { kind: "emptyResidual" } | { kind: "emptyParameters" }
+    | { kind: "nonFiniteParameters" } | { kind: "nonFiniteInitialResidual" }
+    | { kind: "insufficientRows"; m: number; n: number }
+    | { kind: "sizeOverflow"; m: number; n: number }
+    | { kind: "degreeOverflow"; degree: number } | { kind: "invalidMaxNfev" }
+    | { kind: "invalidFScale"; fScale: Sgp4ExactFloat }
+    | { kind: "invalidXScaleLength"; expected: number; got: number }
+    | { kind: "invalidXScaleValue"; index: number; value: Sgp4ExactFloat }
+    | { kind: "invalidJacobianLength"; expected: number; got: number }
+    | { kind: "invalidResidualLength"; expected: number; got: number }
+    | { kind: "invalidSliceLength"; what: string; expected: number; got: number }
+    | { kind: "invalidSvdOutput"; message: string }
+    | { kind: "backend"; cause: TrfBackendErrorCause };
+export type TleFitErrorCause =
+    | { kind: "arcTooShort"; samples: number; needed: number }
+    | { kind: "invalidInput"; field: string; reason: string }
+    | { kind: "epochsNotIncreasing"; index: number }
+    | { kind: "epochOutsideArc" } | { kind: "mixedVelocityPresence" } | { kind: "notElliptical" }
+    | { kind: "inclinationNearRetrograde"; inclinationDeg: Sgp4ExactFloat }
+    | { kind: "seedPropagation"; epochIndex: number; message: string; cause: Sgp4ErrorCause }
+    | { kind: "finalElements"; message: string; cause: Sgp4ErrorCause }
+    | { kind: "solver"; message: string; cause: TrfErrorCause }
+    | { kind: "solutionInfeasible" }
+    | { kind: "didNotConverge"; bestEffortFit: Sgp4BestEffortFit }
+    | { kind: "tleEncode"; message: string; cause: TleErrorCause };
+export interface TleFitErrorDetail { family: "tleFit"; cause: TleFitErrorCause; }
+export type Sgp4ExactJulianDate = [Sgp4ExactFloat, Sgp4ExactFloat];
+export interface Sgp4FitElements {
+    epoch: Sgp4ExactJulianDate;
+    bstar: Sgp4ExactFloat;
+    mean_motion_dot: Sgp4ExactFloat | null;
+    mean_motion_double_dot: Sgp4ExactFloat | null;
+    eccentricity: Sgp4ExactFloat;
+    argument_of_perigee_deg: Sgp4ExactFloat;
+    inclination_deg: Sgp4ExactFloat;
+    mean_anomaly_deg: Sgp4ExactFloat;
+    mean_motion_rev_per_day: Sgp4ExactFloat;
+    right_ascension_deg: Sgp4ExactFloat;
+    catalog_number: Sgp4ExactInteger | null;
+    omm_epoch_days: Sgp4ExactFloat | null;
+}
+export interface Sgp4OmmEpoch {
+    year: Sgp4ExactInteger;
+    month: Sgp4ExactInteger;
+    day: Sgp4ExactInteger;
+    hour: Sgp4ExactInteger;
+    minute: Sgp4ExactInteger;
+    second: Sgp4ExactInteger;
+    microsecond: Sgp4ExactInteger;
+    femtosecond: Sgp4ExactInteger;
+}
+export interface Sgp4OmmComments {
+    header: string[];
+    metadata: string[];
+    mean_elements: string[];
+    tle_parameters: string[];
+    user_defined: string[];
+}
+export interface Sgp4OmmSpacecraft {
+    comments: string[];
+    mass_kg: Sgp4ExactFloat | null;
+    solar_rad_area_m2: Sgp4ExactFloat | null;
+    solar_rad_coeff: Sgp4ExactFloat | null;
+    drag_area_m2: Sgp4ExactFloat | null;
+    drag_coeff: Sgp4ExactFloat | null;
+}
+export interface Sgp4OmmCovariance {
+    comments: string[];
+    cov_ref_frame: string | null;
+    lower_triangle: Sgp4ExactFloat[];
+}
+export interface Sgp4OmmUserDefined { parameter: string; value: string; }
+export interface Sgp4FitOmm {
+    ccsds_omm_vers: string | null;
+    classification: string | null;
+    creation_date: string | null;
+    originator: string | null;
+    message_id: string | null;
+    object_name: string | null;
+    object_id: string | null;
+    center_name: string | null;
+    ref_frame: string | null;
+    ref_frame_epoch: string | null;
+    time_system: string | null;
+    mean_element_theory: string | null;
+    epoch: Sgp4OmmEpoch;
+    mean_motion: Sgp4ExactFloat | null;
+    semi_major_axis_km: Sgp4ExactFloat | null;
+    eccentricity: Sgp4ExactFloat;
+    inclination_deg: Sgp4ExactFloat;
+    ra_of_asc_node_deg: Sgp4ExactFloat;
+    arg_of_pericenter_deg: Sgp4ExactFloat;
+    mean_anomaly_deg: Sgp4ExactFloat;
+    gm_km3_s2: Sgp4ExactFloat | null;
+    spacecraft: Sgp4OmmSpacecraft | null;
+    ephemeris_type: Sgp4ExactInteger | null;
+    classification_type: string | null;
+    norad_cat_id: Sgp4ExactInteger | null;
+    element_set_no: Sgp4ExactInteger | null;
+    rev_at_epoch: Sgp4ExactInteger | null;
+    bstar: Sgp4ExactFloat | null;
+    bterm_m2_kg: Sgp4ExactFloat | null;
+    mean_motion_dot: Sgp4ExactFloat | null;
+    mean_motion_ddot: Sgp4ExactFloat | null;
+    agom_m2_kg: Sgp4ExactFloat | null;
+    covariance: Sgp4OmmCovariance | null;
+    user_defined: Sgp4OmmUserDefined[];
+    comments: Sgp4OmmComments;
+    exact_sgp4_epoch: Sgp4ExactJulianDate | null;
+    quantize_tle_derived_fields: boolean;
+}
+export interface Sgp4FitStatistics {
+    rms_position_km: Sgp4ExactFloat;
+    max_position_km: Sgp4ExactFloat;
+    rms_position_axes_km: [Sgp4ExactFloat, Sgp4ExactFloat, Sgp4ExactFloat];
+    rms_velocity_km_s: Sgp4ExactFloat | null;
+    tle_rms_position_km: Sgp4ExactFloat;
+    status: Sgp4ExactInteger;
+    nfev: Sgp4ExactInteger;
+    njev: Sgp4ExactInteger;
+    cost: Sgp4ExactFloat;
+    optimality: Sgp4ExactFloat;
+    bstar_observable: boolean;
+    seed_refine_passes: Sgp4ExactInteger;
+}
+export interface Sgp4BestEffortFit {
+    elements: Sgp4FitElements;
+    line1: string;
+    line2: string;
+    omm: Sgp4FitOmm;
+    stats: Sgp4FitStatistics;
+}
+export interface Sgp4BatchErrorCause {
+    kind: "satellitePropagation";
+    satelliteIndex: number;
+    message: string;
+    cause: Sgp4ErrorCause;
+}
+export interface Sgp4BatchErrorDetail {
+    family: "sgp4Batch";
+    cause: Sgp4BatchErrorCause;
+}
+export type Sgp4OperationErrorDetail = Sgp4ErrorDetail | TleErrorDetail | DecayLatchedErrorDetail | LookAngleErrorDetail | PassErrorDetail | TleFitErrorDetail | Sgp4BatchErrorDetail;
+export type Sgp4OperationError = Error & { detail: Sgp4OperationErrorDetail };
+
 export interface DllJitterOptions {
     cn0DbHz: number;
     receiverBandwidthHz: number;
@@ -733,8 +1642,11 @@ export interface TerrainLookupOptions {
 }
 
 export type TerrainPoint = [number, number] | { longitudeDeg: number; latitudeDeg: number };
-export type TerrainHeightBatchResult = { ok: true; heightM: number } | { ok: false; error: string };
-export type TerrainOrthometricBatchResult = { ok: true; orthometricHeightM: OrthometricHeightM } | { ok: false; error: string };
+/** The earlier name of \`TerrainHeightBatchEntry\`. */
+export type TerrainHeightBatchResult = TerrainHeightBatchEntry;
+export type TerrainOrthometricBatchResult =
+  | { ok: true; orthometricHeightM: { valueM: number }; error: null; detail: null }
+  | { ok: false; orthometricHeightM: null; error: string; detail: TerrainLookupErrorDetail };
 
 `;
 
@@ -761,8 +1673,8 @@ const topLevelReplacements = [
     "export function loadSp3(bytes: Uint8Array, gapThresholdFactor?: number | null): Sp3;",
   ],
   [
-    "export function preciseEphemerisSamplesFromSamples(samples: any, gap_threshold_factor?: number | null): PreciseEphemerisSampleSource;",
-    "export function preciseEphemerisSamplesFromSamples(samples: any, gapThresholdFactor?: number | null): PreciseEphemerisSampleSource;",
+    "export function preciseEphemerisSamplesFromSamples(samples: Sp3PreciseEphemerisSample[], gap_threshold_factor?: number | null): PreciseEphemerisSampleSource;",
+    "export function preciseEphemerisSamplesFromSamples(samples: Sp3PreciseEphemerisSample[], gapThresholdFactor?: number | null): PreciseEphemerisSampleSource;",
   ],
   [
     "export function mergeSp3(sources: Sp3[], options: any): Sp3MergeResult;",
@@ -803,6 +1715,18 @@ const topLevelReplacements = [
   [
     "export function solveSppFromRinexObs(source: BroadcastEphemeris, obs: RinexObs, rinex_options: any, solve_options: any): RinexSppSolutionBatch;",
     "export function solveSppFromRinexObs(source: BroadcastEphemeris, obs: RinexObs, rinex_options?: RinexSppOptions | null, solve_options?: RinexSppSolveOptions | null): RinexSppSolutionBatch;",
+  ],
+  [
+    "export function solveStatic(sp3: Sp3, epochs: any, options: any): StaticSolution;",
+    "export function solveStatic(sp3: Sp3, epochs: SppRequest[], options?: StaticSolveOptions | null): StaticSolution;",
+  ],
+  [
+    "export function pppCorrections(sp3: Sp3, epochs: any, receiver_ecef_m: Float64Array, options: any): any;",
+    "export function pppCorrections(sp3: Sp3, epochs: PppCorrectionEpoch[], receiver_ecef_m: Float64Array, options?: PppCorrectionOptions | null): PppCorrections;",
+  ],
+  [
+    "export function pppCorrectionsWithCodeBias(sp3: Sp3, epochs: any, receiver_ecef_m: Float64Array, options: any, bias_set: BiasSet, code_bias: any): any;",
+    "export function pppCorrectionsWithCodeBias(sp3: Sp3, epochs: PppCorrectionEpoch[], receiver_ecef_m: Float64Array, options: PppCorrectionOptions | null | undefined, bias_set: BiasSet, code_bias: CodeBiasOptions): PppCorrections;",
   ],
   [
     "export function buildRinexRtkArc(ephemeris: Sp3, base_obs: RinexObs, rover_obs: RinexObs, options?: any | null): any;",
@@ -883,6 +1807,10 @@ const classMemberReplacements = [
         "withInterpolationOptions(gapThresholdFactor: number): Sp3;",
       ],
       [
+        "selectedNodes(satellite: string, from_j2000_s: number, through_j2000_s: number): Float64Array;",
+        "selectedNodes(satellite: string, fromJ2000S: number, throughJ2000S: number): Float64Array;",
+      ],
+      [
         "preciseInterpolantArtifactBytes(gap_threshold_factor?: number | null): Uint8Array;",
         "preciseInterpolantArtifactBytes(gapThresholdFactor?: number | null): Uint8Array;",
       ],
@@ -892,6 +1820,10 @@ const classMemberReplacements = [
       [
         "solveSppBatch(epochs: any, options: any): SppBatchSolution;",
         "solveSppBatch(epochs: SppRequest[], options?: SppBatchOptions | null): SppBatchSolution;",
+      ],
+      [
+        "solveStatic(epochs: any, options: any): StaticSolution;",
+        "solveStatic(epochs: SppRequest[], options?: StaticSolveOptions | null): StaticSolution;",
       ],
       [
         "sppRobustFdeDriver(request: any): FdeSolution;",
@@ -916,8 +1848,8 @@ const classMemberReplacements = [
         "static fromPreciseEphemerisSamples(source: PreciseEphemerisSampleSource, gapThresholdFactor?: number | null): PreciseEphemerisInterpolant;",
       ],
       [
-        "static fromSamples(samples: any, gap_threshold_factor?: number | null): PreciseEphemerisInterpolant;",
-        "static fromSamples(samples: any, gapThresholdFactor?: number | null): PreciseEphemerisInterpolant;",
+        "static fromSamples(samples: Sp3PreciseEphemerisSample[], gap_threshold_factor?: number | null): PreciseEphemerisInterpolant;",
+        "static fromSamples(samples: Sp3PreciseEphemerisSample[], gapThresholdFactor?: number | null): PreciseEphemerisInterpolant;",
       ],
       [
         "static fromSp3(sp3: Sp3, gap_threshold_factor?: number | null): PreciseEphemerisInterpolant;",
@@ -933,10 +1865,29 @@ const classMemberReplacements = [
     "Sp3MergeReport",
     [
       [
-        "continuityVerdict(merged: Sp3, from_j2000_s: number, through_j2000_s: number): any;",
-        "continuityVerdict(merged: Sp3, fromJ2000S: number, throughJ2000S: number): WindowContinuityVerdict | null;",
+        "continuityVerdict(from_j2000_s: number, through_j2000_s: number): any;",
+        "continuityVerdict(fromJ2000S: number, throughJ2000S: number): WindowContinuityVerdict | null;",
+      ],
+      ["readonly continuity: any;", "readonly continuity: MergeContinuityReport | null;"],
+      [
+        "continuitySelectedNodes(satellite: string, from_j2000_s: number, through_j2000_s: number): Float64Array | undefined;",
+        "continuitySelectedNodes(satellite: string, fromJ2000S: number, throughJ2000S: number): Float64Array | undefined;",
+      ],
+      ["readonly provenance: any;", "readonly provenance: MergeProvenance | null;"],
+    ],
+  ],
+  [
+    "Sp3ClockOmission",
+    [
+      [
+        "readonly reason: string;",
+        'readonly reason: "datum_not_observable" | "preferred_source_without_clock" | "no_consensus";',
       ],
     ],
+  ],
+  [
+    "Sp3DroppedInputEpoch",
+    [["readonly reason: string;", 'readonly reason: "off_target_grid" | "not_on_tick_axis";']],
   ],
   ["NominalIssue", [["readonly covers: any;", "readonly covers: NominalCoverage;"]]],
   [
@@ -990,8 +1941,8 @@ const classMemberReplacements = [
     "DtedTerrain",
     [
       [
-        "heightBatch(points: any, options: any): any;",
-        "heightBatch(points: TerrainPoint[], options?: TerrainLookupOptions | null): TerrainHeightBatchResult[];",
+        "heightBatch(points: any, options: any): TerrainHeightBatchEntry[];",
+        "heightBatch(points: TerrainPoint[], options?: TerrainLookupOptions | null): TerrainHeightBatchEntry[];",
       ],
       [
         "heightMWithOptions(longitude_deg: number, latitude_deg: number, options: any): number;",
@@ -1012,8 +1963,8 @@ const classMemberReplacements = [
       ],
       ["readonly digestProvenance: string;", 'readonly digestProvenance: "verified" | "attested";'],
       [
-        "heightBatch(points: any, options: any): any;",
-        "heightBatch(points: TerrainPoint[], options?: TerrainLookupOptions | null): TerrainHeightBatchResult[];",
+        "heightBatch(points: any, options: any): TerrainHeightBatchEntry[];",
+        "heightBatch(points: TerrainPoint[], options?: TerrainLookupOptions | null): TerrainHeightBatchEntry[];",
       ],
       [
         "heightMWithOptions(longitude_deg: number, latitude_deg: number, options: any): number;",
@@ -1067,7 +2018,7 @@ function replaceExactly(text, from, to, context) {
     return text;
   }
   throw new Error(
-    `${context}: expected exactly one source declaration (or one already-patched declaration), found source=${fromCount}, patched=${toCount}`,
+    `${context}: expected exactly one source declaration (or one already-patched declaration), found source=${fromCount}, patched=${toCount}; source declaration=${JSON.stringify(from)}`,
   );
 }
 

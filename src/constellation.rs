@@ -564,12 +564,13 @@ pub fn from_celestrak_json(json: &str, system: Option<String>) -> Result<JsValue
 }
 
 /// An OMM entry a lenient catalog build could not resolve to a `Record` for the
-/// requested system: `{ objectName?, noradId }`.
+/// requested system: `{ objectName?, noradId }`, `noradId` being `undefined` for a
+/// record that states no `NORAD_CAT_ID`.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SkippedOmmJs {
     object_name: Option<String>,
-    norad_id: u32,
+    norad_id: Option<u32>,
 }
 
 impl From<&SkippedOmm> for SkippedOmmJs {

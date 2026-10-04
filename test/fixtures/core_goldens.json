@@ -1,0 +1,1084 @@
+{
+  "source": "test/golden-gen: the test scenarios reproduced natively against sidereon-core e2fb3dfdc392d23087ed8aa1ee028a0056b4021b",
+  "coreRev": "e2fb3dfdc392d23087ed8aa1ee028a0056b4021b",
+  "velocity": {
+    "tRxJ2000S": "0x41c342aa00000000",
+    "receiverEcefM": [
+      "0x41512a8800000000",
+      "0x411e848000000000",
+      "0x41512a8800000000"
+    ],
+    "rangeRates": [
+      [
+        "G07",
+        "0xc0768a0b93bc4249"
+      ],
+      [
+        "G08",
+        "0xc081bbf28799d04b"
+      ],
+      [
+        "G10",
+        "0xc081c9b515750656"
+      ],
+      [
+        "G16",
+        "0xc045eb58a17c07cd"
+      ],
+      [
+        "G18",
+        "0x407ec07dd76ef98b"
+      ],
+      [
+        "G20",
+        "0xc0689f0e9e3b2fa5"
+      ],
+      [
+        "G21",
+        "0x4063a9470c139736"
+      ],
+      [
+        "G26",
+        "0x4079ef7d9618f6b0"
+      ],
+      [
+        "G27",
+        "0xc0775231a840d16e"
+      ]
+    ],
+    "rangeRate": {
+      "usedSats": [
+        "G07",
+        "G08",
+        "G10",
+        "G16",
+        "G18",
+        "G20",
+        "G21",
+        "G26",
+        "G27"
+      ],
+      "velocityMS": [
+        "0x4027ffffffffffec",
+        "0xc01bffffffffffe4",
+        "0x4007ffffffffff20"
+      ],
+      "stateCovariance": [
+        "0x3ff0906b12b13d80",
+        "0xbfd3507feaf64e56",
+        "0x3fe4b8aaad332fa9",
+        "0x3e2653d23344de36",
+        "0xbfd3507feaf64e57",
+        "0x3fe06337a5c243d6",
+        "0x3f9ceec75f3f5834",
+        "0xbdfba852d042f9d0",
+        "0x3fe4b8aaad332fa7",
+        "0x3f9ceec75f3f5843",
+        "0x3ffc72af9d673df7",
+        "0x3e30eae3e3a5c529",
+        "0x3e2653d23344de35",
+        "0xbdfba852d042f9d7",
+        "0x3e30eae3e3a5c529",
+        "0x3c6ae29fdfdf778e"
+      ],
+      "speedMS": "0x402c6ce322982a1c",
+      "clockDriftSS": "0x3e112e0be826d27b",
+      "residualsMS": [
+        "0x3d0a000000000000",
+        "0x0000000000000000",
+        "0xbd24800000000000",
+        "0xbd23000000000000",
+        "0xbd04000000000000",
+        "0x3d26800000000000",
+        "0xbd10000000000000",
+        "0x3d28000000000000",
+        "0xbd00000000000000"
+      ]
+    },
+    "doppler": {
+      "values": [
+        "0x409e0965a1004ebf",
+        "0x40a7a43f85f98528",
+        "0x40a7b8ba4c3b8010",
+        "0x406d3dcdfd9ea20c",
+        "0xc0a484fca0bca28d",
+        "0x40906f3f2507f56a",
+        "0xc08a41b75e12e7ef",
+        "0xc0a152ed95f36ada",
+        "0x409f2a86eece60c8"
+      ],
+      "carriersHz": [
+        "0x41d7d01fe9000000",
+        "0x41d7d2453a000000",
+        "0x41d7d46a8b000000",
+        "0x41d7d68fdc000000",
+        "0x41d7d8b52d000000",
+        "0x41d7dada7e000000",
+        "0x41d7dcffcf000000",
+        "0x41d7df2520000000",
+        "0x41d7e14a71000000"
+      ],
+      "velocityMS": [
+        "0x4027fffffffffff8",
+        "0xc01bffffffffffe8",
+        "0x4007ffffffffff40"
+      ],
+      "stateCovariance": [
+        "0x3ff0906b12b13d80",
+        "0xbfd3507feaf64e56",
+        "0x3fe4b8aaad332fa9",
+        "0x3e2653d23344de36",
+        "0xbfd3507feaf64e57",
+        "0x3fe06337a5c243d6",
+        "0x3f9ceec75f3f5834",
+        "0xbdfba852d042f9d0",
+        "0x3fe4b8aaad332fa7",
+        "0x3f9ceec75f3f5843",
+        "0x3ffc72af9d673df7",
+        "0x3e30eae3e3a5c529",
+        "0x3e2653d23344de35",
+        "0xbdfba852d042f9d7",
+        "0x3e30eae3e3a5c529",
+        "0x3c6ae29fdfdf778e"
+      ],
+      "speedMS": "0x402c6ce322982a29",
+      "clockDriftSS": "0x3e112e0be826d445"
+    }
+  },
+  "sppDoppler": {
+    "tRxJ2000S": "0x41c342aa00000000",
+    "receiverEcefM": [
+      "0x41512a8800000000",
+      "0x411e848000000000",
+      "0x41512a8800000000"
+    ],
+    "observations": [
+      {
+        "satelliteId": "G08",
+        "pseudorangeM": "0x4176a49cf9b5e908"
+      },
+      {
+        "satelliteId": "G10",
+        "pseudorangeM": "0x4175a6225a2e7a63"
+      },
+      {
+        "satelliteId": "G16",
+        "pseudorangeM": "0x417378eee3b29684"
+      },
+      {
+        "satelliteId": "G18",
+        "pseudorangeM": "0x4174bfe64a321120"
+      },
+      {
+        "satelliteId": "G20",
+        "pseudorangeM": "0x417440f4a9967573"
+      },
+      {
+        "satelliteId": "G21",
+        "pseudorangeM": "0x4173cebc7b1d8cf3"
+      },
+      {
+        "satelliteId": "G26",
+        "pseudorangeM": "0x41741be8d3a0b61b"
+      },
+      {
+        "satelliteId": "G27",
+        "pseudorangeM": "0x417448acef88a343"
+      }
+    ],
+    "doppler": [
+      {
+        "satelliteId": "G07",
+        "dopplerHz": "0x409d9c72b5143fa3",
+        "carrierHz": "0x41d779c018000000"
+      },
+      {
+        "satelliteId": "G08",
+        "dopplerHz": "0x40a74c6568b4dc23",
+        "carrierHz": "0x41d779c018000000"
+      },
+      {
+        "satelliteId": "G10",
+        "dopplerHz": "0x40a75e79321b398d",
+        "carrierHz": "0x41d779c018000000"
+      },
+      {
+        "satelliteId": "G16",
+        "dopplerHz": "0x406ccbf4b2477f2c",
+        "carrierHz": "0x41d779c018000000"
+      },
+      {
+        "satelliteId": "G18",
+        "dopplerHz": "0xc0a433471e0d6e65",
+        "carrierHz": "0x41d779c018000000"
+      },
+      {
+        "satelliteId": "G20",
+        "dopplerHz": "0x40902c593c7712dd",
+        "carrierHz": "0x41d779c018000000"
+      },
+      {
+        "satelliteId": "G21",
+        "dopplerHz": "0xc089d48352de7616",
+        "carrierHz": "0x41d779c018000000"
+      },
+      {
+        "satelliteId": "G26",
+        "dopplerHz": "0xc0a10958453228c0",
+        "carrierHz": "0x41d779c018000000"
+      },
+      {
+        "satelliteId": "G27",
+        "dopplerHz": "0x409ea365308114b1",
+        "carrierHz": "0x41d779c018000000"
+      }
+    ],
+    "receiver": {
+      "rxClockDriftSS": "0x3e11348f9d331689",
+      "positionM": [
+        "0x41512a87fff86e26",
+        "0x411e84800029e57f",
+        "0x41512a87fff93c12"
+      ],
+      "positionCovarianceEcefM2": [
+        "0x4054f272ea0027bb",
+        "0xc0246acace6ea1c3",
+        "0x404614ef70165fad",
+        "0xc0246acace6ea1c3",
+        "0x4032a29cc3006c87",
+        "0x3ff782834dd7e42c",
+        "0x404614ef70165fad",
+        "0x3ff782834dd7e42c",
+        "0x4052685b7988ad25"
+      ]
+    },
+    "velocity": {
+      "velocityMS": [
+        "0x4028004d15d309c0",
+        "0xc01bffcc31048777",
+        "0x4008000ca20e6160"
+      ],
+      "speedMS": "0x402c6d1820fdaa88",
+      "clockDriftSS": "0x3e11348f9d331689",
+      "stateCovariance": [
+        "0x400276afd27291a0",
+        "0xbfd2d9a7e6e3f8ad",
+        "0x3ff35eadd0c5e7c3",
+        "0x3e3a3af46cf18711",
+        "0xbfd2d9a7e6e3f8aa",
+        "0x3fe0638dc5d5a855",
+        "0x3fa01c2744c23b00",
+        "0xbdfa4894ac209596",
+        "0x3ff35eadd0c5e7c9",
+        "0x3fa01c2744c23b17",
+        "0x400037899dc320b8",
+        "0x3e379558eb15d716",
+        "0x3e3a3af46cf18711",
+        "0xbdfa4894ac209594",
+        "0x3e379558eb15d716",
+        "0x3c78971fc9869654"
+      ]
+    }
+  },
+  "static": {
+    "receiverEcefM": [
+      "0x4150032cbb548926",
+      "0x4128e6640c763bbd",
+      "0x4151fec28de380d0"
+    ],
+    "epochs": [
+      {
+        "tRxJ2000S": "0x41c3429bf0000000",
+        "observations": [
+          {
+            "satelliteId": "G05",
+            "pseudorangeM": "0x4176ba2727726f09"
+          },
+          {
+            "satelliteId": "G16",
+            "pseudorangeM": "0x417620f596877d07"
+          },
+          {
+            "satelliteId": "G18",
+            "pseudorangeM": "0x4173aeb9f7d46a24"
+          },
+          {
+            "satelliteId": "G21",
+            "pseudorangeM": "0x41752d09f95520c2"
+          },
+          {
+            "satelliteId": "G25",
+            "pseudorangeM": "0x417696583941e21a"
+          },
+          {
+            "satelliteId": "G26",
+            "pseudorangeM": "0x4173d72d0967c9ff"
+          },
+          {
+            "satelliteId": "G29",
+            "pseudorangeM": "0x41747c68f050cf9a"
+          },
+          {
+            "satelliteId": "G31",
+            "pseudorangeM": "0x41753424d81b2f4c"
+          }
+        ]
+      },
+      {
+        "tRxJ2000S": "0x41c342a2f8000000",
+        "observations": [
+          {
+            "satelliteId": "G16",
+            "pseudorangeM": "0x417454a49ae9f3f7"
+          },
+          {
+            "satelliteId": "G18",
+            "pseudorangeM": "0x41736713264147d8"
+          },
+          {
+            "satelliteId": "G20",
+            "pseudorangeM": "0x41759af3ff9ae8c8"
+          },
+          {
+            "satelliteId": "G21",
+            "pseudorangeM": "0x4173ec7b4b9fe461"
+          },
+          {
+            "satelliteId": "G26",
+            "pseudorangeM": "0x417365f65faaef8d"
+          },
+          {
+            "satelliteId": "G27",
+            "pseudorangeM": "0x417616c1b7874ea5"
+          },
+          {
+            "satelliteId": "G29",
+            "pseudorangeM": "0x41762cf9560ec69f"
+          },
+          {
+            "satelliteId": "G31",
+            "pseudorangeM": "0x4177316c40988d24"
+          }
+        ]
+      },
+      {
+        "tRxJ2000S": "0x41c342aa00000000",
+        "observations": [
+          {
+            "satelliteId": "G08",
+            "pseudorangeM": "0x4176dd2f11983d64"
+          },
+          {
+            "satelliteId": "G10",
+            "pseudorangeM": "0x4175c6d03d5025d3"
+          },
+          {
+            "satelliteId": "G16",
+            "pseudorangeM": "0x41739a4a3689c61a"
+          },
+          {
+            "satelliteId": "G18",
+            "pseudorangeM": "0x41746f59119ef9e6"
+          },
+          {
+            "satelliteId": "G20",
+            "pseudorangeM": "0x417427fb1383696d"
+          },
+          {
+            "satelliteId": "G21",
+            "pseudorangeM": "0x4173c3f0699d1c7a"
+          },
+          {
+            "satelliteId": "G26",
+            "pseudorangeM": "0x417450834210315b"
+          },
+          {
+            "satelliteId": "G27",
+            "pseudorangeM": "0x417466efa513d7a1"
+          }
+        ]
+      },
+      {
+        "tRxJ2000S": "0x41c342b108000000",
+        "observations": [
+          {
+            "satelliteId": "G08",
+            "pseudorangeM": "0x4174fa4ccefb890f"
+          },
+          {
+            "satelliteId": "G10",
+            "pseudorangeM": "0x41743a62e43804e4"
+          },
+          {
+            "satelliteId": "G11",
+            "pseudorangeM": "0x41771f57e2433eef"
+          },
+          {
+            "satelliteId": "G16",
+            "pseudorangeM": "0x41745a8cf3ffc017"
+          },
+          {
+            "satelliteId": "G18",
+            "pseudorangeM": "0x417644cf12818cd8"
+          },
+          {
+            "satelliteId": "G20",
+            "pseudorangeM": "0x417415c301e72706"
+          },
+          {
+            "satelliteId": "G21",
+            "pseudorangeM": "0x4174812eafd7b1fc"
+          },
+          {
+            "satelliteId": "G26",
+            "pseudorangeM": "0x417654041bd99b95"
+          },
+          {
+            "satelliteId": "G27",
+            "pseudorangeM": "0x41736d7db4a55175"
+          }
+        ]
+      }
+    ],
+    "positionM": [
+      "0x4150032cbb4eaf47",
+      "0x4128e6640c789a12",
+      "0x4151fec28de004d5"
+    ],
+    "geodetic": [
+      "0x3feacee9f371e4dd",
+      "0x3fc893011f3ca2b0",
+      "0x4082bfff335e5eb0"
+    ],
+    "residualRmsM": "0x3f299c40758cad18",
+    "stateParameterCount": 7,
+    "positionCovarianceEcefM2": [
+      "0x4029ba5af606397e",
+      "0x3ff05045cd8e573b",
+      "0x401e2825869d8a6e",
+      "0x3ff05045cd8e573b",
+      "0x400e901ba385ec20",
+      "0x3fef26f085e1303a",
+      "0x401e2825869d8a6e",
+      "0x3fef26f085e1303a",
+      "0x402b58a70b518ea6"
+    ],
+    "positionCovarianceEnuM2": [
+      "0x400e24342233691a",
+      "0x3fcdd7472bea0672",
+      "0xbfeb83292ec16284",
+      "0x3fcdd7472bea0674",
+      "0x4016d7899d470560",
+      "0xbfdaad4f1830b8e0",
+      "0xbfeb83292ec16284",
+      "0xbfdaad4f1830b8e0",
+      "0x4034e11b8984731c"
+    ],
+    "usedSatCounts": [
+      8,
+      8,
+      8,
+      9
+    ],
+    "residualCount": 33,
+    "perEpochClockCount": 4,
+    "metadata": {
+      "iterations": 4,
+      "converged": true,
+      "status": "SelectionSettled",
+      "outerIterations": 0,
+      "finalRobustScaleM": null,
+      "usedMeasurements": 33,
+      "nParameters": 7,
+      "redundancy": 26
+    }
+  },
+  "sppTrace": {
+    "positionM": [
+      "0x41511b0a63f49487",
+      "0x4120cd6408329d2f",
+      "0x41511e646761efc5"
+    ],
+    "rxClockS": "0x3f1a3cfb33cd8027",
+    "metadata": {
+      "iterations": 8,
+      "converged": true,
+      "status": "SelectionSettled",
+      "outerIterations": 0,
+      "finalRobustScaleM": null,
+      "ionosphereApplied": false,
+      "troposphereApplied": false,
+      "usedCount": 8,
+      "systems": [
+        "GPS"
+      ]
+    }
+  },
+  "raimSolution": {
+    "tRxJ2000S": "0x41c3430568000000",
+    "observations": [
+      {
+        "satelliteId": "G05",
+        "pseudorangeM": "0x4175364734ba5b99"
+      },
+      {
+        "satelliteId": "G07",
+        "pseudorangeM": "0x417639685cecefb9"
+      },
+      {
+        "satelliteId": "G08",
+        "pseudorangeM": "0x417714b67a962f62"
+      },
+      {
+        "satelliteId": "G10",
+        "pseudorangeM": "0x417ab78a2cecf5f5"
+      },
+      {
+        "satelliteId": "G13",
+        "pseudorangeM": "0x41735feb356933a0"
+      },
+      {
+        "satelliteId": "G15",
+        "pseudorangeM": "0x4174ba58c238cd63"
+      }
+    ],
+    "usedSatCount": 5,
+    "faultDetected": false,
+    "dof": 1,
+    "worstSat": "G07",
+    "testStatistic": "0x400979912b05587c"
+  },
+  "navStore": {
+    "satellite": "G01",
+    "tJ2000S": "0x41c8e9f2b0000000",
+    "clockS": "0x3f2ee6485793097f",
+    "positionM": [
+      "0xc1735dc3f3f5a2d5",
+      "0xc16dee83fc993d03",
+      "0xc15ac9a1aad952c8"
+    ]
+  },
+  "navRepair": {
+    "recordCount": 7,
+    "repairedTextLength": 5281
+  },
+  "bias": {
+    "sinexRecordCount": 351,
+    "sinexSkippedRecords": 0,
+    "dcbRecordCount": 498,
+    "dcbSkippedRecords": 0
+  },
+  "scenario": {
+    "observationCount": 10,
+    "epochOffsets": [
+      0,
+      5,
+      10
+    ],
+    "firstSatellite": "G01",
+    "pseudorangeM0": "0x41733f38567b24a8",
+    "carrierPhaseCycles0": "0x4199492dfeab489b",
+    "dopplerHz0": "0xbfc00d7e11d491dc",
+    "geometricRangeM0": "0x41733f3670013e3d",
+    "thermalNoiseM0": "0x3fd7711c52a2af5b",
+    "receiverTruth1PositionEcefM0": "0x415854a640000000",
+    "determinismFingerprintHex": "0x2bc5f99995a82287",
+    "rinexText": "3.05                OBSERVATION DATA    M (MIXED)           RINEX VERSION / TYPE\nSIDEREON-SCENARIO   sidereon-core       SCENARIO-V1         PGM / RUN BY / DATE\nSynthetic observations from sidereon-core scenario engine   COMMENT\nSYNTHETIC                                                   MARKER NAME\nSIMULATED                                                   MARKER TYPE\n  6378137.0000        0.0000        0.0000                  APPROX POSITION XYZ\nG    3 C1C L1C D1C                                          SYS / # / OBS TYPES\n    30.000                                                  INTERVAL\n  2026     1     1     0     0    0.0000000     GPS         TIME OF FIRST OBS\n  2026     1     1     0     0   30.0000000     GPS         TIME OF LAST OBS\n     5                                                      # OF SATELLITES\n                                                            END OF HEADER\n> 2026 01 01 00 00  0.0000000  0  5\nG01  20181893.405   106056575.667          -0.125\nG02  24014764.773   126198452.626       -2341.612\nG03  24014907.414   126199202.796        2341.310\nG04  24014764.960   126198452.614       -4682.605\nG05  24014907.578   126199202.795        4682.330\n> 2026 01 01 00 00 30.0000000  0  5\nG01  20181913.983   106056685.098          -7.188\nG02  24028137.277   126268725.839       -2343.279\nG03  24001546.254   126128987.801        2339.659\nG04  24041523.888   126339073.482       -4692.113\nG05  23988204.104   126058876.770        4672.685\n",
+    "sppObservationsEpoch0": [
+      {
+        "satelliteId": "G01",
+        "pseudorangeM": "0x41733f38567b24a8"
+      },
+      {
+        "satelliteId": "G02",
+        "pseudorangeM": "0x4176e6facc5f27d6"
+      },
+      {
+        "satelliteId": "G03",
+        "pseudorangeM": "0x4176e703b69f87d8"
+      },
+      {
+        "satelliteId": "G04",
+        "pseudorangeM": "0x4176e6facf5cca3e"
+      },
+      {
+        "satelliteId": "G05",
+        "pseudorangeM": "0x4176e703b940e356"
+      }
+    ]
+  },
+  "fusionTight": {
+    "applied": true,
+    "rows": 1,
+    "nis": "0x4021ff24af27caaa",
+    "clockBiasM": "0x40dd4b4d54650527",
+    "clockCovariance0": "0x4032ffffc36f2bc8"
+  },
+  "ppp": {
+    "float": {
+      "status": "StateTolerance",
+      "solvedEpochCount": 120,
+      "epochClockCount": 120,
+      "residualCount": 1282,
+      "positionCovarianceEcefM2": [
+        "0x3fb4e34329c3e931",
+        "0x3f8a279a651590d4",
+        "0x3f75f53dea8c421c",
+        "0x3f8a279a651590d4",
+        "0x3fa7f5c49114ee94",
+        "0xbf3927ad268f4bbb",
+        "0x3f75f53dea8c421c",
+        "0xbf3927ad268f4bbb",
+        "0x3fa86b00c85f2444"
+      ],
+      "temporalPositionCovarianceEcefM2": [
+        "0x401a641e5a5422bf",
+        "0x3ff085dadef43ed7",
+        "0x3fdbbe48bbd052c0",
+        "0x3ff085dadef43ed7",
+        "0x400e45d8b8235209",
+        "0xbf9fc85a82900706",
+        "0x3fdbbe48bbd052c0",
+        "0xbf9fc85a82900706",
+        "0x400ed9f853a63175"
+      ],
+      "temporalCorrelation": {
+        "lag1Autocorrelation": "0x3fefae147ae147ae",
+        "decorrelationTimeEpochs": "0x4058dff24728af16",
+        "decorrelationTimeS": "0x40a751f322b62425",
+        "effectiveSampleCount": "0x403fb54fe34422f4",
+        "varianceInflationFactor": "0x4054372ede0a33f1",
+        "nominalSampleCount": 2564,
+        "arcsUsed": 24
+      }
+    },
+    "cutoff30": {
+      "usedSatCount": 6
+    },
+    "gradients": {
+      "northM": "0x3fa560c268fcfb74",
+      "eastM": "0x3f9401ff80feafea",
+      "covarianceM2": [
+        "0x3ea21b4c1458cef5",
+        "0x3e9000bec67d2d4d",
+        "0x3e9000bec67d2d4d",
+        "0x3eadc12473cfe214"
+      ],
+      "formalCovarianceM2": [
+        "0x3df809c27900e6ac",
+        "0x3de53ec8fed3835a",
+        "0x3de53ec8fed3835a",
+        "0x3e03c03587359e65"
+      ]
+    },
+    "fixed": {
+      "status": "StateTolerance",
+      "residualCount": 1282,
+      "nominalSampleCount": 2564
+    }
+  },
+  "rtkStaticReference": {
+    "referencePositionM": [
+      "0x414f181e2da372f7",
+      "0x412c701c211f4e38",
+      "0x415251081565efd8"
+    ],
+    "positionM": [
+      "0x414f181daf5f86cc",
+      "0x412c701ad35a97cf",
+      "0x4152510859bc8a81"
+    ],
+    "baselineVectorM": [
+      "0xbfef90fb0ac567c9",
+      "0xbfe4dc4b6688b506",
+      "0x3ff115a6aa24c512"
+    ],
+    "positionCovarianceEcefM2": [
+      [
+        "0x3f04714c22717de7",
+        "0x3eded47420268df8",
+        "0x3ef2f6943b05405f"
+      ],
+      [
+        "0x3eded47420268df6",
+        "0x3eec2a218bb40a65",
+        "0x3ed80783fb505d72"
+      ],
+      [
+        "0x3ef2f6943b05405d",
+        "0x3ed80783fb505d72",
+        "0x3f090f65270bcd58"
+      ]
+    ],
+    "heightM": "0x4084d166d76c4df4",
+    "usedMeasurements": 432
+  },
+  "tleFit": {
+    "ommEpoch": [
+      2018,
+      7,
+      3,
+      19,
+      25,
+      57,
+      304112,
+      613201141
+    ],
+    "check": {
+      "positionKm": [
+        "0x409066f98e371cdb",
+        "0xc0ba29d1a618a7ee",
+        "0x4070aa459c16d1cb"
+      ],
+      "velocityKmS": [
+        "0x4012a8eca8960d5f",
+        "0x3fef32249a9c7f76",
+        "0x40180641d2a60222"
+      ]
+    },
+    "samples": [
+      {
+        "epoch": [
+          "0x4142c15f80000000",
+          "0x3fd3afd826800000"
+        ],
+        "positionTemeKm": [
+          "0x406845ca1b2a8c62",
+          "0xc0ba4de8f508e1e9",
+          "0xc0896402f4e25078"
+        ],
+        "velocityTemeKmS": [
+          "0x40133becbbfdb990",
+          "0xbfe267942961219d",
+          "0x4017c59380107f02"
+        ]
+      },
+      {
+        "epoch": [
+          "0x4142c15f80000000",
+          "0x3fd3bb38dc800000"
+        ],
+        "positionTemeKm": [
+          "0x407e2062b4248ea3",
+          "0xc0ba60e9851a6e3c",
+          "0xc07c6537b35e486b"
+        ],
+        "velocityTemeKmS": [
+          "0x4013215fd3600e08",
+          "0xbfadb42494189b25",
+          "0x4017f7757a4fbad6"
+        ]
+      },
+      {
+        "epoch": [
+          "0x4142c15f80000000",
+          "0x3fd3c69992800000"
+        ],
+        "positionTemeKm": [
+          "0x4087fd3519a606f1",
+          "0xc0ba54dd49a6c882",
+          "0xc05783921f76b700"
+        ],
+        "velocityTemeKmS": [
+          "0x4012f04cdbf6dec6",
+          "0x3fdd67c107a0fb77",
+          "0x40180d0e217e8a1a"
+        ]
+      },
+      {
+        "epoch": [
+          "0x4142c15f80000000",
+          "0x3fd3d1fa48800000"
+        ],
+        "positionTemeKm": [
+          "0x409066fd921c284f",
+          "0xc0ba29d15f04b5b1",
+          "0x4070aa5f461d17b8"
+        ],
+        "velocityTemeKmS": [
+          "0x4012a8ec69fb3e4b",
+          "0x3fef3236cba63bd0",
+          "0x40180641dabefaca"
+        ]
+      },
+      {
+        "epoch": [
+          "0x4142c15f80000000",
+          "0x3fd3dd5afe800000"
+        ],
+        "positionTemeKm": [
+          "0x4094bc10d3af0c0f",
+          "0xc0b9dff79c0d4306",
+          "0x408390fac09fccb9"
+        ],
+        "velocityTemeKmS": [
+          "0x40124b91d9ea5161",
+          "0x3ff7c61a5cdcf688",
+          "0x4017e3172f69a6d0"
+        ]
+      },
+      {
+        "epoch": [
+          "0x4142c15f80000000",
+          "0x3fd3e8bbb5000000"
+        ],
+        "positionTemeKm": [
+          "0x4098f8ba0bd5454e",
+          "0xc0b977a65a188bb6",
+          "0x408eb5ab0afb61c2"
+        ],
+        "velocityTemeKmS": [
+          "0x4011d8aaed1872b5",
+          "0x3fffd73c4e1542b2",
+          "0x4017a3b6cb523cbe"
+        ]
+      },
+      {
+        "epoch": [
+          "0x4142c15f80000000",
+          "0x3fd3f41c6b000000"
+        ],
+        "positionTemeKm": [
+          "0x409d17fbb8bd323f",
+          "0xc0b8f1580f3087a5",
+          "0x4094db0bbfb37fa3"
+        ],
+        "velocityTemeKmS": [
+          "0x401150bf4117d689",
+          "0x4003e178cbf7b318",
+          "0x4017486b4af27df3"
+        ]
+      }
+    ],
+    "line1": "1 25544U 98067A   18184.80969102  .00000000  00000-0  62098-5 0  9997",
+    "line2": "2 25544  51.6418 277.1225 0003956 231.4636 131.4745 15.54204684120479",
+    "elements": {
+      "epoch": [
+        2458303.0,
+        0.30969101982191205
+      ],
+      "bstar": 6.209757984472554e-6,
+      "mean_motion_dot": 0.0,
+      "mean_motion_double_dot": 0.0,
+      "eccentricity": 0.0003955546690811442,
+      "argument_of_perigee_deg": 231.46364504167914,
+      "inclination_deg": 51.64179998764232,
+      "mean_anomaly_deg": 131.47452577849575,
+      "mean_motion_rev_per_day": 15.542046835740326,
+      "right_ascension_deg": 277.1224920782267,
+      "catalog_number": 25544
+    },
+    "stats": {
+      "rms_position_km": 0.00008668189492195993,
+      "max_position_km": 0.00013704434842574985,
+      "rms_position_axes_km": [
+        0.000050973968390313523,
+        0.000020344657471149867,
+        0.00006709322146228042
+      ],
+      "rms_velocity_km_s": 4.1835433813279343e-7,
+      "tle_rms_position_km": 0.007504442728994068,
+      "status": 3,
+      "nfev": 12,
+      "njev": 8,
+      "cost": 2.8503381876987532e-8,
+      "optimality": 0.020345292690821113,
+      "bstar_observable": false,
+      "seed_refine_passes": 2
+    }
+  },
+  "clockLeapInterp": {
+    "biasAt60p5": "0x3f30624dd2f1a9fc"
+  },
+  "qcReport": {
+    "header": {
+      "markerName": "WTZR",
+      "markerNumber": "14201M010",
+      "markerType": null,
+      "receiver": {
+        "number": "1831551",
+        "receiverType": "LEICA GR50",
+        "version": "4.31/7.403"
+      },
+      "antenna": {
+        "number": "10020031",
+        "antennaType": "LEIAR25.R3      LEIT"
+      },
+      "approxPositionM": [
+        4075580.8863,
+        931853.5784,
+        4801567.9707
+      ],
+      "antennaDeltaHenM": [
+        0.071,
+        0.0,
+        0.0
+      ],
+      "timeOfFirstObs": {
+        "epoch": {
+          "year": 2020,
+          "month": 6,
+          "day": 25,
+          "hour": 0,
+          "minute": 0,
+          "second": 0.0
+        },
+        "timeScale": "GPS"
+      },
+      "timeOfLastObs": {
+        "epoch": {
+          "year": 2020,
+          "month": 6,
+          "day": 25,
+          "hour": 0,
+          "minute": 59,
+          "second": 30.0
+        },
+        "timeScale": "GPS"
+      },
+      "durationS": 3570.0
+    },
+    "systems": [
+      {
+        "system": "GPS",
+        "satellitesSeen": 11,
+        "epochsWithObservations": 120,
+        "valueObservations": 15050,
+        "expectedObservations": 18496,
+        "completenessRatio": 0.813689446366782,
+        "gapCount": 0,
+        "totalGapS": 0.0
+      },
+      {
+        "system": "GLONASS",
+        "satellitesSeen": 10,
+        "epochsWithObservations": 120,
+        "valueObservations": 11519,
+        "expectedObservations": 16656,
+        "completenessRatio": 0.6915826128722382,
+        "gapCount": 0,
+        "totalGapS": 0.0
+      },
+      {
+        "system": "Galileo",
+        "satellitesSeen": 10,
+        "epochsWithObservations": 120,
+        "valueObservations": 16116,
+        "expectedObservations": 16144,
+        "completenessRatio": 0.9982656095143707,
+        "gapCount": 0,
+        "totalGapS": 0.0
+      },
+      {
+        "system": "BeiDou",
+        "satellitesSeen": 8,
+        "epochsWithObservations": 120,
+        "valueObservations": 7348,
+        "expectedObservations": 9336,
+        "completenessRatio": 0.7870608397600686,
+        "gapCount": 0,
+        "totalGapS": 0.0
+      },
+      {
+        "system": "NavIC",
+        "satellitesSeen": 4,
+        "epochsWithObservations": 120,
+        "valueObservations": 1739,
+        "expectedObservations": 1744,
+        "completenessRatio": 0.9971330275229358,
+        "gapCount": 0,
+        "totalGapS": 0.0
+      },
+      {
+        "system": "SBAS",
+        "satellitesSeen": 3,
+        "epochsWithObservations": 120,
+        "valueObservations": 1012,
+        "expectedObservations": 1012,
+        "completenessRatio": 1.0,
+        "gapCount": 0,
+        "totalGapS": 0.0
+      }
+    ]
+  },
+  "emissionMedia": {
+    "epochJ2000S": "0x41c3429bf0000000",
+    "receiverEcefM": [
+      "0x4150032cbb548926",
+      "0x4128e6640c763bbd",
+      "0x4151fec28de380d0"
+    ],
+    "all": {
+      "positionsEcefM": [
+        [
+          "0x41528a3431db22d1",
+          "0xc1704ee0fb2b020c",
+          "0x417277c7bbae147b"
+        ],
+        [
+          "0x4170eb2ded439581",
+          "0xc154cf5f14ac0831",
+          "0x4175fd6663604189"
+        ],
+        null
+      ],
+      "clocksS": [
+        "0xbf26da6e075bf537",
+        "0xbf4cfa1c57307076",
+        null
+      ],
+      "ionosphereSlantDelaysM": [
+        "0x0000000000000000",
+        "0x0000000000000000",
+        null
+      ],
+      "troposphereDelaysM": [
+        "0x40185de8aa0810f2",
+        "0x4004d46e00457c07",
+        null
+      ]
+    },
+    "belowCutoff": {
+      "positionsEcefM": [
+        [
+          "0x41528a3431db22d1",
+          "0xc1704ee0fb2b020c",
+          "0x417277c7bbae147b"
+        ]
+      ],
+      "clocksS": [
+        "0xbf26da6e075bf537"
+      ],
+      "ionosphereSlantDelaysM": [
+        null
+      ],
+      "troposphereDelaysM": [
+        null
+      ]
+    }
+  },
+  "preciseArtifact": {
+    "byteLength": 1236000,
+    "checksum64": "6800485583762512281",
+    "g16": [
+      {
+        "queryJ2000S": "0x41c3426734000000",
+        "positionM": [
+          "0xc178d8dfe4b43959",
+          "0xc11fd0228624dd30",
+          "0xc158a4012116872b"
+        ],
+        "clockS": "0xbf26d6277fd0e497"
+      },
+      {
+        "queryJ2000S": "0x41c3426815000000",
+        "positionM": [
+          "0xc1787e3fa9228724",
+          "0xc1243593360464a4",
+          "0xc15dd0bb39793458"
+        ],
+        "clockS": "0xbf26d639ccc4382e"
+      }
+    ]
+  }
+}

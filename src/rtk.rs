@@ -248,7 +248,8 @@ struct FixedConfigInput {
 /// Solve a static float RTK baseline.
 ///
 /// `config` is a plain object; see the `RtkFloatConfig` TypeScript type. Throws
-/// a `TypeError` for malformed input and an `Error` if the solve fails.
+/// a `TypeError` for malformed input and a typed `PositioningError` if the core
+/// solve fails.
 #[wasm_bindgen(js_name = solveRtkFloat)]
 pub fn solve_rtk_float(config: JsValue) -> Result<RtkFloatSolution, JsValue> {
     let cfg: FloatConfigInput = serde_wasm_bindgen::from_value(config)
@@ -266,7 +267,10 @@ pub fn solve_rtk_float(config: JsValue) -> Result<RtkFloatSolution, JsValue> {
         cfg.options.to_core(),
         None,
     )
-    .map_err(engine_error)?;
+    .map_err(|error| match error {
+        sidereon::Error::RtkFloat(cause) => crate::positioning_error::rtk_float_error(&cause),
+        other => engine_error(other),
+    })?;
 
     Ok(RtkFloatSolution { inner })
 }
@@ -308,7 +312,10 @@ pub fn solve_rtk_fixed(config: JsValue) -> Result<RtkFixedSolution, JsValue> {
         opts,
         None,
     )
-    .map_err(engine_error)?;
+    .map_err(|error| match error {
+        sidereon::Error::RtkFixed(cause) => crate::positioning_error::rtk_fixed_error(&cause),
+        other => engine_error(other),
+    })?;
 
     Ok(RtkFixedSolution { inner })
 }

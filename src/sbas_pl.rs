@@ -48,7 +48,9 @@ fn sbas_pl_error(error: CoreSbasPlError) -> JsValue {
     match error {
         CoreSbasPlError::InsufficientGeometry => type_error(&error.to_string()),
         CoreSbasPlError::InvalidErrorModel => range_error(&error.to_string()),
-        CoreSbasPlError::NumericalFailure => engine_error(error),
+        CoreSbasPlError::NumericalFailure | CoreSbasPlError::Ut1OutsideCoverage(_) => {
+            engine_error(error)
+        }
     }
 }
 
@@ -57,6 +59,7 @@ fn sbas_pl_error_name(error: SbasPlError) -> &'static str {
         SbasPlError::InsufficientGeometry => "InsufficientGeometry",
         SbasPlError::NumericalFailure => "NumericalFailure",
         SbasPlError::InvalidErrorModel => "InvalidErrorModel",
+        SbasPlError::Ut1OutsideCoverage => "Ut1OutsideCoverage",
     }
 }
 
@@ -70,6 +73,8 @@ pub enum SbasPlError {
     NumericalFailure,
     /// The supplied error model or K multipliers are outside their domain.
     InvalidErrorModel,
+    /// The ephemeris source refused an instant outside the UT1 table.
+    Ut1OutsideCoverage,
 }
 
 impl From<CoreSbasPlError> for SbasPlError {
@@ -78,6 +83,7 @@ impl From<CoreSbasPlError> for SbasPlError {
             CoreSbasPlError::InsufficientGeometry => Self::InsufficientGeometry,
             CoreSbasPlError::NumericalFailure => Self::NumericalFailure,
             CoreSbasPlError::InvalidErrorModel => Self::InvalidErrorModel,
+            CoreSbasPlError::Ut1OutsideCoverage(_) => Self::Ut1OutsideCoverage,
         }
     }
 }

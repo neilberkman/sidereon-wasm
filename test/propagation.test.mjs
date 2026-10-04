@@ -160,6 +160,49 @@ test("unknown force model throws TypeError", () => {
   );
 });
 
+test("force model tide systems are explicit and reject misspelled fields", () => {
+  const baseRequest = {
+    epochS: 0,
+    positionKm: [7000, 0, 0],
+    velocityKmS: [0, 7.5, 0],
+    timesS: [0],
+    integrator: "rk4",
+    initialStepS: 1,
+    maxStepS: 1,
+  };
+  assert.throws(
+    () =>
+      propagateState({
+        ...baseRequest,
+        forceModel: {
+          kind: "composite",
+          zonal: { coefficients: { tideSystem: "zeroTide", tideSytem: "meanTide" } },
+        },
+      }),
+    (error) => error.name === "TypeError" && error.message.includes("tideSytem"),
+  );
+  assert.throws(
+    () =>
+      propagateState({
+        ...baseRequest,
+        forceModel: {
+          kind: "composite",
+          zonal: { coefficients: { tideSystem: "zeroTide" } },
+          solidEarthTide: { tideSystem: "meanTide" },
+        },
+      }),
+    /solid Earth tide is set for a MeanTide geopotential but the selected field is ZeroTide/,
+  );
+  assert.throws(
+    () =>
+      propagateState({
+        ...baseRequest,
+        forceModel: { kind: "composite", solidEarthTide: { tideSystem: "mean_tide" } },
+      }),
+    TypeError,
+  );
+});
+
 // --- analytic / TLE (SGP4) numerical path -----------------------------------
 
 const epochsBigInt = (fx) => BigInt64Array.from(fx.epochs.map((e) => BigInt(e.unix_microseconds)));

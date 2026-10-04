@@ -9,7 +9,8 @@ use sidereon_core::astro::equinoctial::{
     RetrogradeFactor as CoreRetrogradeFactor,
 };
 
-use crate::error::{engine_error, type_error};
+use crate::domain_error::equinoctial_error;
+use crate::error::type_error;
 use crate::marshal::vec3_finite;
 
 #[wasm_bindgen]
@@ -256,23 +257,23 @@ fn state_to_js(r: [f64; 3], v: [f64; 3]) -> Result<JsValue, JsValue> {
 #[wasm_bindgen(js_name = coe2eq)]
 pub fn coe2eq(coe: JsValue, factor: Option<RetrogradeFactor>) -> Result<JsValue, JsValue> {
     let coe = coe_from_js(coe)?;
-    eq_to_js(core_coe2eq(&coe, factor_or_default(factor)).map_err(engine_error)?)
+    eq_to_js(core_coe2eq(&coe, factor_or_default(factor)).map_err(equinoctial_error)?)
 }
 
 #[wasm_bindgen(js_name = eq2coe)]
 pub fn eq2coe(eq: JsValue) -> Result<JsValue, JsValue> {
-    coe_to_js(core_eq2coe(&eq_from_js(eq)?).map_err(engine_error)?)
+    coe_to_js(core_eq2coe(&eq_from_js(eq)?).map_err(equinoctial_error)?)
 }
 
 #[wasm_bindgen(js_name = coe2mee)]
 pub fn coe2mee(coe: JsValue, factor: Option<RetrogradeFactor>) -> Result<JsValue, JsValue> {
     let coe = coe_from_js(coe)?;
-    mee_to_js(core_coe2mee(&coe, factor_or_default(factor)).map_err(engine_error)?)
+    mee_to_js(core_coe2mee(&coe, factor_or_default(factor)).map_err(equinoctial_error)?)
 }
 
 #[wasm_bindgen(js_name = mee2coe)]
 pub fn mee2coe(mee: JsValue) -> Result<JsValue, JsValue> {
-    coe_to_js(core_mee2coe(&mee_from_js(mee)?).map_err(engine_error)?)
+    coe_to_js(core_mee2coe(&mee_from_js(mee)?).map_err(equinoctial_error)?)
 }
 
 #[wasm_bindgen(js_name = rv2eq)]
@@ -284,12 +285,12 @@ pub fn rv2eq(
 ) -> Result<JsValue, JsValue> {
     let r = vec3_finite("r", r)?;
     let v = vec3_finite("v", v)?;
-    eq_to_js(core_rv2eq(r, v, mu_km3_s2, factor_or_default(factor)).map_err(engine_error)?)
+    eq_to_js(core_rv2eq(r, v, mu_km3_s2, factor_or_default(factor)).map_err(equinoctial_error)?)
 }
 
 #[wasm_bindgen(js_name = eq2rv)]
 pub fn eq2rv(eq: JsValue, mu_km3_s2: f64) -> Result<JsValue, JsValue> {
-    let (r, v) = core_eq2rv(&eq_from_js(eq)?, mu_km3_s2).map_err(engine_error)?;
+    let (r, v) = core_eq2rv(&eq_from_js(eq)?, mu_km3_s2).map_err(equinoctial_error)?;
     state_to_js(r, v)
 }
 
@@ -302,11 +303,11 @@ pub fn rv2mee(
 ) -> Result<JsValue, JsValue> {
     let r = vec3_finite("r", r)?;
     let v = vec3_finite("v", v)?;
-    mee_to_js(core_rv2mee(r, v, mu_km3_s2, factor_or_default(factor)).map_err(engine_error)?)
+    mee_to_js(core_rv2mee(r, v, mu_km3_s2, factor_or_default(factor)).map_err(equinoctial_error)?)
 }
 
 #[wasm_bindgen(js_name = mee2rv)]
 pub fn mee2rv(mee: JsValue, mu_km3_s2: f64) -> Result<JsValue, JsValue> {
-    let (r, v) = core_mee2rv(&mee_from_js(mee)?, mu_km3_s2).map_err(engine_error)?;
+    let (r, v) = core_mee2rv(&mee_from_js(mee)?, mu_km3_s2).map_err(equinoctial_error)?;
     state_to_js(r, v)
 }

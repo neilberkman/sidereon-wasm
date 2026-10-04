@@ -8,11 +8,13 @@ use std::str::FromStr;
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
+use sidereon_core::carrier_phase::CarrierPhaseError;
 use sidereon_core::carrier_phase::{
     self, ArcEpoch, CycleSlipOptions as CoreCycleSlipOptions, IonoFreeSmoothResult as CoreIfSmooth,
     SlipReason as CoreSlipReason, SlipResult as CoreSlipResult, SmoothCodeResult as CoreSmoothCode,
     DEFAULT_HATCH_WINDOW_CAP,
 };
+use sidereon_core::combinations::IonosphereFreeError;
 use sidereon_core::combinations::{self, PseudorangeDropReason as CoreDropReason};
 use sidereon_core::frequencies::{
     default_iono_free_pair, default_spp_frequency_hz, frequency_hz, glonass_g1_frequency_hz,
@@ -25,28 +27,137 @@ use sidereon_core::observables::{
 };
 use sidereon_core::quality::{
     self, PseudorangeVarianceModel as CoreVarModel, PseudorangeVarianceOptions as CoreVarOptions,
-    RaimWeights as CoreRaimWeights, WeightEntry as CoreWeightEntry,
+    QualityError, RaimWeights as CoreRaimWeights, WeightEntry as CoreWeightEntry,
 };
 use sidereon_core::signal::{
     self, AcquisitionGrid as CoreAcqGrid, AcquisitionOptions as CoreAcqOptions,
     AcquisitionResult as CoreAcqResult, CorrelateOptions as CoreCorrelateOptions,
     CorrelationResult as CoreCorrelationResult, IqSample, ReplicaOptions as CoreReplicaOptions,
+    SignalError,
 };
 use sidereon_core::velocity::{
-    self, VelocityObservable as CoreVelObservable, VelocityObservation as CoreVelObs,
-    VelocitySolution as CoreVelSolution, VelocitySolveOptions as CoreVelOptions,
+    self, VelocityError, VelocityObservable as CoreVelObservable,
+    VelocityObservation as CoreVelObs, VelocitySolution as CoreVelSolution,
+    VelocitySolveOptions as CoreVelOptions,
 };
 use sidereon_core::GnssSatelliteId;
 
-use crate::error::{engine_error, range_error, type_error};
+use crate::error::{range_error, type_error};
 use crate::gnss::{CarrierBand, GnssSystem};
 use crate::rinex_nav::BroadcastEphemeris;
 use crate::sp3::Sp3;
 
 // ---- error mapping -----------------------------------------------------------
 
-fn domain_error<E: core::fmt::Display>(err: E) -> JsValue {
-    range_error(&err.to_string())
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScalarObservableErrorDetail {
+    family: &'static str,
+    kind: &'static str,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    band: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct VelocityRangeErrorDetail {
+    family: &'static str,
+    #[serde(flatten)]
+    error: crate::core_error::VelocityErrorDetail,
+}
+
+fn scalar_observable_error_js<T: serde::Serialize>(message: &str, detail: &T) -> JsValue {
+    crate::error::error_with_detail("RangeError", message, detail)
+}
+
+fn ionosphere_free_error(error: IonosphereFreeError) -> JsValue {
+    let message = error.to_string();
+    let (kind, system, band) = match error {
+        IonosphereFreeError::UnknownSystem(system) => {
+            ("unknown_system", Some(system.to_string()), None)
+        }
+        IonosphereFreeError::UnknownBand { system, band } => {
+            ("unknown_band", Some(system.to_string()), Some(band))
+        }
+        IonosphereFreeError::EqualFrequencies => ("equal_frequencies", None, None),
+        IonosphereFreeError::InvalidFrequency => ("invalid_frequency", None, None),
+        IonosphereFreeError::InvalidObservation => ("invalid_observation", None, None),
+    };
+    let detail = ScalarObservableErrorDetail {
+        family: "IonosphereFreeError",
+        kind,
+        message: message.clone(),
+        system,
+        band,
+        prn: None,
+        field: None,
+        reason: None,
+    };
+    scalar_observable_error_js(&message, &detail)
+}
+
+fn carrier_phase_error(error: CarrierPhaseError) -> JsValue {
+    let message = error.to_string();
+    let kind = match error {
+        CarrierPhaseError::EqualFrequencies => "equal_frequencies",
+        CarrierPhaseError::InvalidFrequency => "invalid_frequency",
+        CarrierPhaseError::InvalidObservation => "invalid_observation",
+        CarrierPhaseError::InvalidThreshold => "invalid_threshold",
+    };
+    let detail = ScalarObservableErrorDetail {
+        family: "CarrierPhaseError",
+        kind,
+        message: message.clone(),
+        system: None,
+        band: None,
+        prn: None,
+        field: None,
+        reason: None,
+    };
+    scalar_observable_error_js(&message, &detail)
+}
+
+fn signal_error(error: SignalError) -> JsValue {
+    let message = error.to_string();
+    let (kind, prn, field, reason) = match error {
+        SignalError::UnsupportedPrn(prn) => ("unsupported_prn", Some(prn.to_string()), None, None),
+        SignalError::InvalidInput { field, reason } => (
+            "invalid_input",
+            None,
+            Some(field.to_owned()),
+            Some(reason.to_owned()),
+        ),
+        SignalError::EmptySamples => ("empty_samples", None, None, None),
+        SignalError::TooShort => ("too_short", None, None, None),
+    };
+    let detail = ScalarObservableErrorDetail {
+        family: "SignalError",
+        kind,
+        message: message.clone(),
+        system: None,
+        band: None,
+        prn,
+        field,
+        reason,
+    };
+    scalar_observable_error_js(&message, &detail)
+}
+
+fn velocity_range_error(error: VelocityError) -> JsValue {
+    let message = error.to_string();
+    let detail = VelocityRangeErrorDetail {
+        family: "VelocityError",
+        error: crate::core_error::VelocityErrorDetail::from(&error),
+    };
+    crate::error::error_with_detail("RangeError", &message, &detail)
 }
 
 fn parse_sat(token: &str) -> Result<GnssSatelliteId, JsValue> {
@@ -273,19 +384,19 @@ pub fn default_pair(system: GnssSystem) -> Option<CarrierPair> {
 /// Ionosphere-free coefficient `gamma = f1^2 / (f1^2 - f2^2)`.
 #[wasm_bindgen]
 pub fn gamma(f1_hz: f64, f2_hz: f64) -> Result<f64, JsValue> {
-    combinations::gamma(f1_hz, f2_hz).map_err(domain_error)
+    combinations::gamma(f1_hz, f2_hz).map_err(ionosphere_free_error)
 }
 
 /// Equal-variance noise amplification of the ionosphere-free combination.
 #[wasm_bindgen(js_name = noiseAmplification)]
 pub fn noise_amplification(f1_hz: f64, f2_hz: f64) -> Result<f64, JsValue> {
-    combinations::noise_amplification(f1_hz, f2_hz).map_err(domain_error)
+    combinations::noise_amplification(f1_hz, f2_hz).map_err(ionosphere_free_error)
 }
 
 /// Ionosphere-free code or meter-valued phase combination, metres.
 #[wasm_bindgen(js_name = ionosphereFree)]
 pub fn ionosphere_free(obs1_m: f64, obs2_m: f64, f1_hz: f64, f2_hz: f64) -> Result<f64, JsValue> {
-    combinations::ionosphere_free(obs1_m, obs2_m, f1_hz, f2_hz).map_err(domain_error)
+    combinations::ionosphere_free(obs1_m, obs2_m, f1_hz, f2_hz).map_err(ionosphere_free_error)
 }
 
 /// Ionosphere-free carrier-phase combination from meter-valued phase inputs.
@@ -296,7 +407,8 @@ pub fn ionosphere_free_phase_m(
     f1_hz: f64,
     f2_hz: f64,
 ) -> Result<f64, JsValue> {
-    combinations::ionosphere_free_phase_m(phase1_m, phase2_m, f1_hz, f2_hz).map_err(domain_error)
+    combinations::ionosphere_free_phase_m(phase1_m, phase2_m, f1_hz, f2_hz)
+        .map_err(ionosphere_free_error)
 }
 
 /// Ionosphere-free carrier-phase combination from cycle-valued phase inputs.
@@ -308,31 +420,31 @@ pub fn ionosphere_free_phase_cycles(
     f2_hz: f64,
 ) -> Result<f64, JsValue> {
     combinations::ionosphere_free_phase_cycles(phi1_cycles, phi2_cycles, f1_hz, f2_hz)
-        .map_err(domain_error)
+        .map_err(ionosphere_free_error)
 }
 
 /// Carrier phase converted to metres, `L = c / f * phi`.
 #[wasm_bindgen(js_name = phaseMeters)]
 pub fn phase_meters(phi_cycles: f64, f_hz: f64) -> Result<f64, JsValue> {
-    carrier_phase::phase_meters(phi_cycles, f_hz).map_err(domain_error)
+    carrier_phase::phase_meters(phi_cycles, f_hz).map_err(carrier_phase_error)
 }
 
 /// Geometry-free phase combination `L_GF = L1 - L2`, metres.
 #[wasm_bindgen(js_name = geometryFree)]
 pub fn geometry_free(l1_m: f64, l2_m: f64) -> Result<f64, JsValue> {
-    carrier_phase::geometry_free(l1_m, l2_m).map_err(domain_error)
+    carrier_phase::geometry_free(l1_m, l2_m).map_err(carrier_phase_error)
 }
 
 /// Wide-lane wavelength `c / (f1 - f2)`, metres.
 #[wasm_bindgen(js_name = wideLaneWavelength)]
 pub fn wide_lane_wavelength(f1_hz: f64, f2_hz: f64) -> Result<f64, JsValue> {
-    carrier_phase::wide_lane_wavelength(f1_hz, f2_hz).map_err(domain_error)
+    carrier_phase::wide_lane_wavelength(f1_hz, f2_hz).map_err(carrier_phase_error)
 }
 
 /// Narrow-lane code combination, metres.
 #[wasm_bindgen(js_name = narrowLaneCode)]
 pub fn narrow_lane_code(p1_m: f64, p2_m: f64, f1_hz: f64, f2_hz: f64) -> Result<f64, JsValue> {
-    carrier_phase::narrow_lane_code(p1_m, p2_m, f1_hz, f2_hz).map_err(domain_error)
+    carrier_phase::narrow_lane_code(p1_m, p2_m, f1_hz, f2_hz).map_err(carrier_phase_error)
 }
 
 /// Melbourne-Wubbena combination, metres.
@@ -346,7 +458,7 @@ pub fn melbourne_wubbena(
     f2_hz: f64,
 ) -> Result<f64, JsValue> {
     carrier_phase::melbourne_wubbena(phi1_cycles, phi2_cycles, p1_m, p2_m, f1_hz, f2_hz)
-        .map_err(domain_error)
+        .map_err(carrier_phase_error)
 }
 
 /// Melbourne-Wubbena wide-lane ambiguity estimate, wide-lane cycles.
@@ -360,7 +472,7 @@ pub fn wide_lane_cycles(
     f2_hz: f64,
 ) -> Result<f64, JsValue> {
     carrier_phase::wide_lane_cycles(phi1_cycles, phi2_cycles, p1_m, p2_m, f1_hz, f2_hz)
-        .map_err(domain_error)
+        .map_err(carrier_phase_error)
 }
 
 /// Result of combining two pseudorange bands into ionosphere-free ranges.
@@ -456,7 +568,7 @@ pub fn ionosphere_free_pseudoranges(
 
     let (combined, dropped) =
         combinations::ionosphere_free_pseudoranges(&band1, &band2, &overrides)
-            .map_err(domain_error)?;
+            .map_err(ionosphere_free_error)?;
 
     let mut combined_sats = Vec::with_capacity(combined.len());
     let mut combined_m = Vec::with_capacity(combined.len());
@@ -499,7 +611,7 @@ impl PseudorangeVarianceOptionsInput {
             Some(other) => {
                 return Err(type_error(&format!(
                     "invalid variance model {other:?}: expected \"elevation\" or \"elevation_cn0\""
-                )))
+                )));
             }
         };
         let core_default = CoreVarOptions::default();
@@ -527,7 +639,27 @@ fn var_options(options: JsValue) -> Result<CoreVarOptions, JsValue> {
 #[wasm_bindgen(js_name = pseudorangeVariance)]
 pub fn pseudorange_variance(elevation_deg: f64, options: JsValue) -> Result<f64, JsValue> {
     let options = var_options(options)?;
-    quality::pseudorange_variance(elevation_deg, options).map_err(domain_error)
+    quality::pseudorange_variance(elevation_deg, options)
+        .map_err(crate::positioning_error::quality_error)
+}
+
+/// Chi-square inverse CDF (quantile) for probability `p` and degrees of freedom `dof`.
+#[wasm_bindgen(js_name = chi2Inv)]
+pub fn chi2_inv(p: f64, dof: f64) -> Result<f64, JsValue> {
+    let max_exact_dof = (usize::MAX as f64).min(9_007_199_254_740_991.0);
+    if !dof.is_finite() || dof.fract() != 0.0 || dof < 0.0 || dof > max_exact_dof {
+        // Let core validate probability first, preserving its error ordering.
+        return match quality::chi2_inv(p, 0) {
+            Err(error) => Err(crate::positioning_error::quality_error(error)),
+            Ok(_) => unreachable!("zero degrees of freedom is rejected by core"),
+        };
+    }
+    let Ok(dof) = usize::try_from(dof as u64) else {
+        return Err(crate::positioning_error::quality_error(
+            QualityError::InvalidDof,
+        ));
+    };
+    quality::chi2_inv(p, dof).map_err(crate::positioning_error::quality_error)
 }
 
 /// Satellite-keyed measurement sigmas (metres) or inverse-variance weights.
@@ -608,6 +740,14 @@ pub struct RaimWeights {
 
 #[wasm_bindgen]
 impl RaimWeights {
+    /// Use the variances retained by the receiver solution (the default).
+    #[wasm_bindgen(js_name = solution)]
+    pub fn solution() -> RaimWeights {
+        RaimWeights {
+            inner: CoreRaimWeights::Solution,
+        }
+    }
+
     /// Unit weights, equivalent to sigma = 1 m for every satellite.
     #[wasm_bindgen(js_name = unit)]
     pub fn unit() -> RaimWeights {
@@ -632,7 +772,9 @@ impl RaimWeights {
         let mut map = std::collections::BTreeMap::new();
         for (id, &weight) in satellite_ids.into_iter().zip(weights.iter()) {
             if !weight.is_finite() || weight <= 0.0 {
-                return Err(range_error("RAIM weights must be positive finite values"));
+                return Err(crate::positioning_error::quality_error(
+                    QualityError::InvalidWeight,
+                ));
             }
             map.insert(id, weight);
         }
@@ -647,11 +789,17 @@ impl RaimWeights {
         matches!(self.inner, CoreRaimWeights::Unit)
     }
 
+    /// True when weights come from the retained solution variances.
+    #[wasm_bindgen(getter, js_name = isSolution)]
+    pub fn is_solution(&self) -> bool {
+        matches!(self.inner, CoreRaimWeights::Solution)
+    }
+
     /// Satellite tokens for per-satellite weights, sorted by token.
     #[wasm_bindgen(getter, js_name = satelliteIds)]
     pub fn satellite_ids(&self) -> Vec<String> {
         match &self.inner {
-            CoreRaimWeights::Unit => Vec::new(),
+            CoreRaimWeights::Solution | CoreRaimWeights::Unit => Vec::new(),
             CoreRaimWeights::BySatellite(weights) => weights.keys().cloned().collect(),
         }
     }
@@ -660,13 +808,29 @@ impl RaimWeights {
     #[wasm_bindgen(getter)]
     pub fn weights(&self) -> Vec<f64> {
         match &self.inner {
-            CoreRaimWeights::Unit => Vec::new(),
+            CoreRaimWeights::Solution | CoreRaimWeights::Unit => Vec::new(),
             CoreRaimWeights::BySatellite(weights) => weights.values().copied().collect(),
         }
     }
 }
 
 // ---- carrier-phase arc processing -------------------------------------------
+
+#[wasm_bindgen(typescript_custom_section)]
+const TS_CARRIER_PHASE_EPOCH: &str = r#"
+export interface CarrierPhaseArcEpoch {
+    phi1Cycles?: number;
+    phi2Cycles?: number;
+    p1M?: number;
+    p2M?: number;
+    lli1?: number;
+    lli2?: number;
+    f1Hz?: number;
+    f2Hz?: number;
+    gapTimeS?: number;
+    gapEpoch?: ExactEpoch | null;
+}
+"#;
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -694,14 +858,26 @@ impl ArcEpochInput {
             f1_hz: self.f1_hz,
             f2_hz: self.f2_hz,
             gap_time_s: self.gap_time_s,
+            gap_epoch: None,
         }
     }
 }
 
 fn arc_from_js(arc: JsValue) -> Result<Vec<ArcEpoch>, JsValue> {
-    let arc: Vec<ArcEpochInput> = serde_wasm_bindgen::from_value(arc)
+    let js_epochs = js_sys::Array::from(&arc);
+    let arc: Vec<ArcEpochInput> = serde_wasm_bindgen::from_value(arc.clone())
         .map_err(|e| type_error(&format!("invalid arc: {e}")))?;
-    Ok(arc.into_iter().map(ArcEpochInput::into_core).collect())
+    arc.into_iter()
+        .enumerate()
+        .map(|(index, input)| {
+            let js_epoch = js_epochs.get(index as u32);
+            let value = js_sys::Reflect::get(&js_epoch, &JsValue::from_str("gapEpoch"))
+                .map_err(|_| type_error("could not read arc gapEpoch"))?;
+            let mut epoch = input.into_core();
+            epoch.gap_epoch = crate::frames::ExactEpochValue::from_js(&value, "gapEpoch")?;
+            Ok(epoch)
+        })
+        .collect()
 }
 
 #[derive(Deserialize, Default)]
@@ -838,11 +1014,14 @@ impl IonoFreeSmoothResult {
 /// `arc` is an array of `{ phi1Cycles?, phi2Cycles?, p1M?, p2M?, lli1?, lli2?,
 /// f1Hz?, f2Hz?, gapTimeS? }`.
 #[wasm_bindgen(js_name = detectCycleSlips)]
-pub fn detect_cycle_slips(arc: JsValue, options: JsValue) -> Result<Vec<SlipResult>, JsValue> {
+pub fn detect_cycle_slips(
+    #[wasm_bindgen(unchecked_param_type = "CarrierPhaseArcEpoch[]")] arc: JsValue,
+    options: JsValue,
+) -> Result<Vec<SlipResult>, JsValue> {
     let arc = arc_from_js(arc)?;
     let options = cycle_slip_options(options)?;
     Ok(carrier_phase::detect_cycle_slips(&arc, options)
-        .map_err(domain_error)?
+        .map_err(carrier_phase_error)?
         .into_iter()
         .map(|inner| SlipResult { inner })
         .collect())
@@ -851,7 +1030,7 @@ pub fn detect_cycle_slips(arc: JsValue, options: JsValue) -> Result<Vec<SlipResu
 /// Single-frequency Hatch carrier-smoothed code on band 1.
 #[wasm_bindgen(js_name = smoothCode)]
 pub fn smooth_code(
-    arc: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "CarrierPhaseArcEpoch[]")] arc: JsValue,
     options: JsValue,
     hatch_window_cap: Option<usize>,
 ) -> Result<Vec<SmoothCodeResult>, JsValue> {
@@ -862,7 +1041,7 @@ pub fn smooth_code(
         options,
         hatch_window_cap.unwrap_or(DEFAULT_HATCH_WINDOW_CAP),
     )
-    .map_err(domain_error)?
+    .map_err(carrier_phase_error)?
     .into_iter()
     .map(|inner| SmoothCodeResult { inner })
     .collect())
@@ -871,7 +1050,7 @@ pub fn smooth_code(
 /// Dual-frequency ionosphere-free Hatch carrier-smoothed code.
 #[wasm_bindgen(js_name = smoothIonoFreeCode)]
 pub fn smooth_iono_free_code(
-    arc: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "CarrierPhaseArcEpoch[]")] arc: JsValue,
     options: JsValue,
     hatch_window_cap: Option<usize>,
 ) -> Result<Vec<IonoFreeSmoothResult>, JsValue> {
@@ -882,7 +1061,7 @@ pub fn smooth_iono_free_code(
         options,
         hatch_window_cap.unwrap_or(DEFAULT_HATCH_WINDOW_CAP),
     )
-    .map_err(domain_error)?
+    .map_err(carrier_phase_error)?
     .into_iter()
     .map(|inner| IonoFreeSmoothResult { inner })
     .collect())
@@ -893,13 +1072,13 @@ pub fn smooth_iono_free_code(
 /// Convert a Doppler shift in hertz to pseudorange rate in metres per second.
 #[wasm_bindgen(js_name = dopplerToRangeRate)]
 pub fn doppler_to_range_rate(doppler_hz: f64, carrier_hz: f64) -> Result<f64, JsValue> {
-    velocity::doppler_to_range_rate(doppler_hz, carrier_hz).map_err(domain_error)
+    velocity::doppler_to_range_rate(doppler_hz, carrier_hz).map_err(velocity_range_error)
 }
 
 /// Convert a pseudorange rate in metres per second to Doppler shift in hertz.
 #[wasm_bindgen(js_name = rangeRateToDoppler)]
 pub fn range_rate_to_doppler(range_rate_m_s: f64, carrier_hz: f64) -> Result<f64, JsValue> {
-    velocity::range_rate_to_doppler(range_rate_m_s, carrier_hz).map_err(domain_error)
+    velocity::range_rate_to_doppler(range_rate_m_s, carrier_hz).map_err(velocity_range_error)
 }
 
 /// Receiver velocity solve result.
@@ -999,7 +1178,7 @@ fn velocity_options(options: JsValue) -> Result<CoreVelOptions, JsValue> {
         Some(other) => {
             return Err(type_error(&format!(
                 "invalid observable {other:?}: expected \"range_rate\" or \"doppler\""
-            )))
+            )));
         }
     };
     let mut options = CoreVelOptions::default();
@@ -1049,7 +1228,7 @@ pub fn solve_velocity(
     let receiver = receiver_ecef(receiver_ecef_m)?;
     let options = velocity_options(options)?;
     let inner = velocity::solve(&sp3.inner, &observations, receiver, t_rx_j2000_s, options)
-        .map_err(engine_error)?;
+        .map_err(|e| crate::core_error::velocity_error_js(&e))?;
     Ok(VelocitySolution::from_inner(inner))
 }
 
@@ -1069,13 +1248,13 @@ pub fn solve_velocity_broadcast(
     let receiver = receiver_ecef(receiver_ecef_m)?;
     let options = velocity_options(options)?;
     let inner = velocity::solve(
-        &broadcast.inner,
+        broadcast.inner.as_ref(),
         &observations,
         receiver,
         t_rx_j2000_s,
         options,
     )
-    .map_err(engine_error)?;
+    .map_err(|e| crate::core_error::velocity_error_js(&e))?;
     Ok(VelocitySolution::from_inner(inner))
 }
 
@@ -1190,7 +1369,11 @@ fn predict_from_source(
     let sat = parse_sat(satellite)?;
     let receiver = receiver_ecef(receiver_ecef_m)?;
     let options = predict_options(options)?;
-    let inner = core_predict(source, sat, receiver, t_rx_j2000_s, options).map_err(engine_error)?;
+    let inner = core_predict(source, sat, receiver, t_rx_j2000_s, options).map_err(|e| {
+        crate::core_error::observables_error_js(&crate::core_error::ObservablesErrorDetail::from(
+            &e,
+        ))
+    })?;
     Ok(PredictedObservables { inner })
 }
 
@@ -1225,7 +1408,7 @@ pub fn observables_broadcast(
     options: JsValue,
 ) -> Result<PredictedObservables, JsValue> {
     predict_from_source(
-        &broadcast.inner,
+        broadcast.inner.as_ref(),
         satellite,
         receiver_ecef_m,
         t_rx_j2000_s,
@@ -1239,7 +1422,7 @@ pub fn observables_broadcast(
 /// [`PredictBatch.observables`] / [`PredictBatch.error`].
 #[wasm_bindgen]
 pub struct PredictBatch {
-    results: Vec<Result<CorePredicted, String>>,
+    results: Vec<Result<CorePredicted, crate::core_error::ObservablesErrorDetail>>,
 }
 
 #[wasm_bindgen]
@@ -1253,38 +1436,62 @@ impl PredictBatch {
     /// Whether request `index` produced observables. Throws a `RangeError` for
     /// an out-of-range index.
     #[wasm_bindgen(js_name = isOk)]
-    pub fn is_ok(&self, index: usize) -> Result<bool, JsValue> {
+    pub fn is_ok(&self, index: f64) -> Result<bool, JsValue> {
+        let idx = crate::error::index_arg(index, "index")?;
         self.results
-            .get(index)
+            .get(idx)
             .map(Result::is_ok)
-            .ok_or_else(|| range_error(&format!("request index {index} out of range")))
+            .ok_or_else(|| range_error(&format!("request index {idx} out of range")))
     }
 
     /// The observables for request `index`. Throws a `RangeError` for an
     /// out-of-range index and an `Error` carrying that request's failure message
-    /// when the prediction failed (check [`PredictBatch.isOk`] first).
-    pub fn observables(&self, index: usize) -> Result<PredictedObservables, JsValue> {
+    /// and typed cause when the prediction failed (check [`PredictBatch.isOk`] first).
+    pub fn observables(&self, index: f64) -> Result<PredictedObservables, JsValue> {
+        let idx = crate::error::index_arg(index, "index")?;
         match self
             .results
-            .get(index)
-            .ok_or_else(|| range_error(&format!("request index {index} out of range")))?
+            .get(idx)
+            .ok_or_else(|| range_error(&format!("request index {idx} out of range")))?
         {
             Ok(inner) => Ok(PredictedObservables { inner: *inner }),
-            Err(message) => Err(engine_error(message.clone())),
+            Err(detail) => Err(crate::core_error::observables_error_js(detail)),
         }
     }
 
     /// The failure message for request `index`, or `undefined` when it
     /// succeeded. Throws a `RangeError` for an out-of-range index.
-    pub fn error(&self, index: usize) -> Result<Option<String>, JsValue> {
+    pub fn error(&self, index: f64) -> Result<Option<String>, JsValue> {
+        let idx = crate::error::index_arg(index, "index")?;
         match self
             .results
-            .get(index)
-            .ok_or_else(|| range_error(&format!("request index {index} out of range")))?
+            .get(idx)
+            .ok_or_else(|| range_error(&format!("request index {idx} out of range")))?
         {
             Ok(_) => Ok(None),
-            Err(message) => Ok(Some(message.clone())),
+            Err(detail) => Ok(Some(detail.message().to_string())),
         }
+    }
+
+    /// The typed failure detail for request `index`, or `undefined` when it
+    /// succeeded. Throws a `RangeError` for an out-of-range index.
+    #[wasm_bindgen(js_name = errorDetail, unchecked_return_type = "ObservablesErrorDetail | undefined")]
+    pub fn error_detail(&self, index: f64) -> Result<JsValue, JsValue> {
+        let idx = crate::error::index_arg(index, "index")?;
+        match self
+            .results
+            .get(idx)
+            .ok_or_else(|| range_error(&format!("request index {idx} out of range")))?
+        {
+            Ok(_) => Ok(JsValue::UNDEFINED),
+            Err(detail) => crate::error::to_plain_js(detail, "observables error detail"),
+        }
+    }
+
+    /// Alias for [`PredictBatch.errorDetail`].
+    #[wasm_bindgen(js_name = detail, unchecked_return_type = "ObservablesErrorDetail | undefined")]
+    pub fn detail(&self, index: f64) -> Result<JsValue, JsValue> {
+        self.error_detail(index)
     }
 }
 
@@ -1339,10 +1546,14 @@ fn predict_batch_from_source(
 ) -> Result<PredictBatch, JsValue> {
     let requests = build_predict_requests(satellites, receivers_ecef_m, epochs_j2000_s)?;
     let options = predict_options(options)?;
-    let results = core_predict_batch(source, &requests, options)
-        .into_iter()
-        .map(|result| result.map_err(|e| e.to_string()))
-        .collect();
+    let core_results = core_predict_batch(source, &requests, options);
+    let mut results = Vec::with_capacity(core_results.len());
+    for result in core_results {
+        results.push(match result {
+            Ok(prediction) => Ok(prediction),
+            Err(error) => Err(crate::core_error::ObservablesErrorDetail::from(&error)),
+        });
+    }
     Ok(PredictBatch { results })
 }
 
@@ -1385,7 +1596,7 @@ pub fn predict_batch_broadcast(
     options: JsValue,
 ) -> Result<PredictBatch, JsValue> {
     predict_batch_from_source(
-        &broadcast.inner,
+        broadcast.inner.as_ref(),
         satellites,
         receivers_ecef_m,
         epochs_j2000_s,
@@ -1398,13 +1609,13 @@ pub fn predict_batch_broadcast(
 /// GPS C/A code chips for a PRN, an `Int8Array` of length 1023, chips `+1`/`-1`.
 #[wasm_bindgen(js_name = caCode)]
 pub fn ca_code(prn: i64) -> Result<Vec<i8>, JsValue> {
-    signal::ca_code(prn).map_err(domain_error)
+    signal::ca_code(prn).map_err(signal_error)
 }
 
 /// One wrapping GPS C/A chip at a zero-based index.
 #[wasm_bindgen(js_name = caChip)]
 pub fn ca_chip(prn: i64, index: i64) -> Result<i8, JsValue> {
-    signal::ca_chip(prn, index).map_err(domain_error)
+    signal::ca_chip(prn, index).map_err(signal_error)
 }
 
 /// Circular autocorrelation over all lags for a bipolar code vector.
@@ -1416,13 +1627,13 @@ pub fn autocorrelation(code: &[i8]) -> Vec<i32> {
 /// Circular cross-correlation over all lags for two equal-length bipolar codes.
 #[wasm_bindgen(js_name = crossCorrelation)]
 pub fn cross_correlation(code_a: &[i8], code_b: &[i8]) -> Result<Vec<i32>, JsValue> {
-    signal::cross_correlation(code_a, code_b).map_err(domain_error)
+    signal::cross_correlation(code_a, code_b).map_err(signal_error)
 }
 
 /// Single-lag circular correlation for two equal-length bipolar codes.
 #[wasm_bindgen(js_name = correlationAt)]
 pub fn correlation_at(code_a: &[i8], code_b: &[i8], lag: i64) -> Result<i32, JsValue> {
-    signal::correlation_at(code_a, code_b, lag).map_err(domain_error)
+    signal::correlation_at(code_a, code_b, lag).map_err(signal_error)
 }
 
 #[derive(Deserialize, Default)]
@@ -1457,7 +1668,7 @@ fn replica_options(options: JsValue) -> Result<CoreReplicaOptions, JsValue> {
 #[wasm_bindgen]
 pub fn replica(prn: i64, options: JsValue) -> Result<Vec<i8>, JsValue> {
     let options = replica_options(options)?;
-    signal::replica(prn, options).map_err(domain_error)
+    signal::replica(prn, options).map_err(signal_error)
 }
 
 #[derive(Deserialize, Default)]
@@ -1644,7 +1855,7 @@ pub fn correlate(iq: &[f64], prn: i64, options: JsValue) -> Result<CorrelationRe
     let options = correlate_options(options)?;
     signal::correlate(&iq, prn, options)
         .map(|inner| CorrelationResult { inner })
-        .map_err(domain_error)
+        .map_err(signal_error)
 }
 
 /// Coherently correlate interleaved IQ samples against an explicit bipolar code.
@@ -1660,7 +1871,7 @@ pub fn correlate_against(
 ) -> Result<CorrelationResult, JsValue> {
     let iq = iq_samples("iq", iq)?;
     let (i, q) =
-        signal::correlate_against(&iq, code, sample_rate_hz, doppler_hz).map_err(domain_error)?;
+        signal::correlate_against(&iq, code, sample_rate_hz, doppler_hz).map_err(signal_error)?;
     Ok(CorrelationResult {
         inner: CoreCorrelationResult {
             i,
@@ -1678,25 +1889,25 @@ pub fn acquire(samples: &[f64], prn: i64, options: JsValue) -> Result<Acquisitio
     let options = acquisition_options(options)?;
     signal::acquire(&samples, prn, options)
         .map(|inner| AcquisitionResult { inner })
-        .map_err(domain_error)
+        .map_err(signal_error)
 }
 
 /// Coherent integration loss from residual frequency error.
 #[wasm_bindgen(js_name = coherentLoss)]
 pub fn coherent_loss(freq_error_hz: f64, integration_time_s: f64) -> Result<f64, JsValue> {
-    signal::coherent_loss(freq_error_hz, integration_time_s).map_err(domain_error)
+    signal::coherent_loss(freq_error_hz, integration_time_s).map_err(signal_error)
 }
 
 /// Coherent integration loss in decibels.
 #[wasm_bindgen(js_name = coherentLossDb)]
 pub fn coherent_loss_db(freq_error_hz: f64, integration_time_s: f64) -> Result<f64, JsValue> {
-    signal::coherent_loss_db(freq_error_hz, integration_time_s).map_err(domain_error)
+    signal::coherent_loss_db(freq_error_hz, integration_time_s).map_err(signal_error)
 }
 
 /// Post-correlation predetection SNR in decibels.
 #[wasm_bindgen(js_name = snrPostDb)]
 pub fn snr_post_db(cn0_dbhz: f64, integration_time_s: f64) -> Result<f64, JsValue> {
-    signal::snr_post_db(cn0_dbhz, integration_time_s).map_err(domain_error)
+    signal::snr_post_db(cn0_dbhz, integration_time_s).map_err(signal_error)
 }
 
 #[cfg(test)]

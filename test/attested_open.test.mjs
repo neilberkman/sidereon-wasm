@@ -165,6 +165,21 @@ test("attested path open rejects malformed checksum claims before I/O", () => {
   }
 });
 
+test("Node precise artifact path open preserves typed I/O fields", () => {
+  const path = join(scratch, "missing.precise");
+  assert.throws(
+    () => PreciseInterpolantArtifact.fromPath(path),
+    (error) =>
+      error instanceof Error &&
+      error.name === "Io" &&
+      error.kind === "Io" &&
+      error.detail.name === "Io" &&
+      error.detail.path === path &&
+      error.detail.message === error.message &&
+      error.message.startsWith(`${path} failed:`),
+  );
+});
+
 test("Node path open preserves typed I/O errors", () => {
   assert.throws(
     () => MmapTerrain.fromPath(join(scratch, "missing.tmm")),

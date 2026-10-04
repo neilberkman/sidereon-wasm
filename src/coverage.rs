@@ -9,12 +9,13 @@
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::astro::coverage::{
-    access_counts, look_angles_batch, max_elevation, visible_mask, LookAngleGrid,
+    access_counts, look_angles_batch_with_validity, max_elevation, visible_mask, LookAngleGrid,
 };
 use sidereon_core::astro::passes::UtcInstant;
 use sidereon_core::astro::sgp4::Satellite;
+use sidereon_core::astro::time::DegradeReason;
 
-use crate::error::type_error;
+use crate::error::{type_error, ut1_validity};
 use crate::sgp4::{GroundStation, Tle};
 
 /// A computed look-angle grid for a set of satellites and ground stations at one
@@ -23,6 +24,7 @@ use crate::sgp4::{GroundStation, Tle};
 pub struct CoverageGrid {
     grid: LookAngleGrid,
     station_count: usize,
+    ut1_degraded: Option<DegradeReason>,
 }
 
 #[wasm_bindgen]
@@ -39,6 +41,15 @@ impl CoverageGrid {
         self.station_count
     }
 
+    /// The UT1 departure the grid accepted under the `"permissive"` policy:
+    /// `"beforeCoverage"` or `"afterCoverage"`, or `undefined` when the epoch
+    /// lay inside the UT1 table.
+    #[wasm_bindgen(getter, js_name = ut1Degraded, unchecked_return_type = "Ut1DegradeReason | undefined")]
+    pub fn ut1_degraded(&self) -> Option<String> {
+        self.ut1_degraded
+            .map(|reason| crate::spp::degrade_reason_label(reason).to_owned())
+    }
+
     /// The look angle for one satellite/station pair as `[azimuthDeg,
     /// elevationDeg, rangeKm]`, or `undefined` when that cell failed (the
     /// satellite was below the horizon geometry the kernel rejects) or the
@@ -49,6 +60,21 @@ impl CoverageGrid {
             Ok(look) => Some(vec![look.azimuth_deg, look.elevation_deg, look.range_km]),
             Err(_) => None,
         }
+    }
+
+    /// Complete typed error for one failed satellite/station cell, or
+    /// `undefined` for a successful cell or an out-of-range index. The value
+    /// uses the same `Error.detail` mapper as the scalar look-angle API.
+    #[wasm_bindgen(js_name = cellError, unchecked_return_type = "(Error & { detail: LookAngleErrorDetail }) | undefined")]
+    pub fn cell_error(&self, satellite_index: usize, station_index: usize) -> Option<JsValue> {
+        let Some(Err(error)) = self
+            .grid
+            .get(satellite_index)
+            .and_then(|row| row.get(station_index))
+        else {
+            return None;
+        };
+        Some(crate::sgp4_error::look_angle_error(error.clone()))
     }
 
     /// Row-major `[satellite][station]` visibility mask at `minElevationDeg`, as a
@@ -84,13 +110,18 @@ impl CoverageGrid {
 
 /// Build a look-angle coverage grid for `satellites` and `stations` at the
 /// `epochUnixUs` (Unix microseconds) epoch. Each cell is the per-pair look angle
-/// from `sidereon_core::astro::coverage::look_angles_batch`.
+/// from `sidereon_core::astro::coverage::look_angles_batch_with_validity`.
+/// `ut1Validity` is `"strict"` (the default), under which an epoch outside the
+/// UT1 table fails every cell, or `"permissive"`, which computes the cells and
+/// reports the departure in `ut1Degraded`.
 #[wasm_bindgen(js_name = coverageLookAngles)]
 pub fn coverage_look_angles(
     satellites: Vec<Tle>,
     stations: Vec<GroundStation>,
     epoch_unix_us: i64,
+    ut1: Option<String>,
 ) -> Result<CoverageGrid, JsValue> {
+    let mode = ut1_validity(ut1)?;
     if satellites.is_empty() {
         return Err(type_error("satellites must not be empty"));
     }
@@ -103,9 +134,10 @@ pub fn coverage_look_angles(
         .collect();
     let core_stations: Vec<_> = stations.iter().map(GroundStation::core).collect();
     let datetime = UtcInstant::from_unix_microseconds(epoch_unix_us);
-    let grid: LookAngleGrid = look_angles_batch(&sats, &core_stations, datetime);
+    let validated = look_angles_batch_with_validity(&sats, &core_stations, datetime, mode);
     Ok(CoverageGrid {
-        grid,
+        grid: validated.value,
         station_count: core_stations.len(),
+        ut1_degraded: validated.degraded,
     })
 }

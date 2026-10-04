@@ -191,6 +191,22 @@ test("015 reliability: Baarda constants are pinned through the WASM API", () => 
   assertBitsEqual(result.lambda0, 17.074646805189243, "lambda0");
 });
 
+test("015 reliability failures retain their core quality kind", () => {
+  assert.throws(
+    () => wtestNoncentrality(0.0, 0.8),
+    (error) => error.detail?.kind === "INVALID_PROBABILITY",
+  );
+  const rows = [
+    { id: "xOnly", designRow: [1, 0], sigmaM: 1 },
+    { id: "yA", designRow: [0, 1], sigmaM: 1 },
+    { id: "yB", designRow: [0, 1], sigmaM: 1 },
+  ];
+  assert.throws(
+    () => reliabilityDesign(rows, { alpha: 0.0 }),
+    (error) => error.detail?.kind === "INVALID_PROBABILITY",
+  );
+});
+
 test("015 reliability: design redundancy sums and zero-redundancy rows stay null", () => {
   const report = reliabilityDesign(
     [

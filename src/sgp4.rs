@@ -13,18 +13,29 @@ use sidereon::passes::{
     UtcInstant, VisibleSatellite as CoreVisibleSatellite,
 };
 use sidereon::sgp4::{
-    fit_tle as core_fit_tle, parse_tle_file_with_opsmode, DecayLatch as CoreDecayLatch,
-    DecayLatchedError, FitConfig, FitEpoch, FitSample, JulianDate as CoreJulianDate, Loss, OpsMode,
-    Satellite, TleFit as CoreTleFit, TleMetadata, XScale,
+    fit_tle as core_fit_tle, parse_tle_file_with_policy, DecayLatch as CoreDecayLatch, FitConfig,
+    FitEpoch, FitSample, JulianDate as CoreJulianDate, Loss, OpsMode, RejectedTleRecord, Satellite,
+    TleFit as CoreTleFit, TleMetadata, TleRecordIssue, XScale,
 };
 use sidereon::tle::{
-    encode as encode_tle, parse as parse_tle, ChecksumWarning as CoreChecksumWarning, TleElements,
+    encode as encode_tle, parse_with_policy as parse_tle_with_policy,
+    ChecksumWarning as CoreChecksumWarning, ChecksumWarningKind, TleElements, TlePolicy,
 };
+use sidereon_core::astro::passes::{
+    find_passes_for_satellite_with_validity, ground_track_with_validity,
+    look_angle_arc_with_validity, visible_from_satellites_with_validity, LookAngle,
+};
+use sidereon_core::frame::Wgs84Geodetic;
 use sidereon_core::geometry::visible_at_elevation_mask;
 
-use crate::error::{engine_error, range_error, type_error};
+use crate::error::{range_error, type_error, ut1_validity, validated_object};
 use crate::marshal::{instants, vec3_finite};
+use crate::ndm_error::omm_error;
 use crate::omm::Omm;
+use crate::sgp4_error::{
+    decay_latched_error, fit_error, indexed_sgp4_error, look_angle_error, pass_error,
+    record_issue_cause, sgp4_error, tle_error,
+};
 
 const UNIX_EPOCH_JD_WHOLE: i64 = 2_440_587;
 const UNIX_EPOCH_JD_FRACTION: f64 = 0.5;
@@ -87,6 +98,30 @@ impl GroundStation {
     }
 }
 
+fn look_angles_js(looks: &[LookAngle]) -> LookAngles {
+    LookAngles {
+        azimuth_deg: looks.iter().map(|l| l.azimuth_deg).collect(),
+        elevation_deg: looks.iter().map(|l| l.elevation_deg).collect(),
+        range_km: looks.iter().map(|l| l.range_km).collect(),
+    }
+}
+
+fn ground_track_js(points: &[Wgs84Geodetic]) -> GroundTrack {
+    GroundTrack {
+        latitude_deg: points.iter().map(|g| g.lat_rad.to_degrees()).collect(),
+        longitude_deg: points.iter().map(|g| g.lon_rad.to_degrees()).collect(),
+        altitude_km: points.iter().map(|g| g.height_m / 1000.0).collect(),
+    }
+}
+
+fn js_array<T: Into<JsValue>>(values: impl IntoIterator<Item = T>) -> JsValue {
+    let array = js_sys::Array::new();
+    for value in values {
+        array.push(&value.into());
+    }
+    array.into()
+}
+
 /// Map an `opsMode` string to the core enum. Defaults to `improved` (the engine
 /// default, matching Python's `sgp4` package); `afspc` selects AFSPC parity.
 fn ops_mode(label: Option<String>) -> Result<OpsMode, JsValue> {
@@ -99,14 +134,29 @@ fn ops_mode(label: Option<String>) -> Result<OpsMode, JsValue> {
     }
 }
 
-/// An advisory TLE checksum discrepancy. The TLE grammar does not reject a line
-/// on a bad modulo-10 checksum, so each mismatch is surfaced here rather than
-/// thrown.
+/// Map a TLE checksum policy string to the core enum. `"strict"` (the
+/// default) refuses a column-69 digit that disagrees with the checksum and a
+/// column 69 that is not a digit; `"lenient"` reads both and reports each in
+/// `checksumWarnings`, as Vallado's `twoline2rv` reads.
+fn tle_policy(label: Option<String>) -> Result<TlePolicy, JsValue> {
+    match label.as_deref() {
+        None | Some("strict") => Ok(TlePolicy::Strict),
+        Some("lenient") => Ok(TlePolicy::Lenient),
+        Some(other) => Err(type_error(&format!(
+            "invalid TLE policy {other:?}: expected \"strict\" or \"lenient\""
+        ))),
+    }
+}
+
+/// A TLE line whose column 69 did not confirm its checksum. A line that ends
+/// before column 69 is read and reported under both policies; a mismatching
+/// digit or a non-digit is reported only under the `"lenient"` policy, which
+/// the `"strict"` policy refuses.
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct ChecksumWarning {
     line_label: &'static str,
-    expected: u8,
+    kind: ChecksumWarningKind,
     computed: u8,
 }
 
@@ -118,10 +168,47 @@ impl ChecksumWarning {
         self.line_label.to_string()
     }
 
-    /// The checksum digit found in column 69 of the line.
+    /// What column 69 held: `"mismatch"` (a digit that differs from the
+    /// computed checksum), `"notDigit"` (a character other than a digit) or
+    /// `"missing"` (the line ends before column 69).
     #[wasm_bindgen(getter)]
-    pub fn expected(&self) -> u8 {
-        self.expected
+    pub fn kind(&self) -> String {
+        match self.kind {
+            ChecksumWarningKind::Mismatch { .. } => "mismatch",
+            ChecksumWarningKind::NotDigit { .. } => "notDigit",
+            ChecksumWarningKind::Missing => "missing",
+        }
+        .to_string()
+    }
+
+    /// The checksum digit found in column 69 for a `"mismatch"`, else
+    /// `undefined`.
+    #[wasm_bindgen(getter)]
+    pub fn expected(&self) -> Option<u8> {
+        match self.kind {
+            ChecksumWarningKind::Mismatch { expected } => Some(expected),
+            _ => None,
+        }
+    }
+
+    /// The character found in column 69 for a `"notDigit"`, else `undefined`.
+    #[wasm_bindgen(getter)]
+    pub fn found(&self) -> Option<String> {
+        match self.kind {
+            ChecksumWarningKind::NotDigit { found } => Some(found.to_string()),
+            _ => None,
+        }
+    }
+
+    /// The finding as the engine states it.
+    #[wasm_bindgen(getter)]
+    pub fn message(&self) -> String {
+        CoreChecksumWarning {
+            line_label: self.line_label,
+            kind: self.kind,
+            computed: self.computed,
+        }
+        .to_string()
     }
 
     /// The checksum digit recomputed from columns 1-68.
@@ -135,7 +222,7 @@ impl From<&CoreChecksumWarning> for ChecksumWarning {
     fn from(w: &CoreChecksumWarning) -> Self {
         Self {
             line_label: w.line_label,
-            expected: w.expected,
+            kind: w.kind,
             computed: w.computed,
         }
     }
@@ -206,6 +293,53 @@ pub struct Tle {
     checksum_warnings: Vec<CoreChecksumWarning>,
 }
 
+/// A reusable SGP4 satellite initialized from an OMM.
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct Sgp4Satellite {
+    satellite: Satellite,
+}
+
+#[wasm_bindgen]
+impl Sgp4Satellite {
+    /// Initialize SGP4 from an OMM through the engine's canonical OMM bridge.
+    /// Throws an `OmmError` with structured detail for incompatible metadata,
+    /// a missing `MEAN_MOTION` or `BSTAR`, or another invalid OMM field.
+    #[wasm_bindgen(js_name = fromOmm)]
+    pub fn from_omm(omm: &Omm) -> Result<Sgp4Satellite, JsValue> {
+        // Validate through Omm::to_element_set first so its lossless OmmError
+        // reaches JavaScript. Satellite::from_omm maps the same bridge errors
+        // to SGP4 input errors, then initializes the reusable core satellite.
+        omm.core().to_element_set().map_err(omm_error)?;
+        let satellite = Satellite::from_omm(omm.core()).map_err(sgp4_error)?;
+        Ok(Sgp4Satellite { satellite })
+    }
+
+    /// Propagate over a `BigInt64Array` of unix-microsecond epochs. Returns TEME
+    /// position (km) and velocity (km/s). Throws an `Error` on SGP4 failure.
+    pub fn propagate(&self, epochs_unix_us: &[i64]) -> Result<TlePropagation, JsValue> {
+        propagate_satellite(&self.satellite, epochs_unix_us)
+    }
+}
+
+fn propagate_satellite(
+    satellite: &Satellite,
+    epochs_unix_us: &[i64],
+) -> Result<TlePropagation, JsValue> {
+    let predictions =
+        propagate_teme_arc(satellite, &instants(epochs_unix_us)).map_err(sgp4_error)?;
+    let mut positions = Vec::with_capacity(predictions.len() * 3);
+    let mut velocities = Vec::with_capacity(predictions.len() * 3);
+    for prediction in &predictions {
+        positions.extend_from_slice(&prediction.position);
+        velocities.extend_from_slice(&prediction.velocity);
+    }
+    Ok(TlePropagation {
+        positions,
+        velocities,
+    })
+}
+
 /// Stateful opt-in latch for SGP4 decay-like failures.
 ///
 /// Pass one latch per satellite to [`Tle.propagateWithDecayLatch`]. The first
@@ -246,16 +380,21 @@ impl DecayLatch {
 }
 
 impl Tle {
-    /// Wrap an already-initialized core `Satellite`, recovering the parsed
-    /// elements and checksum advisories from its own (validated) TLE lines. Used
-    /// by [`parse_tle_file`] so each record's SGP4 record is reused rather than
-    /// re-initialized.
-    fn from_core_satellite(satellite: Satellite) -> Result<Tle, JsValue> {
-        let parsed = parse_tle(satellite.line1(), satellite.line2()).map_err(engine_error)?;
+    /// Wrap an already-initialized core `Satellite` with the checksum findings
+    /// its reader accepted, recovering the parsed elements from its own TLE
+    /// lines under the policy it was read with. Used by [`parse_tle_file`] so
+    /// each record's SGP4 record is reused rather than re-initialized.
+    fn from_core_satellite(
+        satellite: Satellite,
+        policy: TlePolicy,
+        checksum_warnings: Vec<CoreChecksumWarning>,
+    ) -> Result<Tle, JsValue> {
+        let parsed = parse_tle_with_policy(satellite.line1(), satellite.line2(), policy)
+            .map_err(tle_error)?;
         Ok(Tle {
             elements: parsed.elements,
             satellite,
-            checksum_warnings: parsed.checksum_warnings,
+            checksum_warnings,
         })
     }
 
@@ -493,21 +632,30 @@ pub fn fit_tle(samples: JsValue, config: JsValue) -> Result<TleFit, JsValue> {
         .enumerate()
         .map(|(index, sample)| sample.to_core(index))
         .collect::<Result<_, _>>()?;
-    let inner = core_fit_tle(&core_samples, &fit_config(config)?).map_err(engine_error)?;
+    let inner = core_fit_tle(&core_samples, &fit_config(config)?).map_err(fit_error)?;
     Ok(TleFit { inner })
 }
 
 #[wasm_bindgen]
 impl Tle {
     /// Parse two TLE lines and initialize SGP4. `opsMode` is `"improved"`
-    /// (default) or `"afspc"`. Throws an `Error` if the lines fail to parse or
-    /// SGP4 fails to initialize.
+    /// (default) or `"afspc"`. `policy` is `"strict"` (default), which refuses
+    /// a column-69 checksum digit that disagrees and a column 69 that is not a
+    /// digit, or `"lenient"`, which reads both and reports each in
+    /// `checksumWarnings`. Throws an `Error` if the lines fail to parse or SGP4
+    /// fails to initialize.
     #[wasm_bindgen(constructor)]
-    pub fn new(line1: &str, line2: &str, ops_mode_label: Option<String>) -> Result<Tle, JsValue> {
+    pub fn new(
+        line1: &str,
+        line2: &str,
+        ops_mode_label: Option<String>,
+        policy: Option<String>,
+    ) -> Result<Tle, JsValue> {
         let mode = ops_mode(ops_mode_label)?;
-        let parsed = parse_tle(line1, line2).map_err(engine_error)?;
-        let satellite =
-            Satellite::from_tle_with_opsmode(line1, line2, mode).map_err(engine_error)?;
+        let policy = tle_policy(policy)?;
+        let parsed = parse_tle_with_policy(line1, line2, policy).map_err(tle_error)?;
+        let (satellite, _) =
+            Satellite::from_tle_with_policy(line1, line2, mode, policy).map_err(sgp4_error)?;
         Ok(Tle {
             elements: parsed.elements,
             satellite,
@@ -520,12 +668,13 @@ impl Tle {
     /// the round-trip is character-exact.
     #[wasm_bindgen(js_name = toLines)]
     pub fn to_lines(&self) -> Result<Vec<String>, JsValue> {
-        let (line1, line2) = encode_tle(&self.elements).map_err(crate::error::engine_error)?;
+        let (line1, line2) = encode_tle(&self.elements).map_err(tle_error)?;
         Ok(vec![line1, line2])
     }
 
-    /// Advisory checksum discrepancies found while parsing. Empty when both
-    /// lines' checksums are valid.
+    /// Checksum findings the policy accepted while parsing: a line with no
+    /// column 69 under either policy, and under `"lenient"` also a mismatching
+    /// or non-digit column 69. Empty when both lines' checksums are valid.
     #[wasm_bindgen(getter, js_name = checksumWarnings)]
     pub fn checksum_warnings(&self) -> Vec<ChecksumWarning> {
         self.checksum_warnings
@@ -538,18 +687,7 @@ impl Tle {
     /// position (km) and velocity (km/s). Throws an `Error` on SGP4 failure.
     #[wasm_bindgen]
     pub fn propagate(&self, epochs_unix_us: &[i64]) -> Result<TlePropagation, JsValue> {
-        let predictions =
-            propagate_teme_arc(&self.satellite, &instants(epochs_unix_us)).map_err(engine_error)?;
-        let mut positions = Vec::with_capacity(predictions.len() * 3);
-        let mut velocities = Vec::with_capacity(predictions.len() * 3);
-        for p in &predictions {
-            positions.extend_from_slice(&p.position);
-            velocities.extend_from_slice(&p.velocity);
-        }
-        Ok(TlePropagation {
-            positions,
-            velocities,
-        })
+        propagate_satellite(&self.satellite, epochs_unix_us)
     }
 
     /// Propagate over unix-microsecond epochs with an opt-in decay latch.
@@ -571,7 +709,7 @@ impl Tle {
             let prediction = self
                 .satellite
                 .propagate_jd_with_decay_latch(jd, &mut latch.inner)
-                .map_err(|error: DecayLatchedError| engine_error(error))?;
+                .map_err(decay_latched_error)?;
             positions.extend_from_slice(&prediction.position);
             velocities.extend_from_slice(&prediction.velocity);
         }
@@ -590,12 +728,31 @@ impl Tle {
         epochs_unix_us: &[i64],
     ) -> Result<LookAngles, JsValue> {
         let looks = look_angle_arc(&self.satellite, station.inner, &instants(epochs_unix_us))
-            .map_err(engine_error)?;
-        Ok(LookAngles {
-            azimuth_deg: looks.iter().map(|l| l.azimuth_deg).collect(),
-            elevation_deg: looks.iter().map(|l| l.elevation_deg).collect(),
-            range_km: looks.iter().map(|l| l.range_km).collect(),
-        })
+            .map_err(look_angle_error)?;
+        Ok(look_angles_js(&looks))
+    }
+
+    /// [`lookAngles`] under a UT1 validity policy: `"strict"` (the default)
+    /// refuses an epoch outside the UT1 table, `"permissive"` accepts it.
+    /// Returns `{ value, ut1Degraded }` with `value` the `LookAngles`.
+    #[wasm_bindgen(js_name = lookAnglesWithValidity, unchecked_return_type = "Ut1Validated<LookAngles>")]
+    pub fn look_angles_with_validity(
+        &self,
+        station: &GroundStation,
+        epochs_unix_us: &[i64],
+        ut1: Option<String>,
+    ) -> Result<JsValue, JsValue> {
+        let validated = look_angle_arc_with_validity(
+            &self.satellite,
+            station.inner,
+            &instants(epochs_unix_us),
+            ut1_validity(ut1)?,
+        )
+        .map_err(look_angle_error)?;
+        validated_object(
+            &JsValue::from(look_angles_js(&validated.value)),
+            validated.degraded,
+        )
     }
 
     /// Find passes over `station` within `[startUnixUs, endUnixUs)` by dense
@@ -623,8 +780,43 @@ impl Tle {
             UtcInstant::from_unix_microseconds(end_unix_us),
             options,
         )
-        .map_err(engine_error)?;
+        .map_err(pass_error)?;
         Ok(passes.iter().map(SatellitePass::from).collect())
+    }
+
+    /// [`findPasses`] under a UT1 validity policy. The search checks every
+    /// instant it evaluates, so under `"strict"` (the default) a window
+    /// reaching past the UT1 table is refused rather than cut short. Returns
+    /// `{ value, ut1Degraded }` with `value` the `SatellitePass[]`.
+    #[wasm_bindgen(js_name = findPassesWithValidity, unchecked_return_type = "Ut1Validated<SatellitePass[]>")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_passes_with_validity(
+        &self,
+        station: &GroundStation,
+        start_unix_us: i64,
+        end_unix_us: i64,
+        elevation_mask_deg: Option<f64>,
+        step_seconds: Option<f64>,
+        time_tolerance_s: Option<f64>,
+        ut1: Option<String>,
+    ) -> Result<JsValue, JsValue> {
+        let options = pass_options(elevation_mask_deg, step_seconds, time_tolerance_s)?;
+        if end_unix_us <= start_unix_us {
+            return Err(range_error("endUnixUs must be after startUnixUs"));
+        }
+        let validated = find_passes_for_satellite_with_validity(
+            &self.satellite,
+            station.inner,
+            UtcInstant::from_unix_microseconds(start_unix_us),
+            UtcInstant::from_unix_microseconds(end_unix_us),
+            options,
+            ut1_validity(ut1)?,
+        )
+        .map_err(pass_error)?;
+        validated_object(
+            &js_array(validated.value.iter().map(SatellitePass::from)),
+            validated.degraded,
+        )
     }
 
     /// Topocentric visibility arrays and a dense pass list over an epoch grid.
@@ -650,7 +842,8 @@ impl Tle {
         if epochs_unix_us.windows(2).any(|pair| pair[0] >= pair[1]) {
             return Err(range_error("epochsUnixUs must be strictly increasing"));
         }
-        let looks = look_angle_arc(&self.satellite, station.inner, &inst).map_err(engine_error)?;
+        let looks =
+            look_angle_arc(&self.satellite, station.inner, &inst).map_err(look_angle_error)?;
         let passes = find_passes_for_satellite(
             &self.satellite,
             station.inner,
@@ -658,7 +851,7 @@ impl Tle {
             *inst.last().expect("non-empty instants checked"),
             options,
         )
-        .map_err(engine_error)?;
+        .map_err(pass_error)?;
         Ok(VisibilitySeries {
             epochs_unix_us: epochs_unix_us.to_vec(),
             azimuth_deg: looks.iter().map(|l| l.azimuth_deg).collect(),
@@ -680,12 +873,29 @@ impl Tle {
     #[wasm_bindgen(js_name = groundTrack)]
     pub fn ground_track(&self, epochs_unix_us: &[i64]) -> Result<GroundTrack, JsValue> {
         let points =
-            ground_track(&self.satellite, &instants(epochs_unix_us)).map_err(engine_error)?;
-        Ok(GroundTrack {
-            latitude_deg: points.iter().map(|g| g.lat_rad.to_degrees()).collect(),
-            longitude_deg: points.iter().map(|g| g.lon_rad.to_degrees()).collect(),
-            altitude_km: points.iter().map(|g| g.height_m / 1000.0).collect(),
-        })
+            ground_track(&self.satellite, &instants(epochs_unix_us)).map_err(look_angle_error)?;
+        Ok(ground_track_js(&points))
+    }
+
+    /// [`groundTrack`] under a UT1 validity policy, as
+    /// [`lookAnglesWithValidity`]. Returns `{ value, ut1Degraded }` with
+    /// `value` the `GroundTrack`.
+    #[wasm_bindgen(js_name = groundTrackWithValidity, unchecked_return_type = "Ut1Validated<GroundTrack>")]
+    pub fn ground_track_with_validity(
+        &self,
+        epochs_unix_us: &[i64],
+        ut1: Option<String>,
+    ) -> Result<JsValue, JsValue> {
+        let validated = ground_track_with_validity(
+            &self.satellite,
+            &instants(epochs_unix_us),
+            ut1_validity(ut1)?,
+        )
+        .map_err(look_angle_error)?;
+        validated_object(
+            &JsValue::from(ground_track_js(&validated.value)),
+            validated.degraded,
+        )
     }
 
     /// NORAD catalog number (as recorded in the TLE).
@@ -772,10 +982,24 @@ impl Tle {
         self.elements.bstar
     }
 
-    /// Revolution number at epoch.
+    /// Revolution number at epoch, or `undefined` when the field is blank.
     #[wasm_bindgen(getter, js_name = revNumber)]
-    pub fn rev_number(&self) -> i32 {
+    pub fn rev_number(&self) -> Option<i32> {
         self.elements.rev_number
+    }
+
+    /// Element-set number (line 1 columns 65-68), or `undefined` when the
+    /// field is blank.
+    #[wasm_bindgen(getter, js_name = elementSetNumber)]
+    pub fn element_set_number(&self) -> Option<i32> {
+        self.elements.elset_number
+    }
+
+    /// Ephemeris type (line 1 column 63), or `undefined` when the field is
+    /// blank. SGP4 reads a blank type as 0.
+    #[wasm_bindgen(getter, js_name = ephemerisType)]
+    pub fn ephemeris_type(&self) -> Option<i32> {
+        self.elements.ephemeris_type
     }
 }
 
@@ -786,6 +1010,7 @@ impl Tle {
 pub struct NamedTle {
     name: String,
     tle: Tle,
+    line_number: usize,
 }
 
 #[wasm_bindgen]
@@ -803,14 +1028,55 @@ impl NamedTle {
     pub fn tle(&self) -> Tle {
         self.tle.clone()
     }
+
+    /// One-based line number of the record's line 1 in the file text.
+    #[wasm_bindgen(getter, js_name = lineNumber)]
+    pub fn line_number(&self) -> usize {
+        self.line_number
+    }
+
+    /// Checksum findings the policy accepted for this record (the same list
+    /// as `tle.checksumWarnings`).
+    #[wasm_bindgen(getter, js_name = checksumWarnings)]
+    pub fn checksum_warnings(&self) -> Vec<ChecksumWarning> {
+        self.tle.checksum_warnings()
+    }
 }
 
-/// The result of [`parseTleFile`]: the satellites that parsed, plus a count of
-/// complete records that were skipped because SGP4 initialization failed.
+/// A stretch of a TLE file the reader did not turn into a satellite.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RejectedTleRecordJs {
+    line_number: usize,
+    name: String,
+    issue: &'static str,
+    message: String,
+    detail: serde_json::Value,
+}
+
+impl From<&RejectedTleRecord> for RejectedTleRecordJs {
+    fn from(record: &RejectedTleRecord) -> Self {
+        Self {
+            line_number: record.line_number,
+            name: record.name.clone(),
+            issue: match record.issue {
+                TleRecordIssue::Invalid(_) => "invalid",
+                TleRecordIssue::MissingLine2 => "missingLine2",
+                TleRecordIssue::OrphanLine2 => "orphanLine2",
+                TleRecordIssue::OrphanName => "orphanName",
+            },
+            message: record.issue.to_string(),
+            detail: record_issue_cause(&record.issue),
+        }
+    }
+}
+
+/// The result of [`parseTleFile`]: the satellites that parsed, and every
+/// other non-blank stretch of the file with the reason it did not.
 #[wasm_bindgen]
 pub struct ParsedTleFile {
     satellites: Vec<NamedTle>,
-    skipped: usize,
+    rejected: Vec<RejectedTleRecord>,
 }
 
 #[wasm_bindgen]
@@ -821,11 +1087,29 @@ impl ParsedTleFile {
         self.satellites.clone()
     }
 
-    /// How many complete `(line 1, line 2)` records were found but skipped
-    /// because their element set failed SGP4 initialization.
+    /// Number of entries in `rejected`.
     #[wasm_bindgen(getter)]
     pub fn skipped(&self) -> usize {
-        self.skipped
+        self.rejected.len()
+    }
+
+    /// Every rejected record, stray line and orphan name line, in file order,
+    /// as `{ lineNumber, name, issue, message, detail }`. `lineNumber` is one-based
+    /// and names the name line when the record had one; `issue` is
+    /// `"invalid"` (refused by the TLE grammar, the checksum policy or SGP4
+    /// initialization), `"missingLine2"`, `"orphanLine2"` or `"orphanName"`.
+    /// `detail` preserves the exact issue variant and, for invalid records,
+    /// the complete SGP4 error payload.
+    #[wasm_bindgen(getter, unchecked_return_type = "RejectedTleRecord[]")]
+    pub fn rejected(&self) -> Result<JsValue, JsValue> {
+        crate::error::to_plain_js(
+            &self
+                .rejected
+                .iter()
+                .map(RejectedTleRecordJs::from)
+                .collect::<Vec<_>>(),
+            "rejected TLE records",
+        )
     }
 
     /// Number of satellites that parsed (length of `satellites`).
@@ -838,26 +1122,30 @@ impl ParsedTleFile {
 /// Parse a multi-record TLE file (CelesTrak / Space-Track style) into named,
 /// initialized [`Tle`] instances. Handles bare 2-line sets, 3-line name+line1+line2
 /// sets, and CelesTrak `0 NAME` markers; CRLF endings, blank lines, and
-/// surrounding whitespace are tolerated. A record whose element set fails SGP4
-/// initialization is skipped and counted in `skipped` rather than aborting the
-/// whole file. `opsMode` is `"improved"` (default) or `"afspc"`.
+/// surrounding whitespace are tolerated. A record that fails is kept out of
+/// `satellites` and listed in `rejected` with its line number and reason; the
+/// rest of the file is still read. `opsMode` is `"improved"` (default) or
+/// `"afspc"`; `policy` is `"strict"` (default) or `"lenient"`, as for `new Tle`.
 #[wasm_bindgen(js_name = parseTleFile)]
 pub fn parse_tle_file(
     text: &str,
     ops_mode_label: Option<String>,
+    policy: Option<String>,
 ) -> Result<ParsedTleFile, JsValue> {
     let mode = ops_mode(ops_mode_label)?;
-    let parsed = parse_tle_file_with_opsmode(text, mode);
+    let policy = tle_policy(policy)?;
+    let parsed = parse_tle_file_with_policy(text, mode, policy);
     let mut satellites = Vec::with_capacity(parsed.satellites.len());
     for named in parsed.satellites {
         satellites.push(NamedTle {
             name: named.name,
-            tle: Tle::from_core_satellite(named.satellite)?,
+            line_number: named.line_number,
+            tle: Tle::from_core_satellite(named.satellite, policy, named.checksum_warnings)?,
         });
     }
     Ok(ParsedTleFile {
         satellites,
-        skipped: parsed.skipped,
+        rejected: parsed.rejected,
     })
 }
 
@@ -1143,8 +1431,39 @@ pub fn visible_from_satellites_js(
         UtcInstant::from_unix_microseconds(epoch_unix_us),
         min_elevation_deg,
     )
-    .map_err(engine_error)?;
+    .map_err(pass_error)?;
     Ok(visible.iter().map(VisibleSatellite::from).collect())
+}
+
+/// [`visibleFromSatellites`] under a UT1 validity policy: `"strict"` (the
+/// default) refuses an epoch outside the UT1 table, `"permissive"` accepts it.
+/// Returns `{ value, ut1Degraded }` with `value` the `VisibleSatellite[]`.
+#[wasm_bindgen(
+    js_name = visibleFromSatellitesWithValidity,
+    unchecked_return_type = "Ut1Validated<VisibleSatellite[]>"
+)]
+pub fn visible_from_satellites_with_validity_js(
+    satellites: Vec<Tle>,
+    ids: Vec<String>,
+    station: &GroundStation,
+    epoch_unix_us: i64,
+    min_elevation_deg: f64,
+    ut1: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let sats: Vec<Satellite> = satellites.into_iter().map(|t| t.satellite).collect();
+    let validated = visible_from_satellites_with_validity(
+        &sats,
+        &ids,
+        station.inner,
+        UtcInstant::from_unix_microseconds(epoch_unix_us),
+        min_elevation_deg,
+        ut1_validity(ut1)?,
+    )
+    .map_err(pass_error)?;
+    validated_object(
+        &js_array(validated.value.iter().map(VisibleSatellite::from)),
+        validated.degraded,
+    )
 }
 
 /// Propagate a fleet of already-initialized [`Tle`]s over a shared epoch grid in
@@ -1178,7 +1497,7 @@ pub fn propagate_batch(
     let mut positions = Vec::with_capacity(satellite_count * epoch_count * 3);
     let mut velocities = Vec::with_capacity(satellite_count * epoch_count * 3);
     for (idx, arc) in results.into_iter().enumerate() {
-        let predictions = arc.map_err(|e| engine_error(format!("satellite {idx}: {e}")))?;
+        let predictions = arc.map_err(|e| indexed_sgp4_error(idx, e))?;
         for p in &predictions {
             positions.extend_from_slice(&p.position);
             velocities.extend_from_slice(&p.velocity);
@@ -1354,7 +1673,7 @@ impl Constellation {
             UtcInstant::from_unix_microseconds(epoch_unix_us),
             min_elevation_deg,
         )
-        .map_err(engine_error)?;
+        .map_err(pass_error)?;
         Ok(visible.iter().map(VisibleSatellite::from).collect())
     }
 
@@ -1387,6 +1706,81 @@ impl Constellation {
             .collect()
     }
 
+    /// Per-satellite detailed outcomes for `lookAngleArcs`. Each result has
+    /// `satelliteIndex`, `value` (the angle arrays or `null`), and `error` (the
+    /// complete typed core error or `null`). The legacy method keeps its
+    /// index-aligned empty-arc placeholders.
+    #[wasm_bindgen(js_name = lookAngleArcOutcomes, unchecked_return_type = "FleetLookAngleOutcome[]")]
+    pub fn look_angle_arc_outcomes(
+        &self,
+        station: &GroundStation,
+        epochs_unix_us: &[i64],
+    ) -> Result<js_sys::Array, JsValue> {
+        let datetimes = instants(epochs_unix_us);
+        let outcomes = js_sys::Array::new();
+        for (satellite_index, result) in
+            look_angle_batch_serial(&self.satellites, station.inner, &datetimes)
+                .into_iter()
+                .enumerate()
+        {
+            let outcome = js_sys::Object::new();
+            js_sys::Reflect::set(
+                &outcome,
+                &JsValue::from_str("satelliteIndex"),
+                &JsValue::from_f64(satellite_index as f64),
+            )?;
+            match result {
+                Ok(looks) => {
+                    let value = js_sys::Object::new();
+                    let azimuth = js_sys::Float64Array::from(
+                        looks
+                            .iter()
+                            .map(|l| l.azimuth_deg)
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                    );
+                    let elevation = js_sys::Float64Array::from(
+                        looks
+                            .iter()
+                            .map(|l| l.elevation_deg)
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                    );
+                    let range = js_sys::Float64Array::from(
+                        looks
+                            .iter()
+                            .map(|l| l.range_km)
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                    );
+                    js_sys::Reflect::set(
+                        &value,
+                        &JsValue::from_str("azimuthDeg"),
+                        &azimuth.into(),
+                    )?;
+                    js_sys::Reflect::set(
+                        &value,
+                        &JsValue::from_str("elevationDeg"),
+                        &elevation.into(),
+                    )?;
+                    js_sys::Reflect::set(&value, &JsValue::from_str("rangeKm"), &range.into())?;
+                    js_sys::Reflect::set(&outcome, &JsValue::from_str("value"), &value)?;
+                    js_sys::Reflect::set(&outcome, &JsValue::from_str("error"), &JsValue::NULL)?;
+                }
+                Err(error) => {
+                    js_sys::Reflect::set(&outcome, &JsValue::from_str("value"), &JsValue::NULL)?;
+                    js_sys::Reflect::set(
+                        &outcome,
+                        &JsValue::from_str("error"),
+                        &look_angle_error(error),
+                    )?;
+                }
+            }
+            outcomes.push(&outcome);
+        }
+        Ok(outcomes)
+    }
+
     /// Sub-satellite WGS84 ground tracks for every satellite over a shared epoch
     /// grid, in fleet order (element `i` is satellite `i`'s track), each reduced
     /// TEME->GCRS->ITRS->geodetic by the engine's validated transforms. A satellite
@@ -1410,6 +1804,76 @@ impl Constellation {
                 },
             })
             .collect()
+    }
+
+    /// Per-satellite detailed outcomes for `groundTracks`, retaining every
+    /// indexed look-angle/frame/SGP4 failure while preserving the legacy empty
+    /// track rows.
+    #[wasm_bindgen(js_name = groundTrackOutcomes, unchecked_return_type = "FleetGroundTrackOutcome[]")]
+    pub fn ground_track_outcomes(&self, epochs_unix_us: &[i64]) -> Result<js_sys::Array, JsValue> {
+        let datetimes = instants(epochs_unix_us);
+        let outcomes = js_sys::Array::new();
+        for (satellite_index, satellite) in self.satellites.iter().enumerate() {
+            let outcome = js_sys::Object::new();
+            js_sys::Reflect::set(
+                &outcome,
+                &JsValue::from_str("satelliteIndex"),
+                &JsValue::from_f64(satellite_index as f64),
+            )?;
+            match ground_track(satellite, &datetimes) {
+                Ok(points) => {
+                    let value = js_sys::Object::new();
+                    let latitude = js_sys::Float64Array::from(
+                        points
+                            .iter()
+                            .map(|g| g.lat_rad.to_degrees())
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                    );
+                    let longitude = js_sys::Float64Array::from(
+                        points
+                            .iter()
+                            .map(|g| g.lon_rad.to_degrees())
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                    );
+                    let altitude = js_sys::Float64Array::from(
+                        points
+                            .iter()
+                            .map(|g| g.height_m / 1000.0)
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                    );
+                    js_sys::Reflect::set(
+                        &value,
+                        &JsValue::from_str("latitudeDeg"),
+                        &latitude.into(),
+                    )?;
+                    js_sys::Reflect::set(
+                        &value,
+                        &JsValue::from_str("longitudeDeg"),
+                        &longitude.into(),
+                    )?;
+                    js_sys::Reflect::set(
+                        &value,
+                        &JsValue::from_str("altitudeKm"),
+                        &altitude.into(),
+                    )?;
+                    js_sys::Reflect::set(&outcome, &JsValue::from_str("value"), &value)?;
+                    js_sys::Reflect::set(&outcome, &JsValue::from_str("error"), &JsValue::NULL)?;
+                }
+                Err(error) => {
+                    js_sys::Reflect::set(&outcome, &JsValue::from_str("value"), &JsValue::NULL)?;
+                    js_sys::Reflect::set(
+                        &outcome,
+                        &JsValue::from_str("error"),
+                        &look_angle_error(error),
+                    )?;
+                }
+            }
+            outcomes.push(&outcome);
+        }
+        Ok(outcomes)
     }
 
     /// Passes over `station` within `[startUnixUs, endUnixUs)` for every satellite,
@@ -1450,6 +1914,77 @@ impl Constellation {
             }
         }
         Ok(out)
+    }
+
+    /// Per-satellite detailed outcomes for `passes`. Each row keeps its fleet
+    /// index and either the satellite's pass list (possibly empty) or the full
+    /// typed `PassError`; the flattened legacy pass list is unchanged.
+    #[wasm_bindgen(js_name = passOutcomes, unchecked_return_type = "FleetPassOutcome[]")]
+    pub fn pass_outcomes(
+        &self,
+        station: &GroundStation,
+        start_unix_us: i64,
+        end_unix_us: i64,
+        elevation_mask_deg: Option<f64>,
+        step_seconds: Option<f64>,
+        time_tolerance_s: Option<f64>,
+    ) -> Result<js_sys::Array, JsValue> {
+        let options = pass_options(elevation_mask_deg, step_seconds, time_tolerance_s)?;
+        if end_unix_us <= start_unix_us {
+            return Err(range_error("endUnixUs must be after startUnixUs"));
+        }
+        let start = UtcInstant::from_unix_microseconds(start_unix_us);
+        let end = UtcInstant::from_unix_microseconds(end_unix_us);
+        let outcomes = js_sys::Array::new();
+        for (satellite_index, satellite) in self.satellites.iter().enumerate() {
+            let outcome = js_sys::Object::new();
+            js_sys::Reflect::set(
+                &outcome,
+                &JsValue::from_str("satelliteIndex"),
+                &JsValue::from_f64(satellite_index as f64),
+            )?;
+            match find_passes_for_satellite(satellite, station.inner, start, end, options) {
+                Ok(passes) => {
+                    let rows = js_sys::Array::new();
+                    for pass in &passes {
+                        let row = js_sys::Object::new();
+                        js_sys::Reflect::set(
+                            &row,
+                            &JsValue::from_str("aosUnixUs"),
+                            &js_sys::BigInt::from(pass.aos.unix_microseconds()).into(),
+                        )?;
+                        js_sys::Reflect::set(
+                            &row,
+                            &JsValue::from_str("losUnixUs"),
+                            &js_sys::BigInt::from(pass.los.unix_microseconds()).into(),
+                        )?;
+                        js_sys::Reflect::set(
+                            &row,
+                            &JsValue::from_str("maxElevationDeg"),
+                            &JsValue::from_f64(pass.max_elevation_deg),
+                        )?;
+                        js_sys::Reflect::set(
+                            &row,
+                            &JsValue::from_str("culminationUnixUs"),
+                            &js_sys::BigInt::from(pass.culmination.unix_microseconds()).into(),
+                        )?;
+                        rows.push(&row);
+                    }
+                    js_sys::Reflect::set(&outcome, &JsValue::from_str("value"), &rows)?;
+                    js_sys::Reflect::set(&outcome, &JsValue::from_str("error"), &JsValue::NULL)?;
+                }
+                Err(error) => {
+                    js_sys::Reflect::set(&outcome, &JsValue::from_str("value"), &JsValue::NULL)?;
+                    js_sys::Reflect::set(
+                        &outcome,
+                        &JsValue::from_str("error"),
+                        &pass_error(error),
+                    )?;
+                }
+            }
+            outcomes.push(&outcome);
+        }
+        Ok(outcomes)
     }
 }
 
@@ -1510,3 +2045,63 @@ mod drift_tests {
         assert_eq!(got.time_tolerance_seconds, core.time_tolerance_seconds);
     }
 }
+
+#[wasm_bindgen(typescript_custom_section)]
+const FLEET_OUTCOME_TYPES: &'static str = r#"
+export type FleetSgp4ErrorCause =
+    | { kind: "invalidInput"; field: string; inputKind: string; reason: string }
+    | { kind: "nonFiniteOutput"; field: string }
+    | { kind: "invalidTle"; message: string }
+    | { kind: "sgp4"; code: number }
+    | { kind: "resonanceStepBudget"; budget: string };
+export type FleetLookAngleErrorCause =
+    | { kind: "invalidInput"; field: string; reason: string }
+    | { kind: "init" | "propagate"; message: string; cause: FleetSgp4ErrorCause }
+    | {
+          kind: "frameTransform";
+          message: string;
+          cause:
+              | { kind: "invalidInput"; field: string; reason: string }
+              | { kind: "ut1OutsideCoverage"; reason: "beforeCoverage" | "afterCoverage" };
+      };
+export type FleetLookAngleError = Error & {
+    detail: { family: "lookAngle"; cause: FleetLookAngleErrorCause };
+};
+export type FleetPassErrorCause =
+    | { kind: "invalidInput"; field: string; reason: string }
+    | { kind: "ut1OutsideCoverage"; reason: "beforeCoverage" | "afterCoverage" };
+export type FleetPassError = Error & {
+    detail: { family: "pass"; cause: FleetPassErrorCause };
+};
+export type FleetLookAngleArcValue = {
+    azimuthDeg: Float64Array;
+    elevationDeg: Float64Array;
+    rangeKm: Float64Array;
+};
+export type FleetGroundTrackValue = {
+    latitudeDeg: Float64Array;
+    longitudeDeg: Float64Array;
+    altitudeKm: Float64Array;
+};
+export type FleetPassOutcomeValue = {
+    aosUnixUs: bigint;
+    losUnixUs: bigint;
+    maxElevationDeg: number;
+    culminationUnixUs: bigint;
+};
+export type FleetLookAngleOutcome = {
+    satelliteIndex: number;
+    value: FleetLookAngleArcValue | null;
+    error: FleetLookAngleError | null;
+};
+export type FleetGroundTrackOutcome = {
+    satelliteIndex: number;
+    value: FleetGroundTrackValue | null;
+    error: FleetLookAngleError | null;
+};
+export type FleetPassOutcome = {
+    satelliteIndex: number;
+    value: FleetPassOutcomeValue[] | null;
+    error: FleetPassError | null;
+};
+"#;

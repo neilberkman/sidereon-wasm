@@ -2,16 +2,26 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { EmissionMediaStatus, emissionMediaStatusLabel, loadSp3 } from "../pkg-node/sidereon.js";
-import { fixture, f64Bits, geodeticToEcef } from "./helpers.mjs";
+import { coreGoldens, fixture, f64Bits, geodeticToEcef, hexToF64 } from "./helpers.mjs";
+
+// Expected values are the core's own batch for the same inputs
+// (test/golden-gen `emissionMedia`); the receiver and epoch are the golden's
+// exact bits, so the binding and the engine see identical inputs.
+const golden = coreGoldens().emissionMedia;
+const goldenEpoch = hexToF64(golden.epochJ2000S);
+const goldenReceiver = Float64Array.from(golden.receiverEcefM.map(hexToF64));
+const bitsOrNaN = (values) =>
+  Array.from(values).map((value) => (Number.isNaN(value) ? "NaN" : f64Bits(value)));
+const goldenBits = (rows) => rows.map((value) => (value === null ? "NaN" : BigInt(value)));
 
 test("emissionMediaBatch returns contiguous arrays and typed row statuses", () => {
   const sp3 = loadSp3(fixture("GRG0MGXFIN_20201760000_01D_15M_ORB.SP3"));
   const epoch = sp3.epochsJ2000Seconds()[40];
-  const receiver = Float64Array.from(geodeticToEcef(48.0, 11.0, 600.0));
+  assert.equal(f64Bits(epoch), f64Bits(goldenEpoch));
   const batch = sp3.emissionMediaBatch(
     ["G16", "E01", "C01"],
     Float64Array.from([epoch, epoch, epoch]),
-    receiver,
+    goldenReceiver,
     { troposphere: true },
   );
 
@@ -25,35 +35,17 @@ test("emissionMediaBatch returns contiguous arrays and typed row statuses", () =
     EmissionMediaStatus.Gap,
   ]);
   assert.deepEqual(
-    Array.from(batch.positionEcefM).map((value) => (Number.isNaN(value) ? "NaN" : f64Bits(value))),
-    [
-      0x41528a3431db22d1n,
-      0xc1704ee0fb2b020cn,
-      0x417277c7bbae147an,
-      0x4170eb2ded439581n,
-      0xc154cf5f14ac0832n,
-      0x4175fd6663604189n,
-      "NaN",
-      "NaN",
-      "NaN",
-    ],
-  );
-  assert.deepEqual(
-    Array.from(batch.clockS).map((value) => (Number.isNaN(value) ? "NaN" : f64Bits(value))),
-    [0xbf26da6e075bf537n, 0xbf4cfa1c57307076n, "NaN"],
-  );
-  assert.deepEqual(
-    Array.from(batch.ionosphereSlantDelayM).map((value) =>
-      Number.isNaN(value) ? "NaN" : f64Bits(value),
+    bitsOrNaN(batch.positionEcefM),
+    golden.all.positionsEcefM.flatMap((row) =>
+      row === null ? ["NaN", "NaN", "NaN"] : row.map((value) => BigInt(value)),
     ),
-    [0x0000000000000000n, 0x0000000000000000n, "NaN"],
   );
+  assert.deepEqual(bitsOrNaN(batch.clockS), goldenBits(golden.all.clocksS));
   assert.deepEqual(
-    Array.from(batch.troposphereDelayM).map((value) =>
-      Number.isNaN(value) ? "NaN" : f64Bits(value),
-    ),
-    [0x40185de8aa0810f4n, 0x4004d46e00457c07n, "NaN"],
+    bitsOrNaN(batch.ionosphereSlantDelayM),
+    goldenBits(golden.all.ionosphereSlantDelaysM),
   );
+  assert.deepEqual(bitsOrNaN(batch.troposphereDelayM), goldenBits(golden.all.troposphereDelaysM));
   assert.deepEqual(batch.elementResults, [
     { ok: true, error: undefined },
     { ok: true, error: undefined },
@@ -64,19 +56,18 @@ test("emissionMediaBatch returns contiguous arrays and typed row statuses", () =
 
 test("emissionMediaBatch preserves state rows below an elevation cutoff", () => {
   const sp3 = loadSp3(fixture("GRG0MGXFIN_20201760000_01D_15M_ORB.SP3"));
-  const epoch = sp3.epochsJ2000Seconds()[40];
-  const receiver = Float64Array.from(geodeticToEcef(48.0, 11.0, 600.0));
-  const batch = sp3.emissionMediaBatch(["G16"], Float64Array.from([epoch]), receiver, {
+  const batch = sp3.emissionMediaBatch(["G16"], Float64Array.from([goldenEpoch]), goldenReceiver, {
     minElevationRad: 1.5,
     troposphere: true,
   });
 
   assert.deepEqual(batch.statusLabels, ["belowElevationCutoff"]);
-  assert.deepEqual(Array.from(batch.positionEcefM, f64Bits), [
-    0x41528a3431db22d1n,
-    0xc1704ee0fb2b020cn,
-    0x417277c7bbae147an,
-  ]);
+  assert.deepEqual(
+    bitsOrNaN(batch.positionEcefM),
+    golden.belowCutoff.positionsEcefM[0].map((value) => BigInt(value)),
+  );
+  assert.deepEqual(bitsOrNaN(batch.clockS), goldenBits(golden.belowCutoff.clocksS));
+  assert.deepEqual(golden.belowCutoff.troposphereDelaysM, [null]);
   assert.equal(Number.isNaN(batch.troposphereDelayM[0]), true);
 });
 

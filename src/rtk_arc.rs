@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+use sidereon_core::astro::time::ExactEpoch as CoreExactEpoch;
 use sidereon_core::carrier_phase::CycleSlipOptions;
 use sidereon_core::frame::Wgs84Geodetic;
 use sidereon_core::positioning::{
@@ -36,11 +37,11 @@ use sidereon_core::rtk_filter::{
     RtkArcSolution, RtkDualCycleSlipConfig, RtkDualFrequencyArcEpoch, RtkDualFrequencyObservation,
     RtkDualFrequencySatelliteObservation, RtkIonosphereFreeArcConfig, RtkIonosphereFreeArcSolution,
     RtkRinexArc, RtkRinexArcOptions, RtkRinexDualArcOptions, RtkRinexDualFrequencyArc,
-    RtkRinexDualSignalPair, RtkRinexSignalPair, RtkStaticArcConfig, RtkStaticArcSolution,
-    RtkWideLaneArcConfig, RtkWideLaneArcSolution, RtkWideLaneFixedArcConfig,
-    RtkWideLaneFixedArcIntegerMethod, RtkWideLaneFixedArcMetadata, RtkWideLaneFixedArcSolution,
-    RtkWideLaneFixedStaticArcSolution, SearchOpts, StochasticModel, UpdateOpts,
-    ValidatedFixedBaselineSolution, ValidatedFixedSolveOpts, WideLaneOptions,
+    RtkRinexDualSignalPair, RtkRinexReceiver, RtkRinexSignalPair, RtkRinexUnresolvedCarrier,
+    RtkStaticArcConfig, RtkStaticArcSolution, RtkWideLaneArcConfig, RtkWideLaneArcSolution,
+    RtkWideLaneFixedArcConfig, RtkWideLaneFixedArcIntegerMethod, RtkWideLaneFixedArcMetadata,
+    RtkWideLaneFixedArcSolution, RtkWideLaneFixedStaticArcSolution, SearchOpts, StochasticModel,
+    UpdateOpts, ValidatedFixedBaselineSolution, ValidatedFixedSolveOpts, WideLaneOptions,
 };
 use sidereon_core::GnssSystem;
 
@@ -510,6 +511,8 @@ struct ArcEpochInput {
     velocity_mps: Option<[f64; 3]>,
     #[serde(default)]
     prediction_time_s: Option<f64>,
+    #[serde(skip)]
+    prediction_epoch: Option<CoreExactEpoch>,
 }
 
 impl ArcEpochInput {
@@ -526,8 +529,23 @@ impl ArcEpochInput {
             rover_satellite_positions_m: self.rover_satellite_positions_m.clone(),
             velocity_mps: self.velocity_mps,
             prediction_time_s: self.prediction_time_s,
+            prediction_epoch: self.prediction_epoch,
         }
     }
+}
+
+fn parse_arc_epochs(value: JsValue) -> Result<Vec<ArcEpochInput>, JsValue> {
+    let rows = js_sys::Array::from(&value);
+    let mut epochs: Vec<ArcEpochInput> = serde_wasm_bindgen::from_value(value)
+        .map_err(|error| type_error(&format!("invalid RTK arc epochs: {error}")))?;
+    for (index, epoch) in epochs.iter_mut().enumerate() {
+        let row = rows.get(index as u32);
+        let exact = js_sys::Reflect::get(&row, &JsValue::from_str("predictionEpoch"))
+            .map_err(|_| type_error("could not read predictionEpoch"))?;
+        epoch.prediction_epoch =
+            crate::frames::ExactEpochValue::from_js(&exact, "predictionEpoch")?;
+    }
+    Ok(epochs)
 }
 
 /// Reference-satellite selection policy. `mode` is `"auto"` (default, highest
@@ -762,6 +780,8 @@ struct DualFrequencyArcEpochInput {
     epoch_sort_key: Option<String>,
     #[serde(default)]
     gap_time_s: Option<f64>,
+    #[serde(skip)]
+    gap_epoch: Option<CoreExactEpoch>,
     observations: Vec<DualFrequencySatelliteObservationInput>,
     satellite_positions_m: BTreeMap<String, [f64; 3]>,
     #[serde(default)]
@@ -772,6 +792,8 @@ struct DualFrequencyArcEpochInput {
     velocity_mps: Option<[f64; 3]>,
     #[serde(default)]
     prediction_time_s: Option<f64>,
+    #[serde(skip)]
+    prediction_epoch: Option<CoreExactEpoch>,
 }
 
 impl DualFrequencyArcEpochInput {
@@ -781,6 +803,7 @@ impl DualFrequencyArcEpochInput {
             jd_fraction: self.jd_fraction,
             epoch_sort_key: self.epoch_sort_key.clone(),
             gap_time_s: self.gap_time_s,
+            gap_epoch: self.gap_epoch,
             observations: self
                 .observations
                 .iter()
@@ -791,8 +814,56 @@ impl DualFrequencyArcEpochInput {
             rover_satellite_positions_m: self.rover_satellite_positions_m.clone(),
             velocity_mps: self.velocity_mps,
             prediction_time_s: self.prediction_time_s,
+            prediction_epoch: self.prediction_epoch,
         }
     }
+}
+
+fn parse_dual_frequency_arc_epochs(
+    value: JsValue,
+) -> Result<Vec<DualFrequencyArcEpochInput>, JsValue> {
+    let rows = js_sys::Array::from(&value);
+    let mut epochs: Vec<DualFrequencyArcEpochInput> = serde_wasm_bindgen::from_value(value)
+        .map_err(|error| type_error(&format!("invalid dual-frequency RTK arc epochs: {error}")))?;
+    for (index, epoch) in epochs.iter_mut().enumerate() {
+        let row = rows.get(index as u32);
+        let gap = js_sys::Reflect::get(&row, &JsValue::from_str("gapEpoch"))
+            .map_err(|_| type_error("could not read gapEpoch"))?;
+        let prediction = js_sys::Reflect::get(&row, &JsValue::from_str("predictionEpoch"))
+            .map_err(|_| type_error("could not read predictionEpoch"))?;
+        epoch.gap_epoch = crate::frames::ExactEpochValue::from_js(&gap, "gapEpoch")?;
+        epoch.prediction_epoch =
+            crate::frames::ExactEpochValue::from_js(&prediction, "predictionEpoch")?;
+    }
+    Ok(epochs)
+}
+
+fn attach_exact_epoch_rows(
+    output: JsValue,
+    epochs: impl Iterator<Item = (Option<CoreExactEpoch>, Option<CoreExactEpoch>)>,
+    gap_key: Option<&str>,
+    prediction_key: Option<&str>,
+) -> Result<JsValue, JsValue> {
+    let rows = js_sys::Reflect::get(&output, &JsValue::from_str("epochs"))?;
+    let rows = js_sys::Array::from(&rows);
+    for (index, (gap_epoch, prediction_epoch)) in epochs.enumerate() {
+        let row = rows.get(index as u32);
+        if let Some(key) = gap_key {
+            let value = gap_epoch
+                .map(crate::frames::ExactEpochValue::from_core)
+                .map(JsValue::from)
+                .unwrap_or(JsValue::NULL);
+            js_sys::Reflect::set(&row, &JsValue::from_str(key), &value)?;
+        }
+        if let Some(key) = prediction_key {
+            let value = prediction_epoch
+                .map(crate::frames::ExactEpochValue::from_core)
+                .map(JsValue::from)
+                .unwrap_or(JsValue::NULL);
+            js_sys::Reflect::set(&row, &JsValue::from_str(key), &value)?;
+        }
+    }
+    Ok(output)
 }
 
 /// Dual-frequency cycle-slip classifier thresholds.
@@ -966,6 +1037,7 @@ fn static_reference_mode_error_kind(error: &StaticReferenceModeError) -> &'stati
         StaticReferenceModeError::InvalidCorrectedSatelliteId { .. } => {
             "invalidCorrectedSatelliteId"
         }
+        StaticReferenceModeError::Ut1OutsideCoverage(_) => "ut1OutsideCoverage",
     }
 }
 
@@ -1066,6 +1138,12 @@ impl From<&StaticReferenceModeError> for StaticReferenceModeErrorObject {
             StaticReferenceModeError::InvalidCorrectedSatelliteId { satellite_id } => {
                 (None, None, None, Some(satellite_id.clone()))
             }
+            StaticReferenceModeError::Ut1OutsideCoverage(reason) => (
+                None,
+                None,
+                Some(crate::spp::degrade_reason_label(*reason).to_owned()),
+                None,
+            ),
         };
         Self {
             kind: static_reference_mode_error_kind(value),
@@ -1114,6 +1192,7 @@ struct StaticReferenceCodeSolutionObject {
     baseline_vector_m: [f64; 3],
     baseline_m: f64,
     diagnostics: Vec<StaticReferenceEpochDiagnosticObject>,
+    ut1_degraded: Option<&'static str>,
 }
 
 impl From<&StaticReferenceCodeSolution> for StaticReferenceCodeSolutionObject {
@@ -1129,6 +1208,7 @@ impl From<&StaticReferenceCodeSolution> for StaticReferenceCodeSolutionObject {
                 .iter()
                 .map(StaticReferenceEpochDiagnosticObject::from)
                 .collect(),
+            ut1_degraded: value.ut1_degraded.map(crate::spp::degrade_reason_label),
         }
     }
 }
@@ -1145,6 +1225,7 @@ struct StaticReferenceCarrierSolutionObject {
     integer_ratio: Option<f64>,
     rtk_solution: StaticArcSolutionObject,
     diagnostics: Vec<StaticReferenceEpochDiagnosticObject>,
+    ut1_degraded: Option<&'static str>,
 }
 
 impl From<&StaticReferenceCarrierSolution> for StaticReferenceCarrierSolutionObject {
@@ -1163,6 +1244,7 @@ impl From<&StaticReferenceCarrierSolution> for StaticReferenceCarrierSolutionObj
                 .iter()
                 .map(StaticReferenceEpochDiagnosticObject::from)
                 .collect(),
+            ut1_degraded: value.ut1_degraded.map(crate::spp::degrade_reason_label),
         }
     }
 }
@@ -1181,6 +1263,7 @@ struct StaticReferenceStationSolutionObject {
     carrier_solution: Option<StaticReferenceCarrierSolutionObject>,
     mode_reports: Vec<StaticReferenceModeReportObject>,
     diagnostics: Vec<StaticReferenceEpochDiagnosticObject>,
+    ut1_degraded: Option<&'static str>,
 }
 
 impl From<&StaticReferenceStationSolution> for StaticReferenceStationSolutionObject {
@@ -1211,6 +1294,7 @@ impl From<&StaticReferenceStationSolution> for StaticReferenceStationSolutionObj
                 .iter()
                 .map(StaticReferenceEpochDiagnosticObject::from)
                 .collect(),
+            ut1_degraded: value.ut1_degraded.map(crate::spp::degrade_reason_label),
         }
     }
 }
@@ -1614,6 +1698,38 @@ impl From<&RtkArcEpoch> for ArcEpochObject {
     }
 }
 
+/// A satellite's measurement left out of one epoch because a selected phase
+/// observable has no carrier frequency in its file's context.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnresolvedCarrierObject {
+    /// `"base"` or `"rover"`: the receiver whose file holds the measurement.
+    receiver: &'static str,
+    /// Index of the epoch in that receiver's file.
+    epoch_index: usize,
+    satellite_id: String,
+    /// Full RINEX phase observable code with no carrier frequency.
+    observable_code: String,
+}
+
+impl From<&RtkRinexUnresolvedCarrier> for UnresolvedCarrierObject {
+    fn from(row: &RtkRinexUnresolvedCarrier) -> Self {
+        Self {
+            receiver: match row.receiver {
+                RtkRinexReceiver::Base => "base",
+                RtkRinexReceiver::Rover => "rover",
+            },
+            epoch_index: row.epoch_index,
+            satellite_id: row.satellite_id.clone(),
+            observable_code: row.observable_code.clone(),
+        }
+    }
+}
+
+fn unresolved_carrier_objects(rows: &[RtkRinexUnresolvedCarrier]) -> Vec<UnresolvedCarrierObject> {
+    rows.iter().map(UnresolvedCarrierObject::from).collect()
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RinexArcObject {
@@ -1621,6 +1737,7 @@ struct RinexArcObject {
     wavelengths_m: BTreeMap<String, f64>,
     offsets_m: BTreeMap<String, f64>,
     skipped_epoch_count: usize,
+    unresolved_carriers: Vec<UnresolvedCarrierObject>,
 }
 
 impl From<&RtkRinexArc> for RinexArcObject {
@@ -1630,6 +1747,7 @@ impl From<&RtkRinexArc> for RinexArcObject {
             wavelengths_m: arc.wavelengths_m.clone(),
             offsets_m: arc.offsets_m.clone(),
             skipped_epoch_count: arc.skipped_epoch_count,
+            unresolved_carriers: unresolved_carrier_objects(&arc.unresolved_carriers),
         }
     }
 }
@@ -1723,6 +1841,7 @@ impl From<&RtkDualFrequencyArcEpoch> for DualFrequencyArcEpochObject {
 struct RinexDualFrequencyArcObject {
     epochs: Vec<DualFrequencyArcEpochObject>,
     skipped_epoch_count: usize,
+    unresolved_carriers: Vec<UnresolvedCarrierObject>,
 }
 
 impl From<&RtkRinexDualFrequencyArc> for RinexDualFrequencyArcObject {
@@ -1734,6 +1853,7 @@ impl From<&RtkRinexDualFrequencyArc> for RinexDualFrequencyArcObject {
                 .map(DualFrequencyArcEpochObject::from)
                 .collect(),
             skipped_epoch_count: arc.skipped_epoch_count,
+            unresolved_carriers: unresolved_carrier_objects(&arc.unresolved_carriers),
         }
     }
 }
@@ -1895,6 +2015,14 @@ impl From<&RtkArcSolution> for ArcSolutionObject {
 /// are parsed RINEX observation files, and `options` may provide
 /// `{ signalPairs, maxEpochs, minCommonSatellites, includePredictionTime }`.
 /// Defaults build the GPS `C1C`/`L1C` arc used by the real WTZR/WTZZ fixtures.
+///
+/// A satellite's measurement is formed from the first configured pair whose
+/// values are present and whose carrier resolves, so a GLONASS slot whose
+/// FDMA channel is missing or outside `-7..=6` falls back to a later pair such
+/// as a CDMA `L3Q`. A satellite no configured pair resolves for is left out of
+/// that epoch only and listed in `unresolvedCarriers` as
+/// `{ receiver: "base" | "rover", epochIndex, satelliteId, observableCode }`,
+/// with `epochIndex` counted in that receiver's file.
 #[wasm_bindgen(js_name = buildRinexRtkArc)]
 pub fn build_rinex_rtk_arc_js(
     ephemeris: &Sp3,
@@ -1914,13 +2042,23 @@ pub fn build_rinex_rtk_arc_js(
     )
     .map_err(engine_error)?;
 
-    serialize_to_js(&RinexArcObject::from(&arc))
+    let output = serialize_to_js(&RinexArcObject::from(&arc))?;
+    attach_exact_epoch_rows(
+        output,
+        arc.epochs
+            .iter()
+            .map(|epoch| (None, epoch.prediction_epoch)),
+        None,
+        Some("predictionEpoch"),
+    )
 }
 
 /// Build dual-frequency RTK arc records from parsed RINEX OBS products.
 ///
 /// Defaults build the GPS `C1C`/`L1C` plus `C2W`/`L2W` arc used by the real
-/// WTZR/WTZZ fixtures.
+/// WTZR/WTZZ fixtures. A satellite whose configured pairs leave a phase
+/// observable without a carrier frequency is reported in `unresolvedCarriers`
+/// exactly as [`buildRinexRtkArc`] reports it.
 #[wasm_bindgen(js_name = buildDualFrequencyRinexRtkArc)]
 pub fn build_dual_frequency_rinex_rtk_arc_js(
     ephemeris: &Sp3,
@@ -1940,7 +2078,15 @@ pub fn build_dual_frequency_rinex_rtk_arc_js(
     )
     .map_err(engine_error)?;
 
-    serialize_to_js(&RinexDualFrequencyArcObject::from(&arc))
+    let output = serialize_to_js(&RinexDualFrequencyArcObject::from(&arc))?;
+    attach_exact_epoch_rows(
+        output,
+        arc.epochs
+            .iter()
+            .map(|epoch| (epoch.gap_epoch, epoch.prediction_epoch)),
+        Some("gapEpoch"),
+        Some("predictionEpoch"),
+    )
 }
 
 /// Solve one static RTK baseline directly from paired RINEX OBS plus SP3.
@@ -2051,8 +2197,7 @@ pub fn solve_wide_lane_fixed_rinex_rtk_baseline_js(
 /// Throws a `TypeError` for malformed input and an `Error` if the solve fails.
 #[wasm_bindgen(js_name = solveRtkArc)]
 pub fn solve_rtk_arc_js(epochs: JsValue, config: JsValue) -> Result<JsValue, JsValue> {
-    let epochs: Vec<ArcEpochInput> = serde_wasm_bindgen::from_value(epochs)
-        .map_err(|e| type_error(&format!("invalid RTK arc epochs: {e}")))?;
+    let epochs = parse_arc_epochs(epochs)?;
     let cfg: ArcConfigInput = serde_wasm_bindgen::from_value(config)
         .map_err(|e| type_error(&format!("invalid RTK arc config: {e}")))?;
 
@@ -2070,8 +2215,7 @@ pub fn solve_rtk_arc_js(epochs: JsValue, config: JsValue) -> Result<JsValue, JsV
 /// `sidereon_core::rtk_filter::arc::solve_static_rtk_arc`.
 #[wasm_bindgen(js_name = solveStaticRtkArc)]
 pub fn solve_static_rtk_arc_js(epochs: JsValue, config: JsValue) -> Result<JsValue, JsValue> {
-    let epochs: Vec<ArcEpochInput> = serde_wasm_bindgen::from_value(epochs)
-        .map_err(|e| type_error(&format!("invalid static RTK arc epochs: {e}")))?;
+    let epochs = parse_arc_epochs(epochs)?;
     let cfg: StaticArcConfigInput = serde_wasm_bindgen::from_value(config)
         .map_err(|e| type_error(&format!("invalid static RTK arc config: {e}")))?;
 
@@ -2088,8 +2232,7 @@ pub fn solve_static_rtk_arc_js(epochs: JsValue, config: JsValue) -> Result<JsVal
 /// `sidereon_core::rtk_filter::arc::fix_wide_lane_rtk_arc`.
 #[wasm_bindgen(js_name = fixWideLaneRtkArc)]
 pub fn fix_wide_lane_rtk_arc_js(epochs: JsValue, config: JsValue) -> Result<JsValue, JsValue> {
-    let epochs: Vec<DualFrequencyArcEpochInput> = serde_wasm_bindgen::from_value(epochs)
-        .map_err(|e| type_error(&format!("invalid wide-lane RTK arc epochs: {e}")))?;
+    let epochs = parse_dual_frequency_arc_epochs(epochs)?;
     let cfg: WideLaneArcConfigInput = serde_wasm_bindgen::from_value(config)
         .map_err(|e| type_error(&format!("invalid wide-lane RTK arc config: {e}")))?;
 
@@ -2099,7 +2242,16 @@ pub fn fix_wide_lane_rtk_arc_js(epochs: JsValue, config: JsValue) -> Result<JsVa
         .collect();
     let solution = fix_wide_lane_rtk_arc(&core_epochs, &cfg.to_core()?).map_err(engine_error)?;
 
-    serialize_to_js(&WideLaneArcSolutionObject::from(&solution))
+    let output = serialize_to_js(&WideLaneArcSolutionObject::from(&solution))?;
+    attach_exact_epoch_rows(
+        output,
+        solution
+            .epochs
+            .iter()
+            .map(|epoch| (epoch.gap_epoch, epoch.prediction_epoch)),
+        Some("gapEpoch"),
+        Some("predictionEpoch"),
+    )
 }
 
 /// Prepare ionosphere-free single-frequency RTK arc inputs from a
@@ -2115,8 +2267,7 @@ pub fn prepare_ionosphere_free_rtk_arc_js(
     wide_lane_cycles: JsValue,
     config: JsValue,
 ) -> Result<JsValue, JsValue> {
-    let epochs: Vec<DualFrequencyArcEpochInput> = serde_wasm_bindgen::from_value(epochs)
-        .map_err(|e| type_error(&format!("invalid ionosphere-free RTK arc epochs: {e}")))?;
+    let epochs = parse_dual_frequency_arc_epochs(epochs)?;
     let wide_lane_cycles: BTreeMap<String, i64> = serde_wasm_bindgen::from_value(wide_lane_cycles)
         .map_err(|e| type_error(&format!("invalid RTK wide-lane cycles: {e}")))?;
     let cfg: IonosphereFreeArcConfigInput = serde_wasm_bindgen::from_value(config)
@@ -2130,7 +2281,16 @@ pub fn prepare_ionosphere_free_rtk_arc_js(
         prepare_ionosphere_free_rtk_arc(&core_epochs, &wide_lane_cycles, &cfg.to_core()?)
             .map_err(engine_error)?;
 
-    serialize_to_js(&IonosphereFreeArcSolutionObject::from(&solution))
+    let output = serialize_to_js(&IonosphereFreeArcSolutionObject::from(&solution))?;
+    attach_exact_epoch_rows(
+        output,
+        solution
+            .epochs
+            .iter()
+            .map(|epoch| (None, epoch.prediction_epoch)),
+        None,
+        Some("predictionEpoch"),
+    )
 }
 
 #[cfg(test)]

@@ -181,8 +181,104 @@ test("RTK rank-deficient float geometry throws a singular geometry error", () =>
         initialBaselineM: [1.2, -0.85, 0.91],
       }),
     (err) => {
-      assert.ok(err instanceof Error);
-      assert.match(err.message, /RTK float geometry is singular/i);
+      assert.equal(err.name, "PositioningError");
+      assert.equal(err.message, "RTK float geometry is singular");
+      assert.deepEqual(err.detail, {
+        kind: "RTK_FLOAT",
+        message: err.message,
+        cause: { kind: "SINGULAR_GEOMETRY" },
+      });
+      return true;
+    },
+  );
+});
+
+test("validated fixed RTK refusal retains the complete residual outlier", () => {
+  const base = [4075580.0, 931854.0, 4801568.0];
+  const truth = [1.2, -0.85, 0.91];
+  const rover = base.map((value, index) => value + truth[index]);
+  const wavelength = 299792458.0 / 1575.42e6;
+  const sats = [
+    ["G01", [15000000.0, 7000000.0, 21000000.0], 0],
+    ["G02", [-12000000.0, 18000000.0, 19000000.0], 4],
+    ["G03", [20000000.0, -10000000.0, 17000000.0], -7],
+    ["G04", [-19000000.0, -13000000.0, 20000000.0], 9],
+    ["G05", [9000000.0, 22000000.0, 16000000.0], -3],
+  ];
+  const rangeM = (position, receiver) =>
+    Math.hypot(...position.map((value, index) => value - receiver[index]));
+  const makeRow = ([sat, position, cycles], noise) => {
+    const baseRange = rangeM(position, base);
+    const roverRange = rangeM(position, rover);
+    return {
+      sat,
+      sdAmbiguityId: sat,
+      baseCodeM: baseRange,
+      basePhaseM: baseRange,
+      roverCodeM: roverRange + noise,
+      roverPhaseM: roverRange + cycles * wavelength,
+      baseTxPos: position,
+      roverTxPos: position,
+      pos: position,
+    };
+  };
+  const epochs = [40.0, -40.0, 40.0].map((noise) => {
+    const rows = sats.map((sat) => makeRow(sat, sat[0] === "G05" ? noise : 0.0));
+    return { references: [rows[0]], nonref: rows.slice(1), dtS: 0.0 };
+  });
+  const ambiguityIds = ["G02", "G03", "G04", "G05"];
+
+  assert.throws(
+    () =>
+      solveRtkFixed({
+        epochs,
+        base,
+        ambiguityIds,
+        ambiguitySatellites: Object.fromEntries(ambiguityIds.map((sat) => [sat, sat])),
+        wavelengthsM: Object.fromEntries(ambiguityIds.map((sat) => [sat, wavelength])),
+        offsetsM: Object.fromEntries(ambiguityIds.map((sat) => [sat, 0.0])),
+        model: {
+          codeSigmaM: 0.3,
+          phaseSigmaM: 0.003,
+          sagnac: false,
+          stochastic: "simple",
+          elevationWeighting: false,
+        },
+        floatOptions: { positionTolM: 1.0e-3, ambiguityTolM: 1.0e-6, maxIterations: 10 },
+        fixedOptions: {
+          positionTolM: 1.0e-3,
+          ambiguityTolM: 1.0e-6,
+          maxIterations: 10,
+          ratioThreshold: 3.0,
+          partialAmbiguityResolution: false,
+          partialMinAmbiguities: 4,
+        },
+        residualOptions: { thresholdSigma: 6.0, maxExclusions: 0 },
+        initialBaselineM: [-30.0, 25.0, -10.0],
+      }),
+    (error) => {
+      assert.equal(error.name, "PositioningError");
+      assert.equal(error.detail.kind, "RTK_FIXED");
+      assert.equal(error.detail.message, error.message);
+      assert.equal(error.detail.cause.kind, "RESIDUAL_VALIDATION_FAILED");
+      const { outlier, exclusions } = error.detail.cause;
+      assert.equal(outlier.satelliteId, "G05");
+      assert.equal(outlier.referenceSatelliteId, "G01");
+      assert.equal(outlier.ambiguityId, "G05");
+      assert.equal(outlier.component, "code");
+      assert.ok(outlier.epochIndex >= 0 && outlier.epochIndex < epochs.length);
+      assert.ok(Number.isFinite(outlier.residualM));
+      assert.ok(Number.isFinite(outlier.sigmaM) && outlier.sigmaM > 0.0);
+      assert.ok(Number.isFinite(outlier.normalizedResidual));
+      assert.equal(outlier.thresholdSigma, 6.0);
+      const derivedNormalized = outlier.residualM / outlier.sigmaM;
+      const divisionRoundoff = 2 * Number.EPSILON * Math.max(1.0, Math.abs(derivedNormalized));
+      assert.ok(
+        Math.abs(outlier.normalizedResidual - derivedNormalized) <= divisionRoundoff,
+        `${outlier.normalizedResidual} != residualM / sigmaM (${derivedNormalized})`,
+      );
+      assert.ok(Math.abs(outlier.normalizedResidual) > outlier.thresholdSigma);
+      assert.deepEqual(exclusions, []);
       return true;
     },
   );

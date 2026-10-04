@@ -5,43 +5,558 @@
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
+use sidereon_core::astro::time::civil::j2000_seconds_from_split;
 use sidereon_core::astro::time::{Instant, InstantRepr};
-use sidereon_core::constants::{J2000_JD, SECONDS_PER_DAY};
 use sidereon_core::data::ProductDate;
+use sidereon_core::ephemeris::PositionClockGroupDelay;
 use sidereon_core::ephemeris::{
     align_clock_reference as core_align_clock_reference,
     clock_reference_offset as core_clock_reference_offset, parse_exact_sp3 as core_parse_exact_sp3,
     precise_interpolant_store_checksum64 as core_precise_interpolant_store_checksum64,
     validate_exact_sp3 as core_validate_exact_sp3,
     ClockReferenceOffset as CoreClockReferenceOffset, ExactSp3Coverage as CoreExactSp3Coverage,
-    ExactSp3Request as CoreExactSp3Request,
+    ExactSp3Request as CoreExactSp3Request, ExactSp3ValidationError,
     MmapPreciseEphemerisInterpolant as CorePreciseInterpolantArtifact,
     PreciseInterpolantStoreError as CorePreciseInterpolantStoreError, Sp3 as CoreSp3,
+    Sp3WriteError as CoreSp3WriteError,
 };
 use sidereon_core::ephemeris::{
-    check_continuity, ContinuityDefect, ContinuityOptions, EpochWindow, MergeContinuityViolation,
-    OrbitClass, Sp3InterpolationOptions, SpeedBound, StencilExtent, WindowContinuityDecision,
-    WindowContinuityVerdict,
+    check_continuity, CellSelection, ContinuityDefect, ContinuityOptionRejection,
+    ContinuityOptions, ContinuityOptionsError, EpochWindow, InterpolationNodes, MergeCombine,
+    MergeContinuityCell, MergeContinuityCellRole, MergeContinuityReport, MergeContinuityViolation,
+    MergeToleranceError, MergeToleranceField, OrbitClass,
+    Sp3AccuracyCodeGroup as CoreAccuracyCodeGroup, Sp3AccuracyValue as CoreAccuracyValue,
+    Sp3DataType as CoreSp3DataType, Sp3EpochIntervalError, Sp3Header as CoreSp3Header,
+    Sp3InterpolationOptions, Sp3PositionClockAccuracy as CorePositionClockAccuracy,
+    Sp3RawRecordAccuracy as CoreRawRecordAccuracy, Sp3RecordAccuracy as CoreRecordAccuracy,
+    Sp3State as CoreState, Sp3VelocityAccuracy as CoreVelocityAccuracy,
+    Sp3Version as CoreSp3Version, SpeedBound, StencilExtent, UnusableSampleReason,
+    WindowContinuityDecision, WindowContinuityVerdict,
 };
+use sidereon_core::positioning::{ClockRelativity as CoreClockRelativity, EphemerisSource};
 use sidereon_core::DigestProvenance as CoreDigestProvenance;
 use sidereon_core::Error as CoreError;
 use sidereon_core::GnssSatelliteId;
 
 use crate::data_distribution::GnssProductIdentity;
-use crate::error::{engine_error, range_error, type_error, u64_bigint};
+use crate::error::{
+    engine_error, error_with_detail, range_error, safe_integer_number, type_error, u64_bigint,
+};
+use crate::frames::ExactEpochQueryValue;
 use crate::spp::{self, SppSolution};
 
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum ClockRelativityJs {
+    NotApplicable,
+    Term { seconds: f64 },
+    Unavailable,
+}
+
+impl From<CoreClockRelativity> for ClockRelativityJs {
+    fn from(value: CoreClockRelativity) -> Self {
+        match value {
+            CoreClockRelativity::NotApplicable => Self::NotApplicable,
+            CoreClockRelativity::Term(seconds) => Self::Term { seconds },
+            CoreClockRelativity::Unavailable => Self::Unavailable,
+        }
+    }
+}
+
+pub(crate) fn precise_variance_at_queries(
+    source: &impl EphemerisSource,
+    satellite: GnssSatelliteId,
+    state_epoch: &ExactEpochQueryValue,
+    selection_epoch: &ExactEpochQueryValue,
+) -> f64 {
+    source.ephemeris_variance_at_epoch_query(
+        satellite,
+        &state_epoch.core(),
+        &selection_epoch.core(),
+    )
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SelectedPositionClockJs {
+    position_ecef_m: [f64; 3],
+    clock_s: f64,
+    group_delay_s: Option<f64>,
+}
+
+pub(crate) fn selected_position_clock_at_queries(
+    source: &impl EphemerisSource,
+    satellite: GnssSatelliteId,
+    state_epoch: &ExactEpochQueryValue,
+    selection_epoch: &ExactEpochQueryValue,
+) -> Result<JsValue, JsValue> {
+    let checked = source
+        .try_position_clock_group_delay_selected_at_epoch_query(
+            satellite,
+            &state_epoch.core(),
+            &selection_epoch.core(),
+        )
+        .map_err(|error| crate::positioning_error::core_source_error(&error))?;
+    let Some(checked) = checked else {
+        return Ok(JsValue::NULL);
+    };
+    let (position_ecef_m, clock_s, group_delay_s): PositionClockGroupDelay = checked.value;
+    let value = serde_wasm_bindgen::to_value(&SelectedPositionClockJs {
+        position_ecef_m,
+        clock_s,
+        group_delay_s,
+    })
+    .map_err(engine_error)?;
+    crate::error::validated_object(&value, checked.degraded)
+}
+
+pub(crate) fn transmit_epoch_clock_at_queries(
+    source: &impl EphemerisSource,
+    satellite: GnssSatelliteId,
+    state_epoch: &ExactEpochQueryValue,
+    selection_epoch: &ExactEpochQueryValue,
+) -> Result<JsValue, JsValue> {
+    let checked = source
+        .try_transmit_epoch_clock_at_epoch_query(
+            satellite,
+            &state_epoch.core(),
+            &selection_epoch.core(),
+        )
+        .map_err(|error| crate::positioning_error::core_source_error(&error))?;
+    let Some(checked) = checked else {
+        return Ok(JsValue::NULL);
+    };
+    let value = JsValue::from_f64(checked.value);
+    crate::error::validated_object(&value, checked.degraded)
+}
+
+pub(crate) fn precise_clock_relativity_at_query(
+    source: &impl EphemerisSource,
+    satellite: GnssSatelliteId,
+    state_epoch: &ExactEpochQueryValue,
+    position_ecef_m: [f64; 3],
+) -> Result<JsValue, JsValue> {
+    let relativity: ClockRelativityJs = source
+        .clock_relativity_for_state_at_epoch_query(satellite, &state_epoch.core(), position_ecef_m)
+        .into();
+    serde_wasm_bindgen::to_value(&relativity).map_err(engine_error)
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
+enum Sp3AccuracyValueJs {
+    Known(f64),
+    Unknown,
+    TooLarge,
+    InvalidBase,
+    Overflow,
+}
+
+impl From<CoreAccuracyValue> for Sp3AccuracyValueJs {
+    fn from(value: CoreAccuracyValue) -> Self {
+        match value {
+            CoreAccuracyValue::Known(value) => Self::Known(value),
+            CoreAccuracyValue::Unknown => Self::Unknown,
+            CoreAccuracyValue::TooLarge => Self::TooLarge,
+            CoreAccuracyValue::InvalidBase => Self::InvalidBase,
+            CoreAccuracyValue::Overflow => Self::Overflow,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sp3AccuracyCodeGroupJs {
+    axis_exponents: [Option<i16>; 3],
+    clock_exponent: Option<i16>,
+    position_velocity_base: Option<f64>,
+    clock_rate_base: Option<f64>,
+}
+
+impl From<CoreAccuracyCodeGroup> for Sp3AccuracyCodeGroupJs {
+    fn from(group: CoreAccuracyCodeGroup) -> Self {
+        Self {
+            axis_exponents: group.axis_exponents,
+            clock_exponent: group.clock_exponent,
+            position_velocity_base: group.position_velocity_base,
+            clock_rate_base: group.clock_rate_base,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sp3RawRecordAccuracyJs {
+    p: Option<Sp3AccuracyCodeGroupJs>,
+    v: Option<Sp3AccuracyCodeGroupJs>,
+}
+
+impl From<CoreRawRecordAccuracy> for Sp3RawRecordAccuracyJs {
+    fn from(accuracy: CoreRawRecordAccuracy) -> Self {
+        Self {
+            p: accuracy.p.map(Into::into),
+            v: accuracy.v.map(Into::into),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sp3PositionClockAccuracyJs {
+    position_sigma_m: [Sp3AccuracyValueJs; 3],
+    clock_sigma_m: Sp3AccuracyValueJs,
+    position_variance_m2: [Sp3AccuracyValueJs; 3],
+    clock_variance_m2: Sp3AccuracyValueJs,
+}
+
+impl From<CorePositionClockAccuracy> for Sp3PositionClockAccuracyJs {
+    fn from(accuracy: CorePositionClockAccuracy) -> Self {
+        Self {
+            position_sigma_m: accuracy.position_sigma_m.map(Into::into),
+            clock_sigma_m: accuracy.clock_sigma_m.into(),
+            position_variance_m2: accuracy.position_variance_m2().map(Into::into),
+            clock_variance_m2: accuracy.clock_variance_m2().into(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sp3VelocityAccuracyJs {
+    velocity_sigma_m_s: [Sp3AccuracyValueJs; 3],
+    clock_rate_sigma_m_s: Sp3AccuracyValueJs,
+    velocity_variance_m2_s2: [Sp3AccuracyValueJs; 3],
+    clock_rate_variance_m2_s2: Sp3AccuracyValueJs,
+}
+
+impl From<CoreVelocityAccuracy> for Sp3VelocityAccuracyJs {
+    fn from(accuracy: CoreVelocityAccuracy) -> Self {
+        Self {
+            velocity_sigma_m_s: accuracy.velocity_sigma_m_s.map(Into::into),
+            clock_rate_sigma_m_s: accuracy.clock_rate_sigma_m_s.into(),
+            velocity_variance_m2_s2: accuracy.velocity_variance_m2_s2().map(Into::into),
+            clock_rate_variance_m2_s2: accuracy.clock_rate_variance_m2_s2().into(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sp3RecordAccuracyJs {
+    p: Option<Sp3PositionClockAccuracyJs>,
+    v: Option<Sp3VelocityAccuracyJs>,
+}
+
+impl From<CoreRecordAccuracy> for Sp3RecordAccuracyJs {
+    fn from(accuracy: CoreRecordAccuracy) -> Self {
+        Self {
+            p: accuracy.p.map(Into::into),
+            v: accuracy.v.map(Into::into),
+        }
+    }
+}
+
+pub(crate) fn sp3_state_from_core(state: CoreState) -> Sp3State {
+    Sp3State {
+        position: state.position.as_array().to_vec(),
+        clock_s: state.clock_s,
+        velocity: state.velocity.map(|velocity| velocity.as_array().to_vec()),
+        clock_event: state.flags.clock_event,
+        clock_predicted: state.flags.clock_predicted,
+        maneuver: state.flags.maneuver,
+        orbit_predicted: state.flags.orbit_predicted,
+    }
+}
+
 /// Parse a satellite token (e.g. `"G01"`) into a typed id, or a `TypeError`.
-fn parse_sat(token: &str) -> Result<GnssSatelliteId, JsValue> {
+pub(crate) fn parse_sat(token: &str) -> Result<GnssSatelliteId, JsValue> {
     token
         .parse::<GnssSatelliteId>()
         .map_err(|e| type_error(&format!("invalid satellite token {token:?}: {e}")))
 }
 
-fn instant_to_j2000_seconds(epoch: &Instant) -> f64 {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContinuityOptionsErrorDetailJs {
+    field: &'static str,
+    value: String,
+    reason: &'static str,
+}
+
+pub(crate) fn continuity_options_error_js(error: ContinuityOptionsError) -> JsValue {
+    let reason = match error.reason {
+        ContinuityOptionRejection::NotFinite => "notFinite",
+        ContinuityOptionRejection::Negative => "negative",
+        _ => "unknown",
+    };
+    let detail = ContinuityOptionsErrorDetailJs {
+        field: error.field,
+        value: error.value.to_string(),
+        reason,
+    };
+    error_with_detail("ContinuityOptionsError", &error.to_string(), &detail)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sp3PolicyErrorDetailJs {
+    field: String,
+    value: String,
+    reason: String,
+}
+
+pub(crate) fn sp3_epoch_interval_error_js(error: Sp3EpochIntervalError) -> JsValue {
+    let detail = Sp3PolicyErrorDetailJs {
+        field: error.field.to_string(),
+        value: error.value.to_string(),
+        reason: error.reason.to_string(),
+    };
+    error_with_detail("Sp3EpochIntervalError", &error.to_string(), &detail)
+}
+
+pub(crate) fn merge_tolerance_error_js(error: MergeToleranceError) -> JsValue {
+    let field = match error.field {
+        MergeToleranceField::Position => "positionToleranceM",
+        MergeToleranceField::Clock => "clockToleranceS",
+        MergeToleranceField::OutlierPosition => "outlierReject.positionToleranceM",
+        MergeToleranceField::OutlierClock => "outlierReject.clockToleranceS",
+        _ => "unknown",
+    };
+    let detail = Sp3PolicyErrorDetailJs {
+        field: field.to_string(),
+        value: error.value.to_string(),
+        reason: "must be finite and nonnegative".to_string(),
+    };
+    error_with_detail("Sp3MergeToleranceError", &error.to_string(), &detail)
+}
+
+pub(crate) fn sp3_core_error_js(error: CoreError) -> JsValue {
+    match error {
+        CoreError::Sp3EpochInterval(error) => sp3_epoch_interval_error_js(error),
+        CoreError::Sp3MergeTolerance(error) => merge_tolerance_error_js(error),
+        CoreError::ContinuityOptions(error) => continuity_options_error_js(error),
+        other => engine_error(other),
+    }
+}
+
+/// Lossless public detail for every current exact-SP3 validation failure.
+///
+/// Integer fields cross as decimal strings because Rust's `usize`, `u64`, and
+/// `i128` ranges exceed JavaScript's exact integer range. Floating-point fields
+/// other than the already-public declared-start pair also cross as strings, so
+/// a non-finite diagnostic is retained rather than becoming `null`.
+fn exact_sp3_validation_error_detail(error: &ExactSp3ValidationError) -> serde_json::Value {
+    use ExactSp3ValidationError as E;
+
+    match error {
+        E::Parse(value) => serde_json::json!({
+            "kind": "parse", "value": value.to_string(), "debug": format!("{value:?}")
+        }),
+        E::Catalog(value) => serde_json::json!({
+            "kind": "catalog", "value": value.to_string(), "debug": format!("{value:?}")
+        }),
+        E::WrongProductFamily { actual } => {
+            serde_json::json!({"kind": "wrong_product_family", "actual": actual.code()})
+        }
+        E::InvalidIssue { issue } => {
+            serde_json::json!({"kind": "invalid_issue", "issue": issue})
+        }
+        E::UnsupportedSpanToken { token } => {
+            serde_json::json!({"kind": "unsupported_span_token", "token": token})
+        }
+        E::UnsupportedSampleToken { token } => {
+            serde_json::json!({"kind": "unsupported_sample_token", "token": token})
+        }
+        E::NonCanonicalSpanToken { token, canonical } => serde_json::json!({
+            "kind": "non_canonical_span_token", "token": token, "canonical": canonical
+        }),
+        E::NonCanonicalSampleToken { token, canonical } => serde_json::json!({
+            "kind": "non_canonical_sample_token", "token": token, "canonical": canonical
+        }),
+        E::InvalidExpectedAgency { agency } => {
+            serde_json::json!({"kind": "invalid_expected_agency", "agency": agency})
+        }
+        E::AgencyMismatch { expected, actual } => serde_json::json!({
+            "kind": "agency_mismatch", "expected": expected, "actual": actual
+        }),
+        E::MissingEof => serde_json::json!({"kind": "missing_eof"}),
+        E::MalformedEofRecord {
+            line_number,
+            record_length,
+        } => serde_json::json!({
+            "kind": "malformed_eof_record",
+            "lineNumber": line_number.to_string(),
+            "recordLength": record_length.to_string()
+        }),
+        E::TrailingContentAfterEof => {
+            serde_json::json!({"kind": "trailing_content_after_eof"})
+        }
+        E::MandatoryHeaderRecordCount {
+            record,
+            expected,
+            actual,
+        } => serde_json::json!({
+            "kind": "mandatory_header_record_count",
+            "record": record,
+            "expected": expected.to_string(),
+            "actual": actual.to_string()
+        }),
+        E::MissingDeclaredSatelliteCount => {
+            serde_json::json!({"kind": "missing_declared_satellite_count"})
+        }
+        E::DeclaredSatelliteCountMismatch { declared, tokens } => serde_json::json!({
+            "kind": "declared_satellite_count_mismatch",
+            "declared": declared.to_string(),
+            "tokens": tokens.to_string()
+        }),
+        E::DuplicateDeclaredSatellite {
+            token,
+            first_index,
+            duplicate_index,
+        } => serde_json::json!({
+            "kind": "duplicate_declared_satellite",
+            "token": token,
+            "firstIndex": first_index.to_string(),
+            "duplicateIndex": duplicate_index.to_string()
+        }),
+        E::NoDeclaredSatellites => serde_json::json!({"kind": "no_declared_satellites"}),
+        E::SatelliteRecordSequenceMismatch {
+            record,
+            epoch_index,
+            expected,
+            actual,
+        } => serde_json::json!({
+            "kind": "satellite_record_sequence_mismatch",
+            "record": record,
+            "epochIndex": epoch_index.to_string(),
+            "expected": expected,
+            "actual": actual
+        }),
+        E::BodyRecordInterleavingMismatch {
+            epoch_index,
+            expected,
+            actual,
+        } => serde_json::json!({
+            "kind": "body_record_interleaving_mismatch",
+            "epochIndex": epoch_index.to_string(),
+            "expected": expected,
+            "actual": actual
+        }),
+        E::NonFiniteHeaderCadence => {
+            serde_json::json!({"kind": "non_finite_header_cadence"})
+        }
+        E::NonPositiveHeaderCadence { actual_s } => serde_json::json!({
+            "kind": "non_positive_header_cadence", "actualS": actual_s.to_string()
+        }),
+        E::UnsupportedHeaderCadence { actual_s } => serde_json::json!({
+            "kind": "unsupported_header_cadence", "actualS": actual_s.to_string()
+        }),
+        E::CadenceMismatch {
+            requested_s,
+            header_s,
+        } => serde_json::json!({
+            "kind": "cadence_mismatch",
+            "requestedS": requested_s.to_string(),
+            "headerS": header_s.to_string()
+        }),
+        E::DeclaredEpochCountMismatch { declared, parsed } => serde_json::json!({
+            "kind": "declared_epoch_count_mismatch",
+            "declared": declared.to_string(),
+            "parsed": parsed.to_string()
+        }),
+        E::MissingDeclaredStart => serde_json::json!({"kind": "missing_declared_start"}),
+        E::DeclaredStartMismatch {
+            requested_j2000_s,
+            declared_j2000_s,
+            requested_tick,
+            declared_tick,
+        } => serde_json::json!({
+            "kind": "declared_start_mismatch",
+            "requestedJ2000S": requested_j2000_s,
+            "declaredJ2000S": declared_j2000_s,
+            "requestedTick": requested_tick.to_string(),
+            "declaredTick": declared_tick.map(|tick| tick.to_string())
+        }),
+        E::RequestBeforeGpsEpoch => serde_json::json!({"kind": "request_before_gps_epoch"}),
+        E::NonFiniteHeaderStartMetadata { field } => serde_json::json!({
+            "kind": "non_finite_header_start_metadata", "field": field
+        }),
+        E::InvalidHeaderStartMetadata { field, actual } => serde_json::json!({
+            "kind": "invalid_header_start_metadata",
+            "field": field,
+            "actual": actual.to_string()
+        }),
+        E::HeaderStartMetadataMismatch {
+            field,
+            requested,
+            actual,
+        } => serde_json::json!({
+            "kind": "header_start_metadata_mismatch",
+            "field": field,
+            "requested": requested.to_string(),
+            "actual": actual.to_string()
+        }),
+        E::EmptyEpochGrid => serde_json::json!({"kind": "empty_epoch_grid"}),
+        E::FirstEpochMismatch {
+            requested_j2000_s,
+            actual_j2000_s,
+        } => serde_json::json!({
+            "kind": "first_epoch_mismatch",
+            "requestedJ2000S": requested_j2000_s.to_string(),
+            "actualJ2000S": actual_j2000_s.to_string()
+        }),
+        E::IrregularEpochGrid {
+            epoch_index,
+            requested_s,
+            actual_s,
+        } => serde_json::json!({
+            "kind": "irregular_epoch_grid",
+            "epochIndex": epoch_index.to_string(),
+            "requestedS": requested_s.to_string(),
+            "actualS": actual_s.to_string()
+        }),
+        E::SpanNotMultipleOfCadence { span_s, cadence_s } => serde_json::json!({
+            "kind": "span_not_multiple_of_cadence",
+            "spanS": span_s.to_string(),
+            "cadenceS": cadence_s.to_string()
+        }),
+        E::SpanMismatch {
+            parsed,
+            half_open,
+            inclusive,
+        } => serde_json::json!({
+            "kind": "span_mismatch",
+            "parsed": parsed.to_string(),
+            "halfOpen": half_open.to_string(),
+            "inclusive": inclusive.to_string()
+        }),
+        E::FormatVersionMismatch { requested, actual } => serde_json::json!({
+            "kind": "format_version_mismatch", "requested": requested, "actual": actual
+        }),
+        other => serde_json::json!({
+            "kind": "unknown", "value": other.to_string(), "debug": format!("{other:?}")
+        }),
+    }
+}
+
+fn exact_sp3_validation_error_js(error: ExactSp3ValidationError) -> JsValue {
+    let detail = exact_sp3_validation_error_detail(&error);
+    error_with_detail("ExactSp3ValidationError", &error.to_string(), &detail)
+}
+
+/// Seconds since J2000 in the instant's own scale, reduced as the engine's SP3
+/// code reduces an instant: a split Julian date as whole days, then the day
+/// fraction, each scaled to seconds; an integer-nanosecond count as its whole
+/// seconds plus the sub-second remainder, split in `i128`.
+pub(crate) fn instant_to_j2000_seconds(epoch: &Instant) -> f64 {
     match epoch.repr {
-        InstantRepr::JulianDate(jd) => ((jd.jd_whole - J2000_JD) + jd.fraction) * SECONDS_PER_DAY,
-        InstantRepr::Nanos(_) => f64::NAN,
+        InstantRepr::JulianDate(jd) => j2000_seconds_from_split(jd.jd_whole, jd.fraction),
+        InstantRepr::Nanos(nanos) => {
+            const NANOS_PER_SECOND: i128 = 1_000_000_000;
+            nanos.div_euclid(NANOS_PER_SECOND) as f64
+                + nanos.rem_euclid(NANOS_PER_SECOND) as f64 / 1.0e9
+        }
     }
 }
 
@@ -61,7 +576,8 @@ pub(crate) fn continuity_options(
             )));
         }
     };
-    let mut options = ContinuityOptions::new(speed_bound, residual_tolerance_m);
+    let mut options = ContinuityOptions::new(speed_bound, residual_tolerance_m)
+        .map_err(continuity_options_error_js)?;
     if let Some(factor) = gap_threshold_factor {
         let interpolation = Sp3InterpolationOptions::new(factor).map_err(engine_error)?;
         options = options.with_interpolation_options(interpolation);
@@ -132,6 +648,89 @@ fn typed_artifact_error<T: Serialize>(name: &'static str, message: String, detai
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct Sp3HeaderJs {
+    version: &'static str,
+    data_type: &'static str,
+    num_epochs: u64,
+    data_used: Option<String>,
+    coordinate_system: String,
+    orbit_type: String,
+    agency: String,
+    gnss_week: u32,
+    seconds_of_week: f64,
+    epoch_interval_s: f64,
+    mjd: u32,
+    mjd_fraction: f64,
+    file_type: Option<String>,
+    time_system: String,
+    time_scale: String,
+    pos_vel_base: Option<f64>,
+    clock_rate_base: Option<f64>,
+    satellites: Vec<String>,
+    satellite_accuracy_codes: Vec<u16>,
+}
+
+impl From<&CoreSp3Header> for Sp3HeaderJs {
+    fn from(header: &CoreSp3Header) -> Self {
+        Self {
+            version: match header.version {
+                CoreSp3Version::A => "a",
+                CoreSp3Version::B => "b",
+                CoreSp3Version::C => "c",
+                CoreSp3Version::D => "d",
+            },
+            data_type: match header.data_type {
+                CoreSp3DataType::Position => "position",
+                CoreSp3DataType::Velocity => "velocity",
+            },
+            num_epochs: header.num_epochs,
+            data_used: header.data_used.clone(),
+            coordinate_system: header.coordinate_system.clone(),
+            orbit_type: header.orbit_type.clone(),
+            agency: header.agency.clone(),
+            gnss_week: header.gnss_week,
+            seconds_of_week: header.seconds_of_week,
+            epoch_interval_s: header.epoch_interval_s,
+            mjd: header.mjd,
+            mjd_fraction: header.mjd_fraction,
+            file_type: header.file_type.clone(),
+            time_system: header.time_system.label().to_string(),
+            time_scale: crate::bias::time_scale_label(header.time_scale).to_string(),
+            pos_vel_base: header.pos_vel_base,
+            clock_rate_base: header.clock_rate_base,
+            satellites: header.satellites.iter().map(ToString::to_string).collect(),
+            satellite_accuracy_codes: header.satellite_accuracy_codes.clone(),
+        }
+    }
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const TS_SP3_HEADER: &str = r#"
+export interface Sp3Header {
+  version: "a" | "b" | "c" | "d";
+  dataType: "position" | "velocity";
+  numEpochs: number;
+  dataUsed: string | undefined;
+  coordinateSystem: string;
+  orbitType: string;
+  agency: string;
+  gnssWeek: number;
+  secondsOfWeek: number;
+  epochIntervalS: number;
+  mjd: number;
+  mjdFraction: number;
+  fileType: string | undefined;
+  timeSystem: "GPS" | "GLO" | "GAL" | "TAI" | "UTC" | "QZS" | "BDT" | "IRN";
+  timeScale: "utc" | "tai" | "tt" | "tdb" | "gpst" | "gst" | "bdt" | "glonasst" | "qzsst" | "tcg" | "tcb";
+  posVelBase: number | undefined;
+  clockRateBase: number | undefined;
+  satellites: string[];
+  satelliteAccuracyCodes: number[];
+}
+"#;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Sp3EpochPredictionJs {
     epoch_j2000_seconds: f64,
     observed: bool,
@@ -169,6 +768,14 @@ struct PreciseInterpolantArtifactErrorDetail {
     claimed: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     declared: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    available: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offset: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    len: Option<String>,
 }
 
 impl PreciseInterpolantArtifactErrorDetail {
@@ -185,6 +792,10 @@ impl PreciseInterpolantArtifactErrorDetail {
             found: None,
             claimed: None,
             declared: None,
+            available: None,
+            region: None,
+            offset: None,
+            len: None,
         }
     }
 }
@@ -197,6 +808,11 @@ fn precise_artifact_error_name(error: PreciseInterpolantArtifactError) -> &'stat
     match error {
         PreciseInterpolantArtifactError::Io => "Io",
         PreciseInterpolantArtifactError::Parse => "Parse",
+        PreciseInterpolantArtifactError::BadMagic => "BadMagic",
+        PreciseInterpolantArtifactError::HeaderTruncated => "HeaderTruncated",
+        PreciseInterpolantArtifactError::Truncated => "Truncated",
+        PreciseInterpolantArtifactError::TrailingBytes => "TrailingBytes",
+        PreciseInterpolantArtifactError::RangeOutOfBounds => "RangeOutOfBounds",
         PreciseInterpolantArtifactError::UnsupportedVersion => "UnsupportedVersion",
         PreciseInterpolantArtifactError::UnsupportedTimeScale => "UnsupportedTimeScale",
         PreciseInterpolantArtifactError::UnsupportedSatelliteSystem => "UnsupportedSatelliteSystem",
@@ -204,6 +820,7 @@ fn precise_artifact_error_name(error: PreciseInterpolantArtifactError) -> &'stat
         PreciseInterpolantArtifactError::Checksum => "Checksum",
         PreciseInterpolantArtifactError::SatelliteChecksum => "SatelliteChecksum",
         PreciseInterpolantArtifactError::AttestedChecksumMismatch => "AttestedChecksumMismatch",
+        PreciseInterpolantArtifactError::Unknown => "Unknown",
     }
 }
 
@@ -217,6 +834,36 @@ fn precise_artifact_error(error: CorePreciseInterpolantStoreError) -> JsValue {
         }
         CorePreciseInterpolantStoreError::Parse { reason } => {
             detail.reason = Some(reason.clone());
+        }
+        CorePreciseInterpolantStoreError::BadMagic { found } => {
+            detail.found = Some(format!("{found:02x?}"));
+        }
+        CorePreciseInterpolantStoreError::HeaderTruncated { available } => {
+            detail.available = Some(available.to_string());
+        }
+        CorePreciseInterpolantStoreError::Truncated {
+            declared,
+            available,
+        }
+        | CorePreciseInterpolantStoreError::TrailingBytes {
+            declared,
+            available,
+        } => {
+            detail.declared = Some(declared.to_string());
+            detail.available = Some(available.to_string());
+        }
+        CorePreciseInterpolantStoreError::RangeOutOfBounds {
+            region,
+            sat,
+            offset,
+            len,
+            available,
+        } => {
+            detail.region = Some((*region).to_string());
+            detail.satellite_id = sat.map(|satellite| satellite.to_string());
+            detail.offset = Some(offset.to_string());
+            detail.len = Some(len.to_string());
+            detail.available = Some(available.to_string());
         }
         CorePreciseInterpolantStoreError::UnsupportedVersion { version } => {
             detail.version = Some(*version);
@@ -245,6 +892,7 @@ fn precise_artifact_error(error: CorePreciseInterpolantStoreError) -> JsValue {
             detail.claimed = Some(hex_u64(*claimed));
             detail.declared = Some(hex_u64(*declared));
         }
+        _ => detail.reason = Some(error.to_string()),
     }
     typed_artifact_error(name, detail.message.clone(), &detail)
 }
@@ -257,6 +905,16 @@ pub enum PreciseInterpolantArtifactError {
     Io,
     /// Artifact bytes could not be parsed.
     Parse,
+    /// Artifact magic does not match the mapped-store format.
+    BadMagic,
+    /// Artifact bytes end before the fixed header is complete.
+    HeaderTruncated,
+    /// The header declares more bytes than are available.
+    Truncated,
+    /// Bytes remain after the header-declared artifact length.
+    TrailingBytes,
+    /// An indexed payload region lies beyond the declared artifact bounds.
+    RangeOutOfBounds,
     /// The artifact version tag is unsupported.
     UnsupportedVersion,
     /// The artifact time-scale tag is unsupported.
@@ -271,6 +929,8 @@ pub enum PreciseInterpolantArtifactError {
     SatelliteChecksum,
     /// A caller claim did not match the checksum declared by the header.
     AttestedChecksumMismatch,
+    /// A future artifact-store error not yet mapped by this binding.
+    Unknown,
 }
 
 impl From<&CorePreciseInterpolantStoreError> for PreciseInterpolantArtifactError {
@@ -278,6 +938,11 @@ impl From<&CorePreciseInterpolantStoreError> for PreciseInterpolantArtifactError
         match value {
             CorePreciseInterpolantStoreError::Io { .. } => Self::Io,
             CorePreciseInterpolantStoreError::Parse { .. } => Self::Parse,
+            CorePreciseInterpolantStoreError::BadMagic { .. } => Self::BadMagic,
+            CorePreciseInterpolantStoreError::HeaderTruncated { .. } => Self::HeaderTruncated,
+            CorePreciseInterpolantStoreError::Truncated { .. } => Self::Truncated,
+            CorePreciseInterpolantStoreError::TrailingBytes { .. } => Self::TrailingBytes,
+            CorePreciseInterpolantStoreError::RangeOutOfBounds { .. } => Self::RangeOutOfBounds,
             CorePreciseInterpolantStoreError::UnsupportedVersion { .. } => Self::UnsupportedVersion,
             CorePreciseInterpolantStoreError::UnsupportedTimeScale { .. } => {
                 Self::UnsupportedTimeScale
@@ -291,6 +956,7 @@ impl From<&CorePreciseInterpolantStoreError> for PreciseInterpolantArtifactError
             CorePreciseInterpolantStoreError::AttestedChecksumMismatch { .. } => {
                 Self::AttestedChecksumMismatch
             }
+            _ => Self::Unknown,
         }
     }
 }
@@ -428,19 +1094,24 @@ impl ExactSp3ParseResult {
 }
 
 /// Parse and exact-validate SP3 bytes, returning both product and coverage.
+/// Every validation refusal throws `ExactSp3ValidationError` with a
+/// discriminated `ExactSp3ValidationErrorDetail`. Integer and diagnostic float
+/// strings preserve values that JavaScript numbers cannot represent exactly.
 #[wasm_bindgen(js_name = parseExactSp3)]
 pub fn parse_exact_sp3(
     bytes: &[u8],
     request: &ExactSp3Request,
 ) -> Result<ExactSp3ParseResult, JsValue> {
-    let (product, coverage) = core_parse_exact_sp3(bytes, &request.inner).map_err(engine_error)?;
+    let (product, coverage) =
+        core_parse_exact_sp3(bytes, &request.inner).map_err(exact_sp3_validation_error_js)?;
     Ok(ExactSp3ParseResult {
         product,
         coverage: coverage.into(),
     })
 }
 
-/// Validate an already parsed SP3 product against an exact request.
+/// Validate an already parsed SP3 product against an exact request, with the
+/// same typed refusal detail as [`parse_exact_sp3`].
 #[wasm_bindgen(js_name = validateExactSp3)]
 pub fn validate_exact_sp3(
     product: &Sp3,
@@ -448,7 +1119,7 @@ pub fn validate_exact_sp3(
 ) -> Result<ExactSp3Coverage, JsValue> {
     core_validate_exact_sp3(&product.inner, &request.inner)
         .map(Into::into)
-        .map_err(engine_error)
+        .map_err(exact_sp3_validation_error_js)
 }
 
 /// A parsed SP3-c or SP3-d precise-ephemeris product.
@@ -468,6 +1139,25 @@ impl Sp3 {
     #[wasm_bindgen(getter, js_name = epochCount)]
     pub fn epoch_count(&self) -> usize {
         self.inner.epoch_count()
+    }
+
+    /// Full parsed SP3 header with the values and labels retained by the core.
+    #[wasm_bindgen(getter, unchecked_return_type = "Sp3Header")]
+    pub fn header(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&Sp3HeaderJs::from(&self.inner.header))
+            .map_err(|error| engine_error(error.to_string()))
+    }
+
+    /// Header comments in source order.
+    #[wasm_bindgen(getter)]
+    pub fn comments(&self) -> Vec<String> {
+        self.inner.comments.clone()
+    }
+
+    /// Number of input satellite declarations or records the parser could not retain.
+    #[wasm_bindgen(getter, js_name = skippedRecords)]
+    pub fn skipped_records(&self) -> usize {
+        self.inner.skipped_records
     }
 
     /// Epoch count declared by SP3 header line 1, independent of the parsed
@@ -563,6 +1253,26 @@ impl Sp3 {
         .map_err(|error| engine_error(error.to_string()))
     }
 
+    /// Epochs of the position nodes that some interpolation of `satellite` in
+    /// the inclusive window selects, ascending, seconds since J2000; empty when
+    /// no query in the window is served for it.
+    ///
+    /// The engine applies the position interpolator's own serving and
+    /// node-selection rule to the satellite's node series, under this
+    /// product's interpolation options. Merge continuity verdicts read the
+    /// merged product's nodes this way.
+    #[wasm_bindgen(js_name = selectedNodes)]
+    pub fn selected_nodes(
+        &self,
+        satellite: &str,
+        from_j2000_s: f64,
+        through_j2000_s: f64,
+    ) -> Result<Vec<f64>, JsValue> {
+        let sat = parse_sat(satellite)?;
+        let window = EpochWindow::new(from_j2000_s, through_j2000_s).map_err(engine_error)?;
+        Ok(InterpolationNodes::for_sp3(&self.inner).selected_nodes(sat, window))
+    }
+
     /// Attest that this product is physically continuous, or report each
     /// violation.
     ///
@@ -585,6 +1295,10 @@ impl Sp3 {
     /// Returns `{ attested, defects, pairsChecked, residualsChecked,
     /// residualsSkipped }`. Reports rather than refuses: whether a product with
     /// defects is acceptable is the caller's decision.
+    /// An unusable sample is retained as an `unusable_sample` defect with its
+    /// original `sampleIndex`, optional `epochJ2000S`, and reason. Invalid
+    /// numeric bounds throw `ContinuityOptionsError` with a `detail` object
+    /// naming the field, its decimal-string value, and rejection reason.
     #[wasm_bindgen(js_name = checkContinuity)]
     pub fn check_continuity(
         &self,
@@ -599,7 +1313,8 @@ impl Sp3 {
                 residual_tolerance_m,
                 gap_threshold_factor,
             )?,
-        );
+        )
+        .map_err(continuity_options_error_js)?;
 
         let defects: Vec<ContinuityDefectJs> = report
             .defects
@@ -638,7 +1353,8 @@ impl Sp3 {
         let report = check_continuity(
             &self.inner.precise_ephemeris_samples(),
             &continuity_verdict_options(orbit_class, residual_tolerance_m, gap_threshold_factor)?,
-        );
+        )
+        .map_err(continuity_options_error_js)?;
         continuity_verdict_to_js(report.verdict_for_window(window, stencil))
     }
 
@@ -693,15 +1409,117 @@ impl Sp3 {
             )),
             other => engine_error(other),
         })?;
-        Ok(Sp3State {
-            position: state.position.as_array().to_vec(),
-            clock_s: state.clock_s,
-            velocity: state.velocity.map(|v| v.as_array().to_vec()),
-            clock_event: state.flags.clock_event,
-            clock_predicted: state.flags.clock_predicted,
-            maneuver: state.flags.maneuver,
-            orbit_predicted: state.flags.orbit_predicted,
-        })
+        Ok(sp3_state_from_core(state))
+    }
+
+    #[wasm_bindgen(js_name = stateAtExactQuery)]
+    pub fn state_at_exact_query(
+        &self,
+        satellite: &str,
+        query: &ExactEpochQueryValue,
+    ) -> Result<Sp3State, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        self.inner
+            .position_at_epoch_query(satellite, &query.core())
+            .map(sp3_state_from_core)
+            .map_err(engine_error)
+    }
+
+    #[wasm_bindgen(js_name = ephemerisVarianceAtExactQuery)]
+    pub fn ephemeris_variance_at_exact_query(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<f64, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        Ok(precise_variance_at_queries(
+            &self.inner,
+            satellite,
+            state_epoch,
+            selection_epoch,
+        ))
+    }
+
+    #[wasm_bindgen(js_name = selectedPositionClockAtExactQueries, unchecked_return_type = "Ut1Validated<SelectedPositionClock> | null")]
+    pub fn selected_position_clock_at_exact_queries(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        selected_position_clock_at_queries(&self.inner, satellite, state_epoch, selection_epoch)
+    }
+
+    #[wasm_bindgen(js_name = transmitEpochClockAtExactQueries, unchecked_return_type = "Ut1Validated<number> | null")]
+    pub fn transmit_epoch_clock_at_exact_queries(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        transmit_epoch_clock_at_queries(&self.inner, satellite, state_epoch, selection_epoch)
+    }
+
+    #[wasm_bindgen(
+        js_name = clockRelativityAtExactQuery,
+        unchecked_return_type = "ClockRelativity"
+    )]
+    pub fn clock_relativity_at_exact_query(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        position_ecef_m: Vec<f64>,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        let position_ecef_m: [f64; 3] = position_ecef_m
+            .try_into()
+            .map_err(|_| type_error("positionEcefM must contain exactly three coordinates"))?;
+        precise_clock_relativity_at_query(&self.inner, satellite, state_epoch, position_ecef_m)
+    }
+
+    #[wasm_bindgen(js_name = recordAccuracyCodes, unchecked_return_type = "Sp3RawRecordAccuracy")]
+    pub fn record_accuracy_codes(
+        &self,
+        satellite: &str,
+        epoch_index: usize,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        let accuracy = self
+            .inner
+            .record_accuracy_codes(satellite, epoch_index)
+            .map_err(|error| match error {
+                CoreError::EpochOutOfRange => {
+                    range_error(&format!("epoch index {epoch_index} out of range"))
+                }
+                CoreError::UnknownSatellite(id) => type_error(&format!(
+                    "satellite {id} has no record at epoch {epoch_index}"
+                )),
+                other => engine_error(other),
+            })?;
+        serde_wasm_bindgen::to_value(&Sp3RawRecordAccuracyJs::from(accuracy))
+            .map_err(|error| engine_error(error.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = recordAccuracy, unchecked_return_type = "Sp3RecordAccuracy")]
+    pub fn record_accuracy(&self, satellite: &str, epoch_index: usize) -> Result<JsValue, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        let accuracy = self
+            .inner
+            .record_accuracy(satellite, epoch_index)
+            .map_err(|error| match error {
+                CoreError::EpochOutOfRange => {
+                    range_error(&format!("epoch index {epoch_index} out of range"))
+                }
+                CoreError::UnknownSatellite(id) => type_error(&format!(
+                    "satellite {id} has no record at epoch {epoch_index}"
+                )),
+                other => engine_error(other),
+            })?;
+        serde_wasm_bindgen::to_value(&Sp3RecordAccuracyJs::from(accuracy))
+            .map_err(|error| engine_error(error.to_string()))
     }
 
     /// Run single-point positioning against this ephemeris.
@@ -746,7 +1564,8 @@ impl Sp3 {
     /// Solve one static receiver position from multiple SPP-shaped epochs.
     ///
     /// `epochs` is an array of SPP request objects. `options` accepts
-    /// `{ initialPositionM?, withGeodetic?, robust? }` and returns shared
+    /// `{ initialPositionM?, withGeodetic?, robust?, qzssClock?,
+    /// troposphereModel? }` and returns shared
     /// position, per-epoch clocks, covariance, residual, and influence surfaces.
     #[wasm_bindgen(js_name = solveStatic)]
     pub fn solve_static(
@@ -777,11 +1596,13 @@ impl Sp3 {
 
     /// Run fault detection and exclusion (FDE) against this ephemeris.
     ///
-    /// `request` is the SPP solve request plus the RAIM/exclusion options (see
-    /// the `FdeRequest` TypeScript type). The core loop solves, runs RAIM, and
-    /// excludes the worst satellite until the set passes or the exclusion budget
-    /// is exhausted. Returns the surviving solution and the excluded satellites;
-    /// throws an `Error` if the fault is unresolved.
+    /// `request` is the SPP solve request plus RAIM/exclusion options. Omitted
+    /// weights use the solve's pseudorange variances; unit and per-satellite
+    /// modes are also available. The default exclusion budget is one and the
+    /// candidate residual RMS cap is 100 m. The core loop returns the surviving
+    /// solution, exclusions, and its detection result; unresolved faults throw a
+    /// `PositioningError` with the last solution, exclusions, reason, and RAIM
+    /// result.
     #[wasm_bindgen(js_name = fde)]
     pub fn fde(&self, request: JsValue) -> Result<crate::qc::FdeSolution, JsValue> {
         crate::qc::fde(&self.inner, request)
@@ -843,9 +1664,15 @@ impl Sp3 {
 
     /// Serialize to standard SP3 text (the version named by the header, `c` or
     /// `d`). Deterministic: the same product always produces byte-identical text.
+    ///
+    /// Every field is written only when reading its columns back gives the
+    /// value the product holds. Otherwise this throws an `Sp3WriteError` whose
+    /// `detail` names the field, the value and, for a record, the satellite and
+    /// epoch, as an `Sp3WriteErrorDetail`; nothing is rounded, shifted or
+    /// dropped to make the product fit.
     #[wasm_bindgen(js_name = toSp3String)]
-    pub fn to_sp3_string(&self) -> String {
-        self.inner.to_sp3_string()
+    pub fn to_sp3_string(&self) -> Result<String, JsValue> {
+        self.inner.to_sp3_string().map_err(sp3_write_error)
     }
 
     /// Build deterministic precise-interpolant artifact bytes from this SP3 product.
@@ -923,6 +1750,504 @@ impl Sp3 {
             options,
         )
     }
+}
+
+/// Why an SP3 product could not be written, as the `detail` of the thrown
+/// `Sp3WriteError`: a discriminated union on `kind`, each variant carrying only
+/// its own payload and the engine's message.
+///
+/// An engine `u64` or `i64` crosses as an exact decimal string beside a
+/// `number` that is `null` where the integer is not exactly representable as
+/// one. A satellite is its RINEX token (`"G01"`), a time scale its short
+/// identifier (`"GPST"`), and an SP3 time system its three-character label.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind")]
+enum Sp3WriteErrorDetailJs {
+    #[serde(rename = "ACCURACY_NOT_REPRESENTABLE", rename_all = "camelCase")]
+    AccuracyNotRepresentable {
+        satellite: String,
+        epoch_index: usize,
+        component: String,
+        exponent: Option<i16>,
+        message: String,
+    },
+    #[serde(rename = "ACCURACY_RECORD_MISMATCH", rename_all = "camelCase")]
+    AccuracyRecordMismatch {
+        satellite: String,
+        epoch_index: usize,
+        message: String,
+    },
+    #[serde(rename = "ACCURACY_BASIS_MISSING", rename_all = "camelCase")]
+    AccuracyBasisMissing {
+        satellite: String,
+        epoch_index: usize,
+        message: String,
+    },
+    #[serde(rename = "TEXT_NOT_COLUMN_SAFE", rename_all = "camelCase")]
+    TextNotColumnSafe {
+        field: String,
+        value: String,
+        message: String,
+    },
+    #[serde(rename = "TEXT_NOT_COLUMN_STABLE", rename_all = "camelCase")]
+    TextNotColumnStable {
+        field: String,
+        value: String,
+        message: String,
+    },
+    #[serde(rename = "BLANK_DESCRIPTOR", rename_all = "camelCase")]
+    BlankDescriptor {
+        field: String,
+        value: String,
+        message: String,
+    },
+    #[serde(rename = "EMPTY_COMMENT", rename_all = "camelCase")]
+    EmptyComment {
+        index: usize,
+        value: String,
+        message: String,
+    },
+    #[serde(rename = "TEXT_TOO_WIDE", rename_all = "camelCase")]
+    TextTooWide {
+        field: String,
+        columns: usize,
+        value: String,
+        message: String,
+    },
+    #[serde(rename = "INTEGER_TOO_WIDE", rename_all = "camelCase")]
+    IntegerTooWide {
+        field: String,
+        columns: usize,
+        value: String,
+        value_number: Option<f64>,
+        message: String,
+    },
+    #[serde(rename = "NON_FINITE", rename_all = "camelCase")]
+    NonFinite { field: String, message: String },
+    #[serde(rename = "NUMBER_TOO_WIDE", rename_all = "camelCase")]
+    NumberTooWide {
+        field: String,
+        columns: usize,
+        decimals: usize,
+        value: f64,
+        message: String,
+    },
+    #[serde(rename = "PRECISION_NOT_REPRESENTABLE", rename_all = "camelCase")]
+    PrecisionNotRepresentable {
+        field: String,
+        columns: usize,
+        decimals: usize,
+        value: f64,
+        message: String,
+    },
+    #[serde(rename = "YEAR_NOT_REPRESENTABLE", rename_all = "camelCase")]
+    YearNotRepresentable {
+        epoch_index: usize,
+        year: String,
+        year_number: Option<f64>,
+        message: String,
+    },
+    #[serde(rename = "EPOCH_NOT_RESTATABLE", rename_all = "camelCase")]
+    EpochNotRestatable {
+        epoch_index: usize,
+        field_seconds: f64,
+        /// `null` where no candidate record could be read back at all, which
+        /// the engine marks with NaN.
+        residual_s: Option<f64>,
+        message: String,
+    },
+    #[serde(rename = "EPOCH_TIME_SCALE_MISMATCH", rename_all = "camelCase")]
+    EpochTimeScaleMismatch {
+        epoch_index: usize,
+        epoch_scale: String,
+        header_scale: String,
+        message: String,
+    },
+    #[serde(rename = "HEADER_TIME_SCALE_MISMATCH", rename_all = "camelCase")]
+    HeaderTimeScaleMismatch {
+        time_system: String,
+        time_scale: String,
+        message: String,
+    },
+    #[serde(rename = "EPOCH_COUNT_MISMATCH", rename_all = "camelCase")]
+    EpochCountMismatch {
+        declared: String,
+        declared_number: Option<f64>,
+        epochs: usize,
+        message: String,
+    },
+    #[serde(rename = "ACCURACY_CODE_COUNT_MISMATCH", rename_all = "camelCase")]
+    AccuracyCodeCountMismatch {
+        satellites: usize,
+        codes: usize,
+        message: String,
+    },
+    #[serde(rename = "DUPLICATE_SATELLITE", rename_all = "camelCase")]
+    DuplicateSatellite { satellite: String, message: String },
+    /// A header satellite with no `01`..`99` token that reads back as itself.
+    /// The satellite crosses as its system letter and number, since it has no
+    /// token.
+    #[serde(rename = "SATELLITE_NOT_REPRESENTABLE", rename_all = "camelCase")]
+    SatelliteNotRepresentable {
+        system: String,
+        prn: u8,
+        message: String,
+    },
+    #[serde(rename = "EPOCH_ARRAY_LENGTH_MISMATCH", rename_all = "camelCase")]
+    EpochArrayLengthMismatch {
+        field: String,
+        epochs: usize,
+        entries: usize,
+        message: String,
+    },
+    #[serde(rename = "UNDECLARED_SATELLITE_RECORD", rename_all = "camelCase")]
+    UndeclaredSatelliteRecord {
+        satellite: String,
+        epoch_index: usize,
+        message: String,
+    },
+    #[serde(rename = "CONFLICTING_RECORDS", rename_all = "camelCase")]
+    ConflictingRecords {
+        satellite: String,
+        epoch_index: usize,
+        message: String,
+    },
+    #[serde(
+        rename = "VELOCITY_STATE_IN_POSITION_PRODUCT",
+        rename_all = "camelCase"
+    )]
+    VelocityStateInPositionProduct {
+        field: String,
+        satellite: String,
+        epoch_index: usize,
+        message: String,
+    },
+    #[serde(rename = "RECORD_VALUE_NON_FINITE", rename_all = "camelCase")]
+    RecordValueNonFinite {
+        field: String,
+        satellite: String,
+        epoch_index: usize,
+        message: String,
+    },
+    #[serde(rename = "RECORD_VALUE_TOO_WIDE", rename_all = "camelCase")]
+    RecordValueTooWide {
+        field: String,
+        satellite: String,
+        epoch_index: usize,
+        columns: usize,
+        decimals: usize,
+        column_value: f64,
+        message: String,
+    },
+    #[serde(rename = "RECORD_VALUE_NOT_REPRESENTABLE", rename_all = "camelCase")]
+    RecordValueNotRepresentable {
+        field: String,
+        satellite: String,
+        epoch_index: usize,
+        columns: usize,
+        decimals: usize,
+        stored: f64,
+        column_value: f64,
+        message: String,
+    },
+    #[serde(rename = "RECORD_READS_AS_ABSENT", rename_all = "camelCase")]
+    RecordReadsAsAbsent {
+        field: String,
+        satellite: String,
+        epoch_index: usize,
+        column_value: f64,
+        message: String,
+    },
+    #[serde(rename = "RECORD_FIELDS_DISAGREE", rename_all = "camelCase")]
+    RecordFieldsDisagree {
+        field: String,
+        satellite: String,
+        epoch_index: usize,
+        stored: Option<f64>,
+        native: Option<f64>,
+        message: String,
+    },
+    /// A refusal this binding does not yet name, carrying the engine's own
+    /// message in full rather than being folded into a known kind.
+    #[serde(rename = "UNKNOWN", rename_all = "camelCase")]
+    Unknown { message: String },
+}
+
+impl Sp3WriteErrorDetailJs {
+    fn from_core(err: &CoreSp3WriteError) -> Self {
+        let message = err.to_string();
+        match err {
+            CoreSp3WriteError::AccuracyNotRepresentable {
+                sat,
+                epoch_index,
+                component,
+                exponent,
+            } => Self::AccuracyNotRepresentable {
+                satellite: sat.to_string(),
+                epoch_index: *epoch_index,
+                component: (*component).to_string(),
+                exponent: *exponent,
+                message,
+            },
+            CoreSp3WriteError::AccuracyRecordMismatch { sat, epoch_index } => {
+                Self::AccuracyRecordMismatch {
+                    satellite: sat.to_string(),
+                    epoch_index: *epoch_index,
+                    message,
+                }
+            }
+            CoreSp3WriteError::AccuracyBasisMissing { sat, epoch_index } => {
+                Self::AccuracyBasisMissing {
+                    satellite: sat.to_string(),
+                    epoch_index: *epoch_index,
+                    message,
+                }
+            }
+            CoreSp3WriteError::TextNotColumnSafe { field, value } => Self::TextNotColumnSafe {
+                field: (*field).to_string(),
+                value: value.clone(),
+                message,
+            },
+            CoreSp3WriteError::TextNotColumnStable { field, value } => Self::TextNotColumnStable {
+                field: (*field).to_string(),
+                value: value.clone(),
+                message,
+            },
+            CoreSp3WriteError::BlankDescriptor { field, value } => Self::BlankDescriptor {
+                field: (*field).to_string(),
+                value: value.clone(),
+                message,
+            },
+            CoreSp3WriteError::EmptyComment { index, value } => Self::EmptyComment {
+                index: *index,
+                value: value.clone(),
+                message,
+            },
+            CoreSp3WriteError::TextTooWide {
+                field,
+                columns,
+                value,
+            } => Self::TextTooWide {
+                field: (*field).to_string(),
+                columns: *columns,
+                value: value.clone(),
+                message,
+            },
+            CoreSp3WriteError::IntegerTooWide {
+                field,
+                columns,
+                value,
+            } => Self::IntegerTooWide {
+                field: (*field).to_string(),
+                columns: *columns,
+                value: value.to_string(),
+                value_number: safe_integer_number(i128::from(*value)),
+                message,
+            },
+            CoreSp3WriteError::NonFinite { field } => Self::NonFinite {
+                field: (*field).to_string(),
+                message,
+            },
+            CoreSp3WriteError::NumberTooWide {
+                field,
+                columns,
+                decimals,
+                value,
+            } => Self::NumberTooWide {
+                field: (*field).to_string(),
+                columns: *columns,
+                decimals: *decimals,
+                value: *value,
+                message,
+            },
+            CoreSp3WriteError::PrecisionNotRepresentable {
+                field,
+                columns,
+                decimals,
+                value,
+            } => Self::PrecisionNotRepresentable {
+                field: (*field).to_string(),
+                columns: *columns,
+                decimals: *decimals,
+                value: *value,
+                message,
+            },
+            CoreSp3WriteError::YearNotRepresentable { epoch_index, year } => {
+                Self::YearNotRepresentable {
+                    epoch_index: *epoch_index,
+                    year: year.to_string(),
+                    year_number: safe_integer_number(i128::from(*year)),
+                    message,
+                }
+            }
+            CoreSp3WriteError::EpochNotRestatable {
+                epoch_index,
+                field_seconds,
+                residual_s,
+            } => Self::EpochNotRestatable {
+                epoch_index: *epoch_index,
+                field_seconds: *field_seconds,
+                residual_s: (!residual_s.is_nan()).then_some(*residual_s),
+                message,
+            },
+            CoreSp3WriteError::EpochTimeScaleMismatch {
+                epoch_index,
+                epoch_scale,
+                header_scale,
+            } => Self::EpochTimeScaleMismatch {
+                epoch_index: *epoch_index,
+                epoch_scale: epoch_scale.abbrev().to_string(),
+                header_scale: header_scale.abbrev().to_string(),
+                message,
+            },
+            CoreSp3WriteError::HeaderTimeScaleMismatch {
+                time_system,
+                time_scale,
+            } => Self::HeaderTimeScaleMismatch {
+                time_system: time_system.label().to_string(),
+                time_scale: time_scale.abbrev().to_string(),
+                message,
+            },
+            CoreSp3WriteError::EpochCountMismatch { declared, epochs } => {
+                Self::EpochCountMismatch {
+                    declared: declared.to_string(),
+                    declared_number: safe_integer_number(i128::from(*declared)),
+                    epochs: *epochs,
+                    message,
+                }
+            }
+            CoreSp3WriteError::AccuracyCodeCountMismatch { satellites, codes } => {
+                Self::AccuracyCodeCountMismatch {
+                    satellites: *satellites,
+                    codes: *codes,
+                    message,
+                }
+            }
+            CoreSp3WriteError::DuplicateSatellite { sat } => Self::DuplicateSatellite {
+                satellite: sat.to_string(),
+                message,
+            },
+            CoreSp3WriteError::SatelliteNotRepresentable { sat } => {
+                Self::SatelliteNotRepresentable {
+                    system: sat.system.letter().to_string(),
+                    prn: sat.prn,
+                    message,
+                }
+            }
+            CoreSp3WriteError::EpochArrayLengthMismatch {
+                field,
+                epochs,
+                entries,
+            } => Self::EpochArrayLengthMismatch {
+                field: (*field).to_string(),
+                epochs: *epochs,
+                entries: *entries,
+                message,
+            },
+            CoreSp3WriteError::UndeclaredSatelliteRecord { sat, epoch_index } => {
+                Self::UndeclaredSatelliteRecord {
+                    satellite: sat.to_string(),
+                    epoch_index: *epoch_index,
+                    message,
+                }
+            }
+            CoreSp3WriteError::ConflictingRecords { sat, epoch_index } => {
+                Self::ConflictingRecords {
+                    satellite: sat.to_string(),
+                    epoch_index: *epoch_index,
+                    message,
+                }
+            }
+            CoreSp3WriteError::VelocityStateInPositionProduct {
+                field,
+                sat,
+                epoch_index,
+            } => Self::VelocityStateInPositionProduct {
+                field: (*field).to_string(),
+                satellite: sat.to_string(),
+                epoch_index: *epoch_index,
+                message,
+            },
+            CoreSp3WriteError::RecordValueNonFinite {
+                field,
+                sat,
+                epoch_index,
+            } => Self::RecordValueNonFinite {
+                field: (*field).to_string(),
+                satellite: sat.to_string(),
+                epoch_index: *epoch_index,
+                message,
+            },
+            CoreSp3WriteError::RecordValueTooWide {
+                field,
+                sat,
+                epoch_index,
+                columns,
+                decimals,
+                column_value,
+            } => Self::RecordValueTooWide {
+                field: (*field).to_string(),
+                satellite: sat.to_string(),
+                epoch_index: *epoch_index,
+                columns: *columns,
+                decimals: *decimals,
+                column_value: *column_value,
+                message,
+            },
+            CoreSp3WriteError::RecordValueNotRepresentable {
+                field,
+                sat,
+                epoch_index,
+                columns,
+                decimals,
+                stored,
+                column_value,
+            } => Self::RecordValueNotRepresentable {
+                field: (*field).to_string(),
+                satellite: sat.to_string(),
+                epoch_index: *epoch_index,
+                columns: *columns,
+                decimals: *decimals,
+                stored: *stored,
+                column_value: *column_value,
+                message,
+            },
+            CoreSp3WriteError::RecordReadsAsAbsent {
+                field,
+                sat,
+                epoch_index,
+                column_value,
+            } => Self::RecordReadsAsAbsent {
+                field: (*field).to_string(),
+                satellite: sat.to_string(),
+                epoch_index: *epoch_index,
+                column_value: *column_value,
+                message,
+            },
+            CoreSp3WriteError::RecordFieldsDisagree {
+                field,
+                sat,
+                epoch_index,
+                stored,
+                native,
+            } => Self::RecordFieldsDisagree {
+                field: (*field).to_string(),
+                satellite: sat.to_string(),
+                epoch_index: *epoch_index,
+                stored: *stored,
+                native: *native,
+                message,
+            },
+            // `Sp3WriteError` is `#[non_exhaustive]`: a variant added later
+            // reaches here and keeps its full message.
+            _ => Self::Unknown { message },
+        }
+    }
+}
+
+fn sp3_write_error(err: CoreSp3WriteError) -> JsValue {
+    let detail = Sp3WriteErrorDetailJs::from_core(&err);
+    error_with_detail("Sp3WriteError", &err.to_string(), &detail)
 }
 
 /// Parse an SP3-c or SP3-d byte buffer (the full, already-decompressed file)
@@ -1068,15 +2393,75 @@ impl PreciseInterpolantArtifact {
             .inner
             .position_at_j2000_seconds(sat, j2000_seconds)
             .map_err(engine_error)?;
-        Ok(Sp3State {
-            position: state.position.as_array().to_vec(),
-            clock_s: state.clock_s,
-            velocity: state.velocity.map(|v| v.as_array().to_vec()),
-            clock_event: state.flags.clock_event,
-            clock_predicted: state.flags.clock_predicted,
-            maneuver: state.flags.maneuver,
-            orbit_predicted: state.flags.orbit_predicted,
-        })
+        Ok(sp3_state_from_core(state))
+    }
+
+    #[wasm_bindgen(js_name = evaluateExact)]
+    pub fn evaluate_exact(
+        &self,
+        satellite: &str,
+        query: &ExactEpochQueryValue,
+    ) -> Result<Sp3State, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        self.inner
+            .position_at_epoch_query(satellite, &query.core())
+            .map(sp3_state_from_core)
+            .map_err(engine_error)
+    }
+
+    #[wasm_bindgen(js_name = ephemerisVarianceAtExactQuery)]
+    pub fn ephemeris_variance_at_exact_query(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<f64, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        Ok(precise_variance_at_queries(
+            &self.inner,
+            satellite,
+            state_epoch,
+            selection_epoch,
+        ))
+    }
+
+    #[wasm_bindgen(js_name = selectedPositionClockAtExactQueries, unchecked_return_type = "Ut1Validated<SelectedPositionClock> | null")]
+    pub fn selected_position_clock_at_exact_queries(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        selected_position_clock_at_queries(&self.inner, satellite, state_epoch, selection_epoch)
+    }
+
+    #[wasm_bindgen(js_name = transmitEpochClockAtExactQueries, unchecked_return_type = "Ut1Validated<number> | null")]
+    pub fn transmit_epoch_clock_at_exact_queries(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        transmit_epoch_clock_at_queries(&self.inner, satellite, state_epoch, selection_epoch)
+    }
+
+    #[wasm_bindgen(
+        js_name = clockRelativityAtExactQuery,
+        unchecked_return_type = "ClockRelativity"
+    )]
+    pub fn clock_relativity_at_exact_query(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        position_ecef_m: Vec<f64>,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = parse_sat(satellite)?;
+        let position_ecef_m: [f64; 3] = position_ecef_m
+            .try_into()
+            .map_err(|_| type_error("positionEcefM must contain exactly three coordinates"))?;
+        precise_clock_relativity_at_query(&self.inner, satellite, state_epoch, position_ecef_m)
     }
 }
 
@@ -1208,7 +2593,9 @@ impl Sp3State {
     }
 }
 
-/// One continuity defect, as returned by [`Sp3.checkContinuity`].
+/// One continuity defect, as returned by [`Sp3.checkContinuity`]: the
+/// summary fields every kind fills where it has them, and every field of its
+/// kind under the engine's name.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ContinuityDefectJs {
@@ -1218,59 +2605,196 @@ struct ContinuityDefectJs {
     to_j2000_s: Option<f64>,
     magnitude: Option<f64>,
     bound: Option<f64>,
+    epoch_j2000_s: Option<f64>,
+    sample_index: Option<usize>,
+    reason: Option<String>,
+    occurrences: Option<usize>,
+    interval_s: Option<f64>,
+    displacement_m: Option<f64>,
+    implied_speed_m_s: Option<f64>,
+    bound_m_s: Option<f64>,
+    preceding_j2000_s: Option<f64>,
+    residual_m: Option<f64>,
+    tolerance_m: Option<f64>,
+    node_epochs_j2000_s: Option<Vec<f64>>,
+}
+
+#[cfg(test)]
+mod continuity_defect_tests {
+    use super::*;
+
+    #[test]
+    fn unusable_sample_detail_preserves_index_and_reason() {
+        let satellite = "G01".parse().expect("satellite");
+        let defect = ContinuityDefect::UnusableSample {
+            sat: satellite,
+            sample_index: 7,
+            epoch_j2000_s: None,
+            reason: UnusableSampleReason::EpochNotPlaced,
+        };
+        let output = ContinuityDefectJs::from(&defect);
+        assert_eq!(output.kind, "unusable_sample");
+        assert_eq!(output.sample_index, Some(7));
+        assert_eq!(output.epoch_j2000_s, None);
+        assert_eq!(output.reason.as_deref(), Some("epochNotPlaced"));
+    }
 }
 
 impl From<&ContinuityDefect> for ContinuityDefectJs {
     fn from(defect: &ContinuityDefect) -> Self {
-        let (kind, from_s, to_s, magnitude, bound) = match defect {
+        let mut out = Self {
+            kind: String::new(),
+            satellite: defect.satellite().to_string(),
+            from_j2000_s: None,
+            to_j2000_s: None,
+            magnitude: None,
+            bound: None,
+            epoch_j2000_s: None,
+            sample_index: None,
+            reason: None,
+            occurrences: None,
+            interval_s: None,
+            displacement_m: None,
+            implied_speed_m_s: None,
+            bound_m_s: None,
+            preceding_j2000_s: None,
+            residual_m: None,
+            tolerance_m: None,
+            node_epochs_j2000_s: None,
+        };
+        match defect {
             ContinuityDefect::DuplicateEpoch {
                 epoch_j2000_s,
                 occurrences,
                 ..
-            } => (
-                "duplicate_epoch",
-                Some(*epoch_j2000_s),
-                Some(*epoch_j2000_s),
-                Some(*occurrences as f64),
-                None,
-            ),
+            } => {
+                out.kind = "duplicate_epoch".to_string();
+                out.from_j2000_s = Some(*epoch_j2000_s);
+                out.to_j2000_s = Some(*epoch_j2000_s);
+                out.magnitude = Some(*occurrences as f64);
+                out.epoch_j2000_s = Some(*epoch_j2000_s);
+                out.occurrences = Some(*occurrences);
+            }
             ContinuityDefect::SingleSampleSeries { .. } => {
-                ("single_sample_series", None, None, None, None)
+                out.kind = "single_sample_series".to_string();
+            }
+            ContinuityDefect::UnusableSample {
+                sample_index,
+                epoch_j2000_s,
+                reason,
+                ..
+            } => {
+                out.kind = "unusable_sample".to_string();
+                out.from_j2000_s = *epoch_j2000_s;
+                out.to_j2000_s = *epoch_j2000_s;
+                out.epoch_j2000_s = *epoch_j2000_s;
+                out.sample_index = Some(*sample_index);
+                out.reason = Some(match reason {
+                    UnusableSampleReason::EpochNotPlaced => "epochNotPlaced".to_string(),
+                    UnusableSampleReason::NonFinitePosition => "nonFinitePosition".to_string(),
+                    _ => "unknown".to_string(),
+                });
             }
             ContinuityDefect::SpeedBound {
                 from_j2000_s,
                 to_j2000_s,
+                interval_s,
+                displacement_m,
                 implied_speed_m_s,
                 bound_m_s,
                 ..
-            } => (
-                "speed_bound",
-                Some(*from_j2000_s),
-                Some(*to_j2000_s),
-                Some(*implied_speed_m_s),
-                Some(*bound_m_s),
-            ),
+            } => {
+                out.kind = "speed_bound".to_string();
+                out.from_j2000_s = Some(*from_j2000_s);
+                out.to_j2000_s = Some(*to_j2000_s);
+                out.magnitude = Some(*implied_speed_m_s);
+                out.bound = Some(*bound_m_s);
+                out.interval_s = Some(*interval_s);
+                out.displacement_m = Some(*displacement_m);
+                out.implied_speed_m_s = Some(*implied_speed_m_s);
+                out.bound_m_s = Some(*bound_m_s);
+            }
             ContinuityDefect::HoldOutResidual {
                 preceding_j2000_s,
                 epoch_j2000_s,
                 residual_m,
                 tolerance_m,
+                node_epochs_j2000_s,
                 ..
-            } => (
-                "hold_out_residual",
-                Some(*preceding_j2000_s),
-                Some(*epoch_j2000_s),
-                Some(*residual_m),
-                Some(*tolerance_m),
-            ),
-        };
+            } => {
+                out.kind = "hold_out_residual".to_string();
+                out.from_j2000_s = Some(*preceding_j2000_s);
+                out.to_j2000_s = Some(*epoch_j2000_s);
+                out.magnitude = Some(*residual_m);
+                out.bound = Some(*tolerance_m);
+                out.epoch_j2000_s = Some(*epoch_j2000_s);
+                out.preceding_j2000_s = Some(*preceding_j2000_s);
+                out.residual_m = Some(*residual_m);
+                out.tolerance_m = Some(*tolerance_m);
+                out.node_epochs_j2000_s = Some(node_epochs_j2000_s.clone());
+            }
+        }
+        out
+    }
+}
+
+/// How the merge arrived at the value it wrote for one channel of one cell.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum CellSelectionJs {
+    SingleSource {
+        source: usize,
+    },
+    Precedence {
+        source: usize,
+        members: Vec<usize>,
+    },
+    Combined {
+        rule: &'static str,
+        members: Vec<usize>,
+    },
+}
+
+impl From<&CellSelection> for CellSelectionJs {
+    fn from(selection: &CellSelection) -> Self {
+        match selection {
+            CellSelection::SingleSource { source } => Self::SingleSource { source: *source },
+            CellSelection::Precedence { source, members } => Self::Precedence {
+                source: *source,
+                members: members.clone(),
+            },
+            CellSelection::Combined { rule, members } => Self::Combined {
+                rule: match rule {
+                    MergeCombine::Mean => "mean",
+                    MergeCombine::Median => "median",
+                    MergeCombine::Precedence => "precedence",
+                },
+                members: members.clone(),
+            },
+        }
+    }
+}
+
+/// One merged cell a continuity finding rests on.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MergeContinuityCellJs {
+    epoch_j2000_s: f64,
+    role: &'static str,
+    selection: Option<CellSelectionJs>,
+}
+
+impl From<&MergeContinuityCell> for MergeContinuityCellJs {
+    fn from(cell: &MergeContinuityCell) -> Self {
         Self {
-            kind: kind.to_string(),
-            satellite: defect.satellite().to_string(),
-            from_j2000_s: from_s,
-            to_j2000_s: to_s,
-            magnitude,
-            bound,
+            epoch_j2000_s: cell.epoch_j2000_s,
+            role: match cell.role {
+                MergeContinuityCellRole::HeldOut => "held_out",
+                MergeContinuityCellRole::InterpolationNode => "interpolation_node",
+                MergeContinuityCellRole::PairEnd => "pair_end",
+                MergeContinuityCellRole::RepeatedEpoch => "repeated_epoch",
+            },
+            selection: cell.selection.as_ref().map(CellSelectionJs::from),
         }
     }
 }
@@ -1281,6 +2805,8 @@ struct MergeContinuityViolationJs {
     defect: ContinuityDefectJs,
     from_sources: Vec<usize>,
     to_sources: Vec<usize>,
+    cells: Vec<MergeContinuityCellJs>,
+    sources: Vec<usize>,
     crosses_contributors: bool,
 }
 
@@ -1290,9 +2816,55 @@ impl From<&MergeContinuityViolation> for MergeContinuityViolationJs {
             defect: (&violation.defect).into(),
             from_sources: violation.from_sources.clone(),
             to_sources: violation.to_sources.clone(),
+            cells: violation
+                .cells
+                .iter()
+                .map(MergeContinuityCellJs::from)
+                .collect(),
+            sources: violation.sources.clone(),
             crosses_contributors: violation.crosses_contributors,
         }
     }
+}
+
+/// Continuity verification of a merged product, as a merge post-condition.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MergeContinuityReportJs {
+    attested: bool,
+    defects: Vec<ContinuityDefectJs>,
+    pairs_checked: usize,
+    residuals_checked: usize,
+    residuals_skipped: usize,
+    violations: Vec<MergeContinuityViolationJs>,
+    splices: Vec<MergeContinuityViolationJs>,
+}
+
+pub(crate) fn merge_continuity_report_to_js(
+    report: &MergeContinuityReport,
+) -> Result<JsValue, JsValue> {
+    let out = MergeContinuityReportJs {
+        attested: report.attested(),
+        defects: report
+            .report
+            .defects
+            .iter()
+            .map(ContinuityDefectJs::from)
+            .collect(),
+        pairs_checked: report.report.pairs_checked,
+        residuals_checked: report.report.residuals_checked,
+        residuals_skipped: report.report.residuals_skipped,
+        violations: report
+            .violations
+            .iter()
+            .map(MergeContinuityViolationJs::from)
+            .collect(),
+        splices: report
+            .splices()
+            .map(MergeContinuityViolationJs::from)
+            .collect(),
+    };
+    serde_wasm_bindgen::to_value(&out).map_err(|error| engine_error(error.to_string()))
 }
 
 #[derive(Serialize)]
@@ -1355,4 +2927,865 @@ struct ContinuityReportJs {
     pairs_checked: usize,
     residuals_checked: usize,
     residuals_skipped: usize,
+}
+
+// Typed error details. `wasm-pack` writes these into both `sidereon.d.ts`
+// targets; `types/sidereon-extra.d.ts` re-exports them.
+#[wasm_bindgen(typescript_custom_section)]
+const TS_SP3_WRITE_DEFINITIONS: &str = r#"
+export type Sp3PreciseEphemerisAccuracySample = {
+  sat: string;
+  epoch: number;
+  instant: Sp3SampleInstant;
+  positionVarianceM2: [Sp3AccuracyValue, Sp3AccuracyValue, Sp3AccuracyValue];
+  clockVarianceM2: Sp3AccuracyValue;
+};
+
+export interface Sp3PreciseEphemerisSample {
+  sat: string;
+  epoch: number;
+  instant?: Sp3SampleInstant;
+  positionEcefM: [number, number, number];
+  clockS: number | null;
+  clockEvent: boolean;
+}
+
+export type Sp3SampleInstant = {
+  scale: "UTC" | "TAI" | "TT" | "TCG" | "TDB" | "TCB" | "GPST" | "GST" | "BDT" | "GLONASST" | "QZSST";
+  representation:
+    | { kind: "julianDate"; jdWhole: number; fraction: number }
+    | { kind: "nanos"; nanos: string };
+};
+
+export interface PreciseSamplesErrorDetail {
+  kind:
+    | "EMPTY"
+    | "SINGLE_SAMPLE_SATELLITE"
+    | "NON_MONOTONIC_EPOCHS"
+    | "MIXED_TIME_SCALES"
+    | "EPOCH_NOT_REPRESENTABLE"
+    | "NON_FINITE_SAMPLE"
+    | "ACCURACY_SAMPLES_MISMATCH"
+    | "INVALID_ACCURACY_VALUE"
+    | "UNKNOWN";
+  satellite: string | null;
+  message: string;
+}
+
+export interface PreciseInterpolantArtifactErrorDetail {
+  name: string;
+  message: string;
+  path?: string;
+  reason?: string;
+  version?: number;
+  tag?: number;
+  satelliteId?: string;
+  expected?: string;
+  found?: string;
+  claimed?: string;
+  declared?: string;
+  available?: string;
+  region?: string;
+  offset?: string;
+  len?: string;
+}
+
+export type ClockRelativity =
+  | { kind: "notApplicable" }
+  | { kind: "term"; seconds: number }
+  | { kind: "unavailable" };
+
+export interface Ut1Validated<T> { value: T; ut1Degraded: "beforeCoverage" | "afterCoverage" | null; }
+export interface SelectedPositionClock { positionEcefM: [number, number, number]; clockS: number; groupDelayS: number | null; }
+
+export type Sp3AccuracyValue =
+  | { kind: "known"; value: number }
+  | { kind: "unknown" }
+  | { kind: "tooLarge" }
+  | { kind: "invalidBase" }
+  | { kind: "overflow" };
+
+export interface Sp3AccuracyCodeGroup {
+  axisExponents: [number | null, number | null, number | null];
+  clockExponent: number | null;
+  positionVelocityBase: number | null;
+  clockRateBase: number | null;
+}
+
+export interface Sp3RawRecordAccuracy {
+  p: Sp3AccuracyCodeGroup | null;
+  v: Sp3AccuracyCodeGroup | null;
+}
+
+export interface Sp3PositionClockAccuracy {
+  positionSigmaM: [Sp3AccuracyValue, Sp3AccuracyValue, Sp3AccuracyValue];
+  clockSigmaM: Sp3AccuracyValue;
+  positionVarianceM2: [Sp3AccuracyValue, Sp3AccuracyValue, Sp3AccuracyValue];
+  clockVarianceM2: Sp3AccuracyValue;
+}
+
+export interface Sp3VelocityAccuracy {
+  velocitySigmaMS: [Sp3AccuracyValue, Sp3AccuracyValue, Sp3AccuracyValue];
+  clockRateSigmaMS: Sp3AccuracyValue;
+  velocityVarianceM2S2: [Sp3AccuracyValue, Sp3AccuracyValue, Sp3AccuracyValue];
+  clockRateVarianceM2S2: Sp3AccuracyValue;
+}
+
+export interface Sp3RecordAccuracy {
+  p: Sp3PositionClockAccuracy | null;
+  v: Sp3VelocityAccuracy | null;
+}
+
+export type ExactSp3ValidationErrorDetail =
+  | { kind: "parse"; value: string; debug: string }
+  | { kind: "catalog"; value: string; debug: string }
+  | { kind: "wrong_product_family"; actual: string }
+  | { kind: "invalid_issue"; issue: string }
+  | { kind: "unsupported_span_token"; token: string }
+  | { kind: "unsupported_sample_token"; token: string }
+  | { kind: "non_canonical_span_token"; token: string; canonical: string }
+  | { kind: "non_canonical_sample_token"; token: string; canonical: string }
+  | { kind: "invalid_expected_agency"; agency: string }
+  | { kind: "agency_mismatch"; expected: string; actual: string }
+  | { kind: "missing_eof" }
+  | { kind: "malformed_eof_record"; lineNumber: string; recordLength: string }
+  | { kind: "trailing_content_after_eof" }
+  | { kind: "mandatory_header_record_count"; record: string; expected: string; actual: string }
+  | { kind: "missing_declared_satellite_count" }
+  | { kind: "declared_satellite_count_mismatch"; declared: string; tokens: string }
+  | { kind: "duplicate_declared_satellite"; token: string; firstIndex: string; duplicateIndex: string }
+  | { kind: "no_declared_satellites" }
+  | {
+      kind: "satellite_record_sequence_mismatch";
+      record: string;
+      epochIndex: string;
+      expected: string[];
+      actual: string[];
+    }
+  | { kind: "body_record_interleaving_mismatch"; epochIndex: string; expected: string[]; actual: string[] }
+  | { kind: "non_finite_header_cadence" }
+  | { kind: "non_positive_header_cadence"; actualS: string }
+  | { kind: "unsupported_header_cadence"; actualS: string }
+  | { kind: "cadence_mismatch"; requestedS: string; headerS: string }
+  | { kind: "declared_epoch_count_mismatch"; declared: string; parsed: string }
+  | { kind: "missing_declared_start" }
+  | {
+      kind: "declared_start_mismatch";
+      requestedJ2000S: number;
+      declaredJ2000S: number;
+      requestedTick: string;
+      declaredTick: string | null;
+    }
+  | { kind: "request_before_gps_epoch" }
+  | { kind: "non_finite_header_start_metadata"; field: string }
+  | { kind: "invalid_header_start_metadata"; field: string; actual: string }
+  | { kind: "header_start_metadata_mismatch"; field: string; requested: string; actual: string }
+  | { kind: "empty_epoch_grid" }
+  | { kind: "first_epoch_mismatch"; requestedJ2000S: string; actualJ2000S: string }
+  | { kind: "irregular_epoch_grid"; epochIndex: string; requestedS: string; actualS: string }
+  | { kind: "span_not_multiple_of_cadence"; spanS: string; cadenceS: string }
+  | { kind: "span_mismatch"; parsed: string; halfOpen: string; inclusive: string }
+  | { kind: "format_version_mismatch"; requested: string; actual: string }
+  | { kind: "unknown"; value: string; debug: string };
+
+export type Sp3WriteErrorDetail =
+  | { kind: "ACCURACY_NOT_REPRESENTABLE"; satellite: string; epochIndex: number; component: string; exponent: number | null; message: string }
+  | { kind: "ACCURACY_RECORD_MISMATCH"; satellite: string; epochIndex: number; message: string }
+  | { kind: "ACCURACY_BASIS_MISSING"; satellite: string; epochIndex: number; message: string }
+  | { kind: "TEXT_NOT_COLUMN_SAFE"; field: string; value: string; message: string }
+  | { kind: "TEXT_NOT_COLUMN_STABLE"; field: string; value: string; message: string }
+  | { kind: "BLANK_DESCRIPTOR"; field: string; value: string; message: string }
+  | { kind: "EMPTY_COMMENT"; index: number; value: string; message: string }
+  | { kind: "TEXT_TOO_WIDE"; field: string; columns: number; value: string; message: string }
+  | {
+      kind: "INTEGER_TOO_WIDE";
+      field: string;
+      columns: number;
+      value: string;
+      valueNumber: number | null;
+      message: string;
+    }
+  | { kind: "NON_FINITE"; field: string; message: string }
+  | {
+      kind: "NUMBER_TOO_WIDE";
+      field: string;
+      columns: number;
+      decimals: number;
+      value: number;
+      message: string;
+    }
+  | {
+      kind: "PRECISION_NOT_REPRESENTABLE";
+      field: string;
+      columns: number;
+      decimals: number;
+      value: number;
+      message: string;
+    }
+  | {
+      kind: "YEAR_NOT_REPRESENTABLE";
+      epochIndex: number;
+      year: string;
+      yearNumber: number | null;
+      message: string;
+    }
+  | {
+      kind: "EPOCH_NOT_RESTATABLE";
+      epochIndex: number;
+      fieldSeconds: number;
+      residualS: number | null;
+      message: string;
+    }
+  | {
+      kind: "EPOCH_TIME_SCALE_MISMATCH";
+      epochIndex: number;
+      epochScale: string;
+      headerScale: string;
+      message: string;
+    }
+  | { kind: "HEADER_TIME_SCALE_MISMATCH"; timeSystem: string; timeScale: string; message: string }
+  | {
+      kind: "EPOCH_COUNT_MISMATCH";
+      declared: string;
+      declaredNumber: number | null;
+      epochs: number;
+      message: string;
+    }
+  | { kind: "ACCURACY_CODE_COUNT_MISMATCH"; satellites: number; codes: number; message: string }
+  | { kind: "DUPLICATE_SATELLITE"; satellite: string; message: string }
+  | { kind: "SATELLITE_NOT_REPRESENTABLE"; system: string; prn: number; message: string }
+  | {
+      kind: "EPOCH_ARRAY_LENGTH_MISMATCH";
+      field: string;
+      epochs: number;
+      entries: number;
+      message: string;
+    }
+  | { kind: "UNDECLARED_SATELLITE_RECORD"; satellite: string; epochIndex: number; message: string }
+  | { kind: "CONFLICTING_RECORDS"; satellite: string; epochIndex: number; message: string }
+  | {
+      kind: "VELOCITY_STATE_IN_POSITION_PRODUCT";
+      field: string;
+      satellite: string;
+      epochIndex: number;
+      message: string;
+    }
+  | {
+      kind: "RECORD_VALUE_NON_FINITE";
+      field: string;
+      satellite: string;
+      epochIndex: number;
+      message: string;
+    }
+  | {
+      kind: "RECORD_VALUE_TOO_WIDE";
+      field: string;
+      satellite: string;
+      epochIndex: number;
+      columns: number;
+      decimals: number;
+      columnValue: number;
+      message: string;
+    }
+  | {
+      kind: "RECORD_VALUE_NOT_REPRESENTABLE";
+      field: string;
+      satellite: string;
+      epochIndex: number;
+      columns: number;
+      decimals: number;
+      stored: number;
+      columnValue: number;
+      message: string;
+    }
+  | {
+      kind: "RECORD_READS_AS_ABSENT";
+      field: string;
+      satellite: string;
+      epochIndex: number;
+      columnValue: number;
+      message: string;
+    }
+  | {
+      kind: "RECORD_FIELDS_DISAGREE";
+      field: string;
+      satellite: string;
+      epochIndex: number;
+      stored: number | null;
+      native: number | null;
+      message: string;
+    }
+  | { kind: "UNKNOWN"; message: string };
+"#;
+
+#[cfg(test)]
+mod exact_sp3_validation_detail_mapping_tests {
+    use super::*;
+    use sidereon_core::data::{DataCatalogError, ProductType};
+
+    #[test]
+    fn every_current_variant_keeps_its_exact_public_payload() {
+        use ExactSp3ValidationError as E;
+
+        let parse_value = sidereon_core::Error::Parse("bad bytes".into());
+        let parse_text = parse_value.to_string();
+        let parse_debug = format!("{parse_value:?}");
+        let catalog_value = DataCatalogError::UnknownCenter("bad".into());
+        let catalog_text = catalog_value.to_string();
+        let catalog_debug = format!("{catalog_value:?}");
+        let cases = vec![
+            (
+                E::Parse(parse_value),
+                serde_json::json!({"kind":"parse","value":parse_text,"debug":parse_debug}),
+            ),
+            (
+                E::Catalog(catalog_value),
+                serde_json::json!({"kind":"catalog","value":catalog_text,"debug":catalog_debug}),
+            ),
+            (
+                E::WrongProductFamily {
+                    actual: ProductType::Clk,
+                },
+                serde_json::json!({"kind":"wrong_product_family","actual":"clk"}),
+            ),
+            (
+                E::InvalidIssue {
+                    issue: "2460".into(),
+                },
+                serde_json::json!({"kind":"invalid_issue","issue":"2460"}),
+            ),
+            (
+                E::UnsupportedSpanToken { token: "3D".into() },
+                serde_json::json!({"kind":"unsupported_span_token","token":"3D"}),
+            ),
+            (
+                E::UnsupportedSampleToken { token: "7S".into() },
+                serde_json::json!({"kind":"unsupported_sample_token","token":"7S"}),
+            ),
+            (
+                E::NonCanonicalSpanToken {
+                    token: "24H".into(),
+                    canonical: "1D".into(),
+                },
+                serde_json::json!({"kind":"non_canonical_span_token","token":"24H","canonical":"1D"}),
+            ),
+            (
+                E::NonCanonicalSampleToken {
+                    token: "60S".into(),
+                    canonical: "1M".into(),
+                },
+                serde_json::json!({"kind":"non_canonical_sample_token","token":"60S","canonical":"1M"}),
+            ),
+            (
+                E::InvalidExpectedAgency {
+                    agency: "bad!".into(),
+                },
+                serde_json::json!({"kind":"invalid_expected_agency","agency":"bad!"}),
+            ),
+            (
+                E::AgencyMismatch {
+                    expected: "COD".into(),
+                    actual: "GFZ".into(),
+                },
+                serde_json::json!({"kind":"agency_mismatch","expected":"COD","actual":"GFZ"}),
+            ),
+            (E::MissingEof, serde_json::json!({"kind":"missing_eof"})),
+            (
+                E::MalformedEofRecord {
+                    line_number: usize::MAX,
+                    record_length: 2048,
+                },
+                serde_json::json!({"kind":"malformed_eof_record","lineNumber":usize::MAX.to_string(),"recordLength":"2048"}),
+            ),
+            (
+                E::TrailingContentAfterEof,
+                serde_json::json!({"kind":"trailing_content_after_eof"}),
+            ),
+            (
+                E::MandatoryHeaderRecordCount {
+                    record: "%i",
+                    expected: 2,
+                    actual: 1,
+                },
+                serde_json::json!({"kind":"mandatory_header_record_count","record":"%i","expected":"2","actual":"1"}),
+            ),
+            (
+                E::MissingDeclaredSatelliteCount,
+                serde_json::json!({"kind":"missing_declared_satellite_count"}),
+            ),
+            (
+                E::DeclaredSatelliteCountMismatch {
+                    declared: usize::MAX,
+                    tokens: 3,
+                },
+                serde_json::json!({"kind":"declared_satellite_count_mismatch","declared":usize::MAX.to_string(),"tokens":"3"}),
+            ),
+            (
+                E::DuplicateDeclaredSatellite {
+                    token: "G01".into(),
+                    first_index: 0,
+                    duplicate_index: usize::MAX,
+                },
+                serde_json::json!({"kind":"duplicate_declared_satellite","token":"G01","firstIndex":"0","duplicateIndex":usize::MAX.to_string()}),
+            ),
+            (
+                E::NoDeclaredSatellites,
+                serde_json::json!({"kind":"no_declared_satellites"}),
+            ),
+            (
+                E::SatelliteRecordSequenceMismatch {
+                    record: "P",
+                    epoch_index: 4,
+                    expected: vec!["G01".into()],
+                    actual: vec!["G02".into()],
+                },
+                serde_json::json!({"kind":"satellite_record_sequence_mismatch","record":"P","epochIndex":"4","expected":["G01"],"actual":["G02"]}),
+            ),
+            (
+                E::BodyRecordInterleavingMismatch {
+                    epoch_index: 5,
+                    expected: vec!["PG01".into(), "VG01".into()],
+                    actual: vec!["VG01".into(), "PG01".into()],
+                },
+                serde_json::json!({"kind":"body_record_interleaving_mismatch","epochIndex":"5","expected":["PG01","VG01"],"actual":["VG01","PG01"]}),
+            ),
+            (
+                E::NonFiniteHeaderCadence,
+                serde_json::json!({"kind":"non_finite_header_cadence"}),
+            ),
+            (
+                E::NonPositiveHeaderCadence {
+                    actual_s: f64::NEG_INFINITY,
+                },
+                serde_json::json!({"kind":"non_positive_header_cadence","actualS":"-inf"}),
+            ),
+            (
+                E::UnsupportedHeaderCadence { actual_s: 100000.0 },
+                serde_json::json!({"kind":"unsupported_header_cadence","actualS":"100000"}),
+            ),
+            (
+                E::CadenceMismatch {
+                    requested_s: 300.0,
+                    header_s: 600.0,
+                },
+                serde_json::json!({"kind":"cadence_mismatch","requestedS":"300","headerS":"600"}),
+            ),
+            (
+                E::DeclaredEpochCountMismatch {
+                    declared: u64::MAX,
+                    parsed: usize::MAX,
+                },
+                serde_json::json!({"kind":"declared_epoch_count_mismatch","declared":u64::MAX.to_string(),"parsed":usize::MAX.to_string()}),
+            ),
+            (
+                E::MissingDeclaredStart,
+                serde_json::json!({"kind":"missing_declared_start"}),
+            ),
+            (
+                E::DeclaredStartMismatch {
+                    requested_j2000_s: 1.25,
+                    declared_j2000_s: 1.5,
+                    requested_tick: i128::MAX,
+                    declared_tick: Some(i128::MIN),
+                },
+                serde_json::json!({"kind":"declared_start_mismatch","requestedJ2000S":1.25,"declaredJ2000S":1.5,"requestedTick":i128::MAX.to_string(),"declaredTick":i128::MIN.to_string()}),
+            ),
+            (
+                E::RequestBeforeGpsEpoch,
+                serde_json::json!({"kind":"request_before_gps_epoch"}),
+            ),
+            (
+                E::NonFiniteHeaderStartMetadata { field: "mjd" },
+                serde_json::json!({"kind":"non_finite_header_start_metadata","field":"mjd"}),
+            ),
+            (
+                E::InvalidHeaderStartMetadata {
+                    field: "seconds_of_week",
+                    actual: f64::INFINITY,
+                },
+                serde_json::json!({"kind":"invalid_header_start_metadata","field":"seconds_of_week","actual":"inf"}),
+            ),
+            (
+                E::HeaderStartMetadataMismatch {
+                    field: "mjd",
+                    requested: 60000.0,
+                    actual: 60001.0,
+                },
+                serde_json::json!({"kind":"header_start_metadata_mismatch","field":"mjd","requested":"60000","actual":"60001"}),
+            ),
+            (
+                E::EmptyEpochGrid,
+                serde_json::json!({"kind":"empty_epoch_grid"}),
+            ),
+            (
+                E::FirstEpochMismatch {
+                    requested_j2000_s: 1.0,
+                    actual_j2000_s: 2.0,
+                },
+                serde_json::json!({"kind":"first_epoch_mismatch","requestedJ2000S":"1","actualJ2000S":"2"}),
+            ),
+            (
+                E::IrregularEpochGrid {
+                    epoch_index: usize::MAX,
+                    requested_s: 300.0,
+                    actual_s: 299.99999999,
+                },
+                serde_json::json!({"kind":"irregular_epoch_grid","epochIndex":usize::MAX.to_string(),"requestedS":"300","actualS":"299.99999999"}),
+            ),
+            (
+                E::SpanNotMultipleOfCadence {
+                    span_s: u64::MAX,
+                    cadence_s: 300,
+                },
+                serde_json::json!({"kind":"span_not_multiple_of_cadence","spanS":u64::MAX.to_string(),"cadenceS":"300"}),
+            ),
+            (
+                E::SpanMismatch {
+                    parsed: 20,
+                    half_open: 21,
+                    inclusive: 22,
+                },
+                serde_json::json!({"kind":"span_mismatch","parsed":"20","halfOpen":"21","inclusive":"22"}),
+            ),
+            (
+                E::FormatVersionMismatch {
+                    requested: "d".into(),
+                    actual: "c".into(),
+                },
+                serde_json::json!({"kind":"format_version_mismatch","requested":"d","actual":"c"}),
+            ),
+        ];
+
+        assert_eq!(cases.len(), 37);
+        let mut kinds = std::collections::BTreeSet::new();
+        for (error, expected) in cases {
+            let actual = exact_sp3_validation_error_detail(&error);
+            assert_eq!(actual, expected, "{error:?}");
+            kinds.insert(actual["kind"].as_str().expect("kind string").to_owned());
+        }
+        assert_eq!(kinds.len(), 37);
+    }
+}
+
+#[cfg(test)]
+mod sp3_writer_detail_mapping_tests {
+    use super::*;
+
+    fn assert_complete_mapping(error: CoreSp3WriteError, mut expected: serde_json::Value) {
+        expected
+            .as_object_mut()
+            .expect("expected mapping is an object")
+            .insert("message".to_string(), serde_json::json!(error.to_string()));
+        assert_eq!(
+            serde_json::to_value(Sp3WriteErrorDetailJs::from_core(&error)).unwrap(),
+            expected,
+            "mapping for {error:?}"
+        );
+    }
+
+    #[test]
+    fn current_epoch_and_accuracy_variants_keep_typed_payloads() {
+        let satellite = "G07".parse().expect("valid test satellite");
+        for (error, expected) in [
+            (
+                CoreSp3WriteError::AccuracyNotRepresentable {
+                    sat: satellite,
+                    epoch_index: 5,
+                    component: "position",
+                    exponent: Some(12),
+                },
+                serde_json::json!({"kind":"ACCURACY_NOT_REPRESENTABLE","satellite":"G07","epochIndex":5,"component":"position","exponent":12,"message":CoreSp3WriteError::AccuracyNotRepresentable { sat: satellite, epoch_index: 5, component: "position", exponent: Some(12) }.to_string()}),
+            ),
+            (
+                CoreSp3WriteError::AccuracyNotRepresentable {
+                    sat: satellite,
+                    epoch_index: 9,
+                    component: "clock",
+                    exponent: None,
+                },
+                serde_json::json!({"kind":"ACCURACY_NOT_REPRESENTABLE","satellite":"G07","epochIndex":9,"component":"clock","exponent":null,"message":CoreSp3WriteError::AccuracyNotRepresentable { sat: satellite, epoch_index: 9, component: "clock", exponent: None }.to_string()}),
+            ),
+            (
+                CoreSp3WriteError::AccuracyRecordMismatch {
+                    sat: satellite,
+                    epoch_index: 6,
+                },
+                serde_json::json!({"kind":"ACCURACY_RECORD_MISMATCH","satellite":"G07","epochIndex":6,"message":CoreSp3WriteError::AccuracyRecordMismatch { sat: satellite, epoch_index: 6 }.to_string()}),
+            ),
+            (
+                CoreSp3WriteError::AccuracyBasisMissing {
+                    sat: satellite,
+                    epoch_index: 8,
+                },
+                serde_json::json!({"kind":"ACCURACY_BASIS_MISSING","satellite":"G07","epochIndex":8,"message":CoreSp3WriteError::AccuracyBasisMissing { sat: satellite, epoch_index: 8 }.to_string()}),
+            ),
+        ] {
+            assert_eq!(
+                serde_json::to_value(Sp3WriteErrorDetailJs::from_core(&error)).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn every_sp3_write_refusal_keeps_its_complete_public_payload() {
+        use sidereon_core::astro::time::TimeScale;
+        use sidereon_core::ephemeris::Sp3TimeSystem;
+
+        let satellite = "G07".parse().expect("valid test satellite");
+        let unrepresentable = GnssSatelliteId {
+            system: sidereon_core::GnssSystem::Gps,
+            prn: 100,
+        };
+
+        let cases = vec![
+            (
+                CoreSp3WriteError::TextNotColumnSafe {
+                    field: "agency",
+                    value: "A\nB".to_string(),
+                },
+                serde_json::json!({"kind":"TEXT_NOT_COLUMN_SAFE","field":"agency","value":"A\nB"}),
+            ),
+            (
+                CoreSp3WriteError::TextNotColumnStable {
+                    field: "orbit type",
+                    value: " FIT ".to_string(),
+                },
+                serde_json::json!({"kind":"TEXT_NOT_COLUMN_STABLE","field":"orbit type","value":" FIT "}),
+            ),
+            (
+                CoreSp3WriteError::BlankDescriptor {
+                    field: "data used",
+                    value: "".to_string(),
+                },
+                serde_json::json!({"kind":"BLANK_DESCRIPTOR","field":"data used","value":""}),
+            ),
+            (
+                CoreSp3WriteError::EmptyComment {
+                    index: 3,
+                    value: "".to_string(),
+                },
+                serde_json::json!({"kind":"EMPTY_COMMENT","index":3,"value":""}),
+            ),
+            (
+                CoreSp3WriteError::TextTooWide {
+                    field: "agency",
+                    columns: 4,
+                    value: "ABCDE".to_string(),
+                },
+                serde_json::json!({"kind":"TEXT_TOO_WIDE","field":"agency","columns":4,"value":"ABCDE"}),
+            ),
+            (
+                CoreSp3WriteError::IntegerTooWide {
+                    field: "epoch count",
+                    columns: 7,
+                    value: 9_007_199_254_740_993,
+                },
+                serde_json::json!({"kind":"INTEGER_TOO_WIDE","field":"epoch count","columns":7,"value":"9007199254740993","valueNumber":null}),
+            ),
+            (
+                CoreSp3WriteError::NonFinite { field: "interval" },
+                serde_json::json!({"kind":"NON_FINITE","field":"interval"}),
+            ),
+            (
+                CoreSp3WriteError::NumberTooWide {
+                    field: "clock base",
+                    columns: 10,
+                    decimals: 7,
+                    value: 12_345.25,
+                },
+                serde_json::json!({"kind":"NUMBER_TOO_WIDE","field":"clock base","columns":10,"decimals":7,"value":12345.25}),
+            ),
+            (
+                CoreSp3WriteError::PrecisionNotRepresentable {
+                    field: "position base",
+                    columns: 10,
+                    decimals: 7,
+                    value: 1.25000001,
+                },
+                serde_json::json!({"kind":"PRECISION_NOT_REPRESENTABLE","field":"position base","columns":10,"decimals":7,"value":1.25000001}),
+            ),
+            (
+                CoreSp3WriteError::AccuracyNotRepresentable {
+                    sat: satellite,
+                    epoch_index: 5,
+                    component: "position",
+                    exponent: Some(-12),
+                },
+                serde_json::json!({"kind":"ACCURACY_NOT_REPRESENTABLE","satellite":"G07","epochIndex":5,"component":"position","exponent":-12}),
+            ),
+            (
+                CoreSp3WriteError::AccuracyRecordMismatch {
+                    sat: satellite,
+                    epoch_index: 6,
+                },
+                serde_json::json!({"kind":"ACCURACY_RECORD_MISMATCH","satellite":"G07","epochIndex":6}),
+            ),
+            (
+                CoreSp3WriteError::AccuracyBasisMissing {
+                    sat: satellite,
+                    epoch_index: 8,
+                },
+                serde_json::json!({"kind":"ACCURACY_BASIS_MISSING","satellite":"G07","epochIndex":8}),
+            ),
+            (
+                CoreSp3WriteError::YearNotRepresentable {
+                    epoch_index: 9,
+                    year: -12_345,
+                },
+                serde_json::json!({"kind":"YEAR_NOT_REPRESENTABLE","epochIndex":9,"year":"-12345","yearNumber":-12345.0}),
+            ),
+            (
+                CoreSp3WriteError::EpochNotRestatable {
+                    epoch_index: 10,
+                    field_seconds: 59.125,
+                    residual_s: 0.000_000_01,
+                },
+                serde_json::json!({"kind":"EPOCH_NOT_RESTATABLE","epochIndex":10,"fieldSeconds":59.125,"residualS":0.00000001}),
+            ),
+            (
+                CoreSp3WriteError::EpochTimeScaleMismatch {
+                    epoch_index: 11,
+                    epoch_scale: TimeScale::Gpst,
+                    header_scale: TimeScale::Utc,
+                },
+                serde_json::json!({"kind":"EPOCH_TIME_SCALE_MISMATCH","epochIndex":11,"epochScale":"GPST","headerScale":"UTC"}),
+            ),
+            (
+                CoreSp3WriteError::HeaderTimeScaleMismatch {
+                    time_system: Sp3TimeSystem::Galileo,
+                    time_scale: TimeScale::Gpst,
+                },
+                serde_json::json!({"kind":"HEADER_TIME_SCALE_MISMATCH","timeSystem":"GAL","timeScale":"GPST"}),
+            ),
+            (
+                CoreSp3WriteError::EpochCountMismatch {
+                    declared: 9_007_199_254_740_993,
+                    epochs: 12,
+                },
+                serde_json::json!({"kind":"EPOCH_COUNT_MISMATCH","declared":"9007199254740993","declaredNumber":null,"epochs":12}),
+            ),
+            (
+                CoreSp3WriteError::AccuracyCodeCountMismatch {
+                    satellites: 13,
+                    codes: 12,
+                },
+                serde_json::json!({"kind":"ACCURACY_CODE_COUNT_MISMATCH","satellites":13,"codes":12}),
+            ),
+            (
+                CoreSp3WriteError::DuplicateSatellite { sat: satellite },
+                serde_json::json!({"kind":"DUPLICATE_SATELLITE","satellite":"G07"}),
+            ),
+            (
+                CoreSp3WriteError::SatelliteNotRepresentable {
+                    sat: unrepresentable,
+                },
+                serde_json::json!({"kind":"SATELLITE_NOT_REPRESENTABLE","system":"G","prn":100}),
+            ),
+            (
+                CoreSp3WriteError::EpochArrayLengthMismatch {
+                    field: "clocks",
+                    epochs: 14,
+                    entries: 13,
+                },
+                serde_json::json!({"kind":"EPOCH_ARRAY_LENGTH_MISMATCH","field":"clocks","epochs":14,"entries":13}),
+            ),
+            (
+                CoreSp3WriteError::UndeclaredSatelliteRecord {
+                    sat: satellite,
+                    epoch_index: 15,
+                },
+                serde_json::json!({"kind":"UNDECLARED_SATELLITE_RECORD","satellite":"G07","epochIndex":15}),
+            ),
+            (
+                CoreSp3WriteError::ConflictingRecords {
+                    sat: satellite,
+                    epoch_index: 16,
+                },
+                serde_json::json!({"kind":"CONFLICTING_RECORDS","satellite":"G07","epochIndex":16}),
+            ),
+            (
+                CoreSp3WriteError::VelocityStateInPositionProduct {
+                    field: "velocity x",
+                    sat: satellite,
+                    epoch_index: 17,
+                },
+                serde_json::json!({"kind":"VELOCITY_STATE_IN_POSITION_PRODUCT","field":"velocity x","satellite":"G07","epochIndex":17}),
+            ),
+            (
+                CoreSp3WriteError::RecordValueNonFinite {
+                    field: "clock",
+                    sat: satellite,
+                    epoch_index: 18,
+                },
+                serde_json::json!({"kind":"RECORD_VALUE_NON_FINITE","field":"clock","satellite":"G07","epochIndex":18}),
+            ),
+            (
+                CoreSp3WriteError::RecordValueTooWide {
+                    field: "position x",
+                    sat: satellite,
+                    epoch_index: 19,
+                    columns: 14,
+                    decimals: 6,
+                    column_value: 123_456_789.25,
+                },
+                serde_json::json!({"kind":"RECORD_VALUE_TOO_WIDE","field":"position x","satellite":"G07","epochIndex":19,"columns":14,"decimals":6,"columnValue":123456789.25}),
+            ),
+            (
+                CoreSp3WriteError::RecordValueNotRepresentable {
+                    field: "clock",
+                    sat: satellite,
+                    epoch_index: 20,
+                    columns: 14,
+                    decimals: 6,
+                    stored: 0.000_001_25,
+                    column_value: 1.250_000_01,
+                },
+                serde_json::json!({"kind":"RECORD_VALUE_NOT_REPRESENTABLE","field":"clock","satellite":"G07","epochIndex":20,"columns":14,"decimals":6,"stored":0.00000125,"columnValue":1.25000001}),
+            ),
+            (
+                CoreSp3WriteError::RecordReadsAsAbsent {
+                    field: "clock",
+                    sat: satellite,
+                    epoch_index: 21,
+                    column_value: 999_999.999_999,
+                },
+                serde_json::json!({"kind":"RECORD_READS_AS_ABSENT","field":"clock","satellite":"G07","epochIndex":21,"columnValue":999999.999999}),
+            ),
+            (
+                CoreSp3WriteError::RecordFieldsDisagree {
+                    field: "velocity y",
+                    sat: satellite,
+                    epoch_index: 22,
+                    stored: Some(-0.0),
+                    native: None,
+                },
+                serde_json::json!({"kind":"RECORD_FIELDS_DISAGREE","field":"velocity y","satellite":"G07","epochIndex":22,"stored":-0.0,"native":null}),
+            ),
+        ];
+
+        assert_eq!(cases.len(), 29);
+        for (error, expected) in cases {
+            assert_complete_mapping(error, expected);
+        }
+
+        assert_complete_mapping(
+            CoreSp3WriteError::EpochNotRestatable {
+                epoch_index: 23,
+                field_seconds: 0.0,
+                residual_s: f64::NAN,
+            },
+            serde_json::json!({"kind":"EPOCH_NOT_RESTATABLE","epochIndex":23,"fieldSeconds":0.0,"residualS":null}),
+        );
+        assert_complete_mapping(
+            CoreSp3WriteError::RecordFieldsDisagree {
+                field: "clock rate",
+                sat: satellite,
+                epoch_index: 24,
+                stored: None,
+                native: Some(-2.5),
+            },
+            serde_json::json!({"kind":"RECORD_FIELDS_DISAGREE","field":"clock rate","satellite":"G07","epochIndex":24,"stored":null,"native":-2.5}),
+        );
+    }
 }

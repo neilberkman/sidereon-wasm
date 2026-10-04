@@ -91,19 +91,130 @@ test("constructed CDM encodes like parsed KVN", () => {
       earthTides: o.earthTides,
       intrackThrust: o.intrackThrust,
       velocityCovarianceRtn: o.velocityCovarianceRtn,
+      dragCovarianceRtn: o.dragCovarianceRtn,
+      srpCovarianceRtn: o.srpCovarianceRtn,
+      thrustCovarianceRtn: o.thrustCovarianceRtn,
+      metadataComments: o.metadataComments,
+      odParameters: o.odParameters,
+      additionalParameters: o.additionalParameters,
+      stateComments: o.stateComments,
+      covarianceComments: o.covarianceComments,
     });
   const cdm = new Cdm(mkObj(parsed.object1), mkObj(parsed.object2), {
+    ccsdsCdmVers: parsed.ccsdsCdmVers,
+    comments: parsed.comments,
     creationDate: parsed.creationDate,
     originator: parsed.originator,
+    messageFor: parsed.messageFor,
     messageId: parsed.messageId,
+    relativeComments: parsed.relativeComments,
     tca: parsed.tca,
     missDistanceM: parsed.missDistanceM,
     relativeSpeedMS: parsed.relativeSpeedMS,
+    relativePositionRtnM: parsed.relativePositionRtnM,
+    relativeVelocityRtnMS: parsed.relativeVelocityRtnMS,
+    startScreenPeriod: parsed.startScreenPeriod,
+    stopScreenPeriod: parsed.stopScreenPeriod,
+    screenVolumeFrame: parsed.screenVolumeFrame,
+    screenVolumeShape: parsed.screenVolumeShape,
+    screenVolumeM: parsed.screenVolumeM,
+    screenEntryTime: parsed.screenEntryTime,
+    screenExitTime: parsed.screenExitTime,
     collisionProbability: parsed.collisionProbability,
     collisionProbabilityMethod: parsed.collisionProbabilityMethod,
     hardBodyRadiusM: parsed.hardBodyRadiusM,
   });
   assert.equal(cdm.toKvnString(), FX.encoded_kvn);
+  assert.equal(cdm.toKvnString(), parsed.toKvnString());
+});
+
+test("CDM retains the relative state, screening volume, OD and additional parameters", () => {
+  const cdm = parseCdmKvn(KVN);
+  assert.equal(cdm.ccsdsCdmVers, "1.0");
+  assert.equal(cdm.messageFor, "SATELLITE A");
+  assert.deepEqual(cdm.relativeComments, ["Relative Metadata/Data"]);
+  assert.deepEqual(cdm.relativePositionRtnM, [27.4, -70.2, 711.8]);
+  assert.deepEqual(cdm.relativeVelocityRtnMS, [-7.2, -14692, -1437.2]);
+  assert.equal(cdm.screenVolumeFrame, "RTN");
+  assert.equal(cdm.screenVolumeShape, "ELLIPSOID");
+  assert.deepEqual(cdm.screenVolumeM, [200, 1000, 1000]);
+  assert.equal(cdm.screenEntryTime, "2010-03-13T22:37:52.222");
+  assert.equal(cdm.screenExitTime, "2010-03-13T22:37:52.824");
+
+  const od = cdm.object1.odParameters;
+  assert.equal(od.timeLastobStart, "2010-03-12T02:14:12.746");
+  assert.equal(od.recommendedOdSpanD, 7.88);
+  assert.equal(od.obsAvailable, 592);
+  assert.equal(od.obsUsed, 579);
+  assert.equal(od.tracksAvailable, 123);
+  assert.equal(od.tracksUsed, 119);
+  assert.equal(od.residualsAcceptedPct, 97.8);
+  assert.equal(od.weightedRms, 0.864);
+  const extra = cdm.object1.additionalParameters;
+  assert.equal(extra.areaPcM2, 5.2);
+  assert.equal(extra.massKg, 251.6);
+  assert.equal(extra.sedrWKg, 0.000045457);
+  assert.equal(cdm.object2.additionalParameters.massKg, null);
+  assert.equal(cdm.object1.velocityCovarianceRtn.length, 15);
+  assert.equal(cdm.object1.dragCovarianceRtn, undefined);
+});
+
+test("CdmObject.toCovarianceRtn returns the validated rows the object holds", () => {
+  const cdm = parseCdmKvn(KVN);
+  // Both objects state position and velocity rows. Object 2's 6x6 matrix is
+  // positive definite.
+  const rows = cdm.object2.toCovarianceRtn();
+  assert.equal(rows.length, 6);
+  rows.forEach((row) => assert.equal(row.length, 6));
+  assert.equal(rows[0][0], 1337);
+  assert.equal(rows[3][3], 6.886e-5);
+  for (let i = 0; i < 6; i++) {
+    for (let j = 0; j < i; j++) assert.equal(rows[i][j], rows[j][i]);
+  }
+  // Object 1's 6x6 matrix in the CCSDS example is indefinite: eliminating in
+  // exact arithmetic, the pivot of the RDOT row is -0.0061 (CRDOT_T = -5.476
+  // against CT_T = 2533 and CRDOT_RDOT = 0.005744). The rows are kept as read
+  // and the validated view refuses them.
+  assert.equal(cdm.object1.velocityCovarianceRtn.length, 15);
+  assert.throws(
+    () => cdm.object1.toCovarianceRtn(),
+    (e) =>
+      e.name === "CdmError" &&
+      e.detail.kind === "INVALID_FIELD" &&
+      e.detail.field === "covariance_rtn",
+  );
+});
+
+test("CDM readers and writers refuse with a typed CdmError", () => {
+  const unknown = KVN.replace("MESSAGE_ID", "COMMENTS = x\nMESSAGE_ID");
+  let caught;
+  try {
+    parseCdmKvn(unknown);
+  } catch (e) {
+    caught = e;
+  }
+  assert.ok(caught instanceof Error);
+  assert.equal(caught.name, "CdmError");
+  assert.equal(caught.detail.kind, "UNKNOWN_FIELD");
+  assert.equal(caught.detail.field, "COMMENTS");
+
+  const parsed = parseCdmKvn(KVN);
+  const obj = (o) =>
+    new CdmObject(o.positionKm, o.velocityKmS, o.covarianceRtn, { objectName: "A\nB" });
+  const bad = new Cdm(obj(parsed.object1), obj(parsed.object2), {});
+  try {
+    bad.toKvnString();
+    assert.fail("expected a refusal");
+  } catch (e) {
+    assert.equal(e.name, "CdmError");
+    assert.equal(e.detail.kind, "UNWRITABLE_TEXT");
+    assert.equal(e.detail.field, "OBJECT_NAME");
+    assert.equal(e.detail.issue, "lineBreak");
+  }
+  assert.throws(
+    () => new Cdm(obj(parsed.object1), obj(parsed.object2), { missDistance: 1 }),
+    TypeError,
+  );
 });
 
 test("CdmObject round-trips the full metadata block and velocity covariance", () => {
@@ -188,6 +299,105 @@ test("CdmObject round-trips the full metadata block and velocity covariance", ()
   ro.velocityCovarianceRtn.forEach((v, i) =>
     assert.equal(f64Bits(v), f64Bits(velocityCovarianceRtn[i])),
   );
+});
+
+test("CdmObject returns every literal metadata and covariance row", () => {
+  const positionKm = [1.25, -2.5, 3.75];
+  const velocityKmS = [-0.125, 0.25, -0.5];
+  const covarianceRtn = [1, 0, 1, 0, 0, 1];
+  const velocityCovarianceRtn = [
+    0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5,
+  ];
+  const dragCovarianceRtn = [2, 3, 4, 5, 6, 7, 8];
+  const srpCovarianceRtn = [9, 10, 11, 12, 13, 14, 15, 16];
+  const thrustCovarianceRtn = [17, 18, 19, 20, 21, 22, 23, 24, 25];
+  const meta = {
+    objectDesignator: "24680",
+    catalogName: "TESTCAT",
+    objectName: "DTO TEST",
+    internationalDesignator: "2026-001A",
+    objectType: "PAYLOAD",
+    operatorContactPosition: "Flight",
+    operatorOrganization: "Example",
+    operatorPhone: "+1 555 0101",
+    operatorEmail: "ops@example.test",
+    ephemerisName: "EPH-TEST",
+    covarianceMethod: "TESTED",
+    maneuverable: "YES",
+    orbitCenter: "EARTH",
+    refFrame: "EME2000",
+    gravityModel: "EGM-96",
+    atmosphericModel: "JACCHIA",
+    nBodyPerturbations: "MOON, SUN",
+    solarRadPressure: "NO",
+    earthTides: "YES",
+    intrackThrust: "NO",
+    metadataComments: ["metadata literal"],
+    odParameters: {
+      comments: ["OD literal"],
+      timeLastobStart: "2026-10-03T01:02:03.000",
+      timeLastobEnd: "2026-10-03T04:05:06.000",
+      recommendedOdSpanD: 2.5,
+      actualOdSpanD: 2.25,
+      obsAvailable: 120,
+      obsUsed: 118,
+      tracksAvailable: 24,
+      tracksUsed: 23,
+      residualsAcceptedPct: 98.5,
+      weightedRms: 0.75,
+    },
+    additionalParameters: {
+      comments: ["additional literal"],
+      areaPcM2: 1.25,
+      areaDrgM2: 2.5,
+      areaSrpM2: 3.75,
+      massKg: 40,
+      cdAreaOverMassM2Kg: 0.0625,
+      crAreaOverMassM2Kg: 0.03125,
+      thrustAccelerationMS2: 0.0005,
+      sedrWKg: 0.00025,
+    },
+    stateComments: ["state literal"],
+    covarianceComments: ["covariance literal"],
+    velocityCovarianceRtn,
+    dragCovarianceRtn,
+    srpCovarianceRtn,
+    thrustCovarianceRtn,
+  };
+  const obj = new CdmObject(positionKm, velocityKmS, covarianceRtn, meta);
+
+  assert.equal(obj.objectDesignator, "24680");
+  assert.equal(obj.catalogName, "TESTCAT");
+  assert.equal(obj.objectName, "DTO TEST");
+  assert.equal(obj.internationalDesignator, "2026-001A");
+  assert.equal(obj.objectType, "PAYLOAD");
+  assert.equal(obj.operatorContactPosition, "Flight");
+  assert.equal(obj.operatorOrganization, "Example");
+  assert.equal(obj.operatorPhone, "+1 555 0101");
+  assert.equal(obj.operatorEmail, "ops@example.test");
+  assert.equal(obj.ephemerisName, "EPH-TEST");
+  assert.equal(obj.covarianceMethod, "TESTED");
+  assert.equal(obj.maneuverable, "YES");
+  assert.equal(obj.orbitCenter, "EARTH");
+  assert.equal(obj.refFrame, "EME2000");
+  assert.equal(obj.gravityModel, "EGM-96");
+  assert.equal(obj.atmosphericModel, "JACCHIA");
+  assert.equal(obj.nBodyPerturbations, "MOON, SUN");
+  assert.equal(obj.solarRadPressure, "NO");
+  assert.equal(obj.earthTides, "YES");
+  assert.equal(obj.intrackThrust, "NO");
+  assert.deepEqual(obj.metadataComments, ["metadata literal"]);
+  assert.deepEqual(obj.odParameters, meta.odParameters);
+  assert.deepEqual(obj.additionalParameters, meta.additionalParameters);
+  assert.deepEqual(obj.stateComments, ["state literal"]);
+  assert.deepEqual(Array.from(obj.positionKm), positionKm);
+  assert.deepEqual(Array.from(obj.velocityKmS), velocityKmS);
+  assert.deepEqual(obj.covarianceComments, ["covariance literal"]);
+  assert.deepEqual(Array.from(obj.covarianceRtn), covarianceRtn);
+  assert.deepEqual(Array.from(obj.velocityCovarianceRtn), velocityCovarianceRtn);
+  assert.deepEqual(Array.from(obj.dragCovarianceRtn), dragCovarianceRtn);
+  assert.deepEqual(Array.from(obj.srpCovarianceRtn), srpCovarianceRtn);
+  assert.deepEqual(Array.from(obj.thrustCovarianceRtn), thrustCovarianceRtn);
 });
 
 test("CdmObject rejects a wrong-length velocity covariance", () => {

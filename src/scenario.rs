@@ -13,7 +13,9 @@ use sidereon_core::scenario::{
     SCENARIO_ENGINE_VERSION, SCENARIO_SCHEMA_VERSION,
 };
 
-use crate::error::{engine_error, type_error};
+use crate::domain_error::scenario_error;
+use crate::error::{engine_error, index_arg, type_error};
+use crate::rinex_obs::{rinex_obs_write_error, RinexObs};
 
 fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     value
@@ -35,13 +37,13 @@ fn parse_scenario_json_value(text: &str) -> Result<Scenario, JsValue> {
 
 fn simulate_value(value: JsValue) -> Result<ScenarioObservationSetJs, JsValue> {
     let scenario = parse_scenario_value(value)?;
-    let set = core_simulate_scenario(&scenario).map_err(engine_error)?;
+    let set = core_simulate_scenario(&scenario).map_err(scenario_error)?;
     Ok(ScenarioObservationSetJs::from(set))
 }
 
 fn simulate_json_value(text: &str) -> Result<ScenarioObservationSetJs, JsValue> {
     let scenario = parse_scenario_json_value(text)?;
-    let set = core_simulate_scenario(&scenario).map_err(engine_error)?;
+    let set = core_simulate_scenario(&scenario).map_err(scenario_error)?;
     Ok(ScenarioObservationSetJs::from(set))
 }
 
@@ -88,6 +90,81 @@ pub fn simulate_scenario_json(text: &str) -> Result<JsValue, JsValue> {
 #[wasm_bindgen(js_name = simulateScenarioBytes)]
 pub fn simulate_scenario_bytes(value: JsValue) -> Result<Vec<u8>, JsValue> {
     deterministic_bytes(&simulate_value(value)?)
+}
+
+/// A simulated scenario held on the engine side, for the exports that work on
+/// the whole observation set: the RINEX observation product and text, and the
+/// SPP observations of one epoch. Built by [`simulateScenarioSet`].
+#[wasm_bindgen]
+pub struct ScenarioSimulation {
+    inner: SyntheticObservationSet,
+}
+
+#[wasm_bindgen]
+impl ScenarioSimulation {
+    /// The arrays and term ledger `simulateScenario` returns for the same
+    /// scenario.
+    #[wasm_bindgen(getter)]
+    pub fn arrays(&self) -> Result<JsValue, JsValue> {
+        to_js(&ScenarioObservationSetJs::from(self.inner.clone()))
+    }
+
+    /// The determinism fingerprint of the observation set, as a hexadecimal
+    /// string (`"0x..."`).
+    #[wasm_bindgen(getter, js_name = determinismFingerprintHex)]
+    pub fn determinism_fingerprint_hex(&self) -> String {
+        hex_u64(self.inner.determinism_fingerprint())
+    }
+
+    /// The synthetic observations as a RINEX observation product.
+    #[wasm_bindgen(js_name = toRinexObservationFile)]
+    pub fn to_rinex_observation_file(&self) -> RinexObs {
+        RinexObs {
+            inner: self.inner.to_rinex_observation_file(),
+        }
+    }
+
+    /// The synthetic observations as RINEX OBS text. Throws a
+    /// `RinexObsWriteError` when the product would not read back as itself,
+    /// for example a value its column cannot hold exactly.
+    #[wasm_bindgen(js_name = toRinexString)]
+    pub fn to_rinex_string(&self) -> Result<String, JsValue> {
+        self.inner.to_rinex_string().map_err(rinex_obs_write_error)
+    }
+
+    /// The SPP observations of epoch `epochIndex`, each `{ satelliteId,
+    /// pseudorangeM }`, in the order the set holds them. An index past the
+    /// last epoch gives an empty array. Negative, fractional, non-finite, and
+    /// out-of-range indices throw a `RangeError` rather than being wrapped.
+    #[wasm_bindgen(js_name = sppObservationsForEpoch, unchecked_return_type = "Array<{ satelliteId: string; pseudorangeM: number }>")]
+    pub fn spp_observations_for_epoch(&self, epoch_index: f64) -> Result<JsValue, JsValue> {
+        let epoch_index = index_arg(epoch_index, "epochIndex")?;
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct SppObservationJs {
+            satellite_id: String,
+            pseudorange_m: f64,
+        }
+        let rows: Vec<SppObservationJs> = self
+            .inner
+            .spp_observations_for_epoch(epoch_index)
+            .into_iter()
+            .map(|obs| SppObservationJs {
+                satellite_id: obs.satellite_id.to_string(),
+                pseudorange_m: obs.pseudorange_m,
+            })
+            .collect();
+        to_js(&rows)
+    }
+}
+
+/// Simulate a scenario from a JS object or JSON string and keep the
+/// observation set, for its RINEX and SPP exports.
+#[wasm_bindgen(js_name = simulateScenarioSet)]
+pub fn simulate_scenario_set(value: JsValue) -> Result<ScenarioSimulation, JsValue> {
+    let scenario = parse_scenario_value(value)?;
+    let inner = core_simulate_scenario(&scenario).map_err(scenario_error)?;
+    Ok(ScenarioSimulation { inner })
 }
 
 /// Simulate a scenario from JSON text and return deterministic JSON bytes.

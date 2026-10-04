@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseTleFile, GroundStation } from "../pkg-node/sidereon.js";
+import { parseTleFile, Tle, GroundStation } from "../pkg-node/sidereon.js";
 
 // Valid ISS element set, reused as both a named (3-line) and a bare (2-line) record.
 const L1 = "1 25544U 98067A   18184.80969102  .00001614  00000-0  31745-4 0  9993";
@@ -17,6 +17,9 @@ const L2 = "2 25544  51.6414 295.8524 0003435 262.6267 204.2868 15.5400563812110
 // so SGP4 init fails -> counted in `skipped`, not thrown.
 const BAD_L1 = "1 00001U 00000A   18184.80969102  .00000000  00000-0  00000-0 0  0001";
 const BAD_L2 = "2 00001 not a valid line two";
+
+const DS_L1 = "1 23599U 95029B   06171.76535463  .00085586  12891-6  12956-2 0  2905";
+const DS_L2 = "2 23599   6.9327   0.2849 5782022 274.4436  25.2425  4.47796565123555";
 
 const FILE = [
   "ISS (ZARYA)",
@@ -61,6 +64,29 @@ test("parseTleFile parses names, skips malformed, and returns usable Tles", () =
   assert.ok(look.rangeKm[0] > 0);
 });
 
+test("parseTleFile preserves explicit AFSPC mode through propagation", () => {
+  const parsed = parseTleFile(["OPS MODE PROBE", DS_L1, DS_L2].join("\n"), "afspc");
+  assert.equal(parsed.count, 1);
+  assert.equal(parsed.satellites[0].name, "OPS MODE PROBE");
+
+  const epoch = BigInt64Array.of(1_150_870_926_640_032n);
+  const fromFile = parsed.satellites[0].tle;
+  const direct = new Tle(DS_L1, DS_L2, "afspc");
+  const fileState = fromFile.propagate(epoch);
+  const directState = direct.propagate(epoch);
+
+  assert.deepEqual(fromFile.toLines(), direct.toLines());
+  assert.deepEqual(fileState.positionKm, directState.positionKm);
+  assert.deepEqual(fileState.velocityKmS, directState.velocityKmS);
+
+  const improvedState = new Tle(DS_L1, DS_L2, "improved").propagate(epoch);
+  assert.notDeepEqual(
+    fileState.positionKm,
+    improvedState.positionKm,
+    "deep-space AFSPC propagation unexpectedly matched improved mode",
+  );
+});
+
 test("parseTleFile strips the CelesTrak '0 ' name marker", () => {
   const parsed = parseTleFile(["0 ISS (ZARYA)", L1, L2].join("\n"));
   assert.equal(parsed.count, 1);
@@ -69,4 +95,50 @@ test("parseTleFile strips the CelesTrak '0 ' name marker", () => {
 
 test("parseTleFile rejects an invalid opsMode", () => {
   assert.throws(() => parseTleFile(`${L1}\n${L2}`, "bogus"));
+});
+
+test("parseTleFile reports every rejected record with its line and reason", () => {
+  const parsed = parseTleFile(FILE);
+  const sats = parsed.satellites;
+  assert.equal(sats[0].lineNumber, 2);
+  assert.equal(sats[1].lineNumber, 5);
+  assert.deepEqual(sats[0].checksumWarnings, []);
+
+  const rejected = parsed.rejected;
+  assert.equal(rejected.length, parsed.skipped);
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].lineNumber, 7);
+  assert.equal(rejected[0].name, "BROKENSAT");
+  assert.equal(rejected[0].issue, "invalid");
+  assert.equal(typeof rejected[0].message, "string");
+});
+
+test("parseTleFile lists stray lines and orphan names instead of dropping them", () => {
+  const text = [L2, "ORPHAN NAME", "", "LONE", L1].join("\n");
+  const parsed = parseTleFile(text);
+  assert.equal(parsed.count, 0);
+  assert.deepEqual(
+    parsed.rejected.map((r) => [r.lineNumber, r.issue]),
+    [
+      [1, "orphanLine2"],
+      [2, "orphanName"],
+      [4, "missingLine2"],
+    ],
+  );
+  assert.equal(parsed.rejected[2].name, "LONE");
+});
+
+test("parseTleFile reads a mismatched checksum only under the lenient policy", () => {
+  const badChecksumL1 = `${L1.slice(0, 68)}0`;
+  const strict = parseTleFile([badChecksumL1, L2].join("\n"));
+  assert.equal(strict.count, 0);
+  assert.equal(strict.rejected[0].issue, "invalid");
+
+  const lenient = parseTleFile([badChecksumL1, L2].join("\n"), undefined, "lenient");
+  assert.equal(lenient.count, 1);
+  const [warning] = lenient.satellites[0].checksumWarnings;
+  assert.equal(warning.kind, "mismatch");
+  assert.equal(warning.expected, 0);
+  assert.equal(warning.computed, 3);
+  assert.equal(lenient.satellites[0].tle.checksumWarnings.length, 1);
 });

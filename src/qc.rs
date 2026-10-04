@@ -7,7 +7,6 @@
 //! packages the surviving solution plus the excluded satellites. No RAIM,
 //! exclusion, validation, or solve loop lives here.
 
-use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use serde::Deserialize;
@@ -19,12 +18,11 @@ use sidereon_core::positioning::{
     DEFAULT_ROBUST_SCALE_FLOOR_M,
 };
 use sidereon_core::quality::{
-    self, FdeError, FdeOptions, FdeSppError, FdeSppOptions, RaimOptions, RaimWeights,
-    SolutionValidationOptions,
+    self, FdeError, FdeOptions, FdeSppError, FdeSppOptions, SolutionValidationOptions,
 };
 use sidereon_core::GnssSatelliteId;
 
-use crate::error::{engine_error, range_error, type_error};
+use crate::error::{range_error, type_error};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,14 +65,6 @@ impl Default for SurfaceMetInput {
     }
 }
 
-/// One RAIM residual weight: `{ satelliteId, weight }`.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WeightInput {
-    satellite_id: String,
-    weight: f64,
-}
-
 /// The FDE request: the SPP solve inputs plus the RAIM/exclusion options.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,18 +85,19 @@ struct FdeRequest {
     glonass_channels: Vec<(u8, i8)>,
     #[serde(default = "default_true")]
     with_geodetic: bool,
-    /// RAIM false-alarm probability; defaults to the core RAIM default.
+    /// Single-frequency (default) or ionosphere-free code, as on `solveSpp`.
     #[serde(default)]
-    p_fa: Option<f64>,
-    /// Per-satellite RAIM weights; absent or empty means unit weights.
+    pseudorange_code: crate::spp::PseudorangeCodeInput,
     #[serde(default)]
-    weights: Vec<WeightInput>,
-    /// Override for the number of distinct GNSS clock systems.
+    qzss_clock: crate::spp::QzssClockInput,
     #[serde(default)]
-    n_systems: Option<i64>,
-    /// Maximum exclusions; defaults to `max(observationCount - 4, 0)`.
+    troposphere_model: crate::spp::TroposphereModelInput,
+    /// Maximum exclusions; defaults to the core's single-exclusion policy.
     #[serde(default)]
-    max_iterations: Option<usize>,
+    max_exclusions: Option<usize>,
+    /// Largest residual RMS (metres) an exclusion may leave; defaults to 100 m.
+    #[serde(default)]
+    max_exclusion_rms_m: Option<f64>,
     /// Optional PDOP ceiling applied to each candidate solution.
     #[serde(default)]
     max_pdop: Option<f64>,
@@ -165,10 +156,18 @@ pub struct FdeSolution {
     solution: ReceiverSolution,
     excluded: Vec<String>,
     iterations: usize,
+    raim: crate::raim::RaimResultObject,
 }
 
 #[wasm_bindgen]
 impl FdeSolution {
+    /// The complete accepted receiver solution, including its covariance,
+    /// variances, effective weights, status, clocks and diagnostics.
+    #[wasm_bindgen(getter)]
+    pub fn solution(&self) -> crate::spp::SppSolution {
+        crate::spp::SppSolution::from_inner(self.solution.clone())
+    }
+
     /// Surviving-solution ECEF position `[x, y, z]`, metres.
     #[wasm_bindgen(getter, js_name = positionM)]
     pub fn position_m(&self) -> Vec<f64> {
@@ -220,54 +219,30 @@ impl FdeSolution {
     pub fn iterations(&self) -> usize {
         self.iterations
     }
-}
 
-fn fde_error_to_js(err: FdeError<FdeSppError>) -> JsValue {
-    match err {
-        FdeError::FaultUnresolved(stat) => engine_error(format!(
-            "RAIM fault unresolved after the exclusion budget, test statistic {stat}"
-        )),
-        FdeError::Solve(FdeSppError::Spp(e)) => engine_error(e),
-        FdeError::Solve(FdeSppError::Validation(e)) => {
-            engine_error(format!("solution validation rejected a candidate: {e:?}"))
-        }
-        FdeError::Raim(e) => engine_error(format!("RAIM configuration rejected: {e:?}")),
+    /// The accepted solution's detection test, including weighted residuals.
+    #[wasm_bindgen(getter, unchecked_return_type = "FdeRaimResult")]
+    pub fn raim(&self) -> Result<JsValue, JsValue> {
+        crate::raim::to_js(&self.raim)
     }
 }
 
-fn raim_options(req: &FdeRequest) -> Result<RaimOptions, JsValue> {
-    let defaults = RaimOptions::default();
-    // The RAIM false-alarm probability is a caller-supplied out-of-domain
-    // candidate, so reject a non-finite or out-of-(0,1) value at the boundary
-    // with a RangeError (the JS class for a bad numeric range) rather than
-    // letting it surface from the core as a generic Error.
-    if let Some(p_fa) = req.p_fa {
-        if !(p_fa.is_finite() && p_fa > 0.0 && p_fa < 1.0) {
-            return Err(range_error(
-                "pFa must be a finite number in the open interval (0, 1)",
-            ));
-        }
-    }
-    let weights = if req.weights.is_empty() {
-        RaimWeights::Unit
-    } else {
-        RaimWeights::BySatellite(
-            req.weights
-                .iter()
-                .map(|w| (w.satellite_id.clone(), w.weight))
-                .collect::<BTreeMap<_, _>>(),
-        )
-    };
-    let mut options = RaimOptions::default();
-    options.p_fa = req.p_fa.unwrap_or(defaults.p_fa);
-    options.weights = weights;
-    options.n_systems = req.n_systems.map(|n| n as isize);
-    Ok(options)
+fn fde_error_to_js(err: FdeError<ReceiverSolution, FdeSppError>) -> JsValue {
+    crate::positioning_error::positioning_error(&crate::positioning_error::fde_detail(&err))
 }
 
 /// Run FDE against the given ephemeris under the core RAIM-gated exclusion loop.
+/// Omitted `weightsMode` and weights use the solution's pseudorange variances;
+/// accepted modes are `solution`, `unit`, and `bySatellite`. An explicitly
+/// empty legacy `weights` array keeps its unit-weight meaning. The default
+/// exclusion budget is one and the default candidate residual RMS cap is 100 m.
 pub fn fde(eph: &dyn EphemerisSource, request: JsValue) -> Result<FdeSolution, JsValue> {
-    let req: FdeRequest = serde_wasm_bindgen::from_value(request)
+    if js_sys::Reflect::has(&request, &JsValue::from_str("maxIterations")).unwrap_or(false) {
+        return Err(type_error(
+            "maxIterations is unsupported; use maxExclusions",
+        ));
+    }
+    let req: FdeRequest = serde_wasm_bindgen::from_value(request.clone())
         .map_err(|e| type_error(&format!("invalid FDE request: {e}")))?;
 
     if req.observations.is_empty() {
@@ -312,13 +287,19 @@ pub fn fde(eph: &dyn EphemerisSource, request: JsValue) -> Result<FdeSolution, J
             relative_humidity: req.met.relative_humidity,
         },
         robust: None,
+        pseudorange_code: req.pseudorange_code.into(),
+        qzss_clock: req.qzss_clock.into(),
+        troposphere_model: req.troposphere_model.into(),
     };
 
-    let fde = FdeOptions::new(
-        raim_options(&req)?,
-        req.max_iterations
-            .unwrap_or_else(|| observations.len().saturating_sub(4)),
+    let defaults = FdeOptions::default();
+    let mut fde = FdeOptions::new(
+        crate::raim::options_from_js(&request, true)?,
+        req.max_exclusions.unwrap_or(defaults.max_exclusions),
     );
+    fde.max_exclusion_rms_m = req
+        .max_exclusion_rms_m
+        .unwrap_or(defaults.max_exclusion_rms_m);
     let mut validation = SolutionValidationOptions::default();
     validation.max_pdop = req.max_pdop;
     let options = FdeSppOptions::new(fde, validation);
@@ -336,9 +317,21 @@ pub fn fde(eph: &dyn EphemerisSource, request: JsValue) -> Result<FdeSolution, J
     }
     .map_err(fde_error_to_js)?;
 
+    let raim_input = sidereon_core::quality::RaimInput {
+        used_sats: result
+            .solution
+            .used_sats
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        residuals_m: result.solution.residuals_m.clone(),
+        variances_m2: Some(result.solution.pseudorange_variances_m2.clone()),
+    };
+    let raim = crate::raim::result_from_core(result.raim, &raim_input);
     Ok(FdeSolution {
         solution: result.solution,
         excluded: result.excluded,
         iterations: result.iterations,
+        raim,
     })
 }

@@ -17,9 +17,10 @@ use sidereon_core::rinex::nav::{
     parse_nav_lenient, NavParse as CoreNavParse, SkippedNavBlock as CoreSkippedNavBlock,
 };
 use sidereon_core::{astro::time::GnssWeekTow, GnssSatelliteId};
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
-use crate::error::{engine_error, range_error, utf8_text};
+use crate::error::{engine_error, range_error, type_error, utf8_text};
+use crate::frames::ExactEpochQueryValue;
 
 /// Which supported RINEX NAV message a broadcast record carries.
 #[wasm_bindgen]
@@ -45,6 +46,12 @@ pub enum NavMessage {
     BeidouD1,
     /// BeiDou D2.
     BeidouD2,
+    /// NavIC (IRNSS) LNAV.
+    NavicLnav,
+    /// A Galileo record whose data-source word names no message (RINEX 3.05
+    /// Table A8), used with the BGD E5b/E1 as RTKLIB's default selection
+    /// uses it.
+    GalileoUnclassified,
 }
 
 /// GPS/QZSS signal used for CNAV inter-signal correction accessors.
@@ -122,6 +129,8 @@ fn map_nav_message(message: sidereon_core::ephemeris::NavMessage) -> NavMessage 
         Core::GalileoFnav => NavMessage::GalileoFnav,
         Core::BeidouD1 => NavMessage::BeidouD1,
         Core::BeidouD2 => NavMessage::BeidouD2,
+        Core::NavicLnav => NavMessage::NavicLnav,
+        Core::GalileoUnclassified => NavMessage::GalileoUnclassified,
     }
 }
 
@@ -139,6 +148,8 @@ pub fn nav_message_label(message: NavMessage) -> String {
         NavMessage::GalileoFnav => "galileo_fnav",
         NavMessage::BeidouD1 => "beidou_d1",
         NavMessage::BeidouD2 => "beidou_d2",
+        NavMessage::NavicLnav => "navic_lnav",
+        NavMessage::GalileoUnclassified => "galileo_unclassified",
     }
     .to_string()
 }
@@ -427,16 +438,20 @@ impl BroadcastRecordJs {
         map_nav_message(self.inner.message)
     }
 
-    /// Native issue-of-data value.
+    /// Native issue-of-data value, or `undefined` for a RINEX 4 CNAV or
+    /// CNAV-2 record, which states none.
     #[wasm_bindgen(getter)]
-    pub fn issue(&self) -> u32 {
-        self.inner.issue_of_data.issue
+    pub fn issue(&self) -> Option<u32> {
+        self.inner.issue_of_data.map(|issue| issue.issue)
     }
 
-    /// Message family attached to the issue-of-data value.
+    /// Message family attached to the issue-of-data value, or `undefined`
+    /// when the record states no issue of data.
     #[wasm_bindgen(getter, js_name = issueMessage)]
-    pub fn issue_message(&self) -> NavMessage {
-        map_nav_message(self.inner.issue_of_data.message)
+    pub fn issue_message(&self) -> Option<NavMessage> {
+        self.inner
+            .issue_of_data
+            .map(|issue| map_nav_message(issue.message))
     }
 
     /// Continuous constellation week number from the broadcast record.
@@ -473,10 +488,49 @@ impl BroadcastRecordJs {
         self.inner.sv_health
     }
 
-    /// Signal-in-space accuracy, metres.
+    /// Signal-in-space accuracy, metres, or `undefined` when the record
+    /// states none: a blank or unreadable field, or a CNAV URA_ED index of no
+    /// prediction.
     #[wasm_bindgen(getter, js_name = svAccuracyM)]
-    pub fn sv_accuracy_m(&self) -> f64 {
+    pub fn sv_accuracy_m(&self) -> Option<f64> {
         self.inner.sv_accuracy_m
+    }
+
+    /// GPS and QZSS IODC as the record states it, or `undefined`.
+    #[wasm_bindgen(getter)]
+    pub fn iodc(&self) -> Option<f64> {
+        self.inner.iodc()
+    }
+
+    /// GPS "codes on L2" as stated, or `undefined`.
+    #[wasm_bindgen(getter, js_name = l2Codes)]
+    pub fn l2_codes(&self) -> Option<f64> {
+        self.inner.l2_codes()
+    }
+
+    /// GPS "L2 P data flag" as stated, or `undefined`.
+    #[wasm_bindgen(getter, js_name = l2pDataFlag)]
+    pub fn l2p_data_flag(&self) -> Option<f64> {
+        self.inner.l2p_data_flag()
+    }
+
+    /// Galileo data-source word as the nearest integer, or `undefined`.
+    #[wasm_bindgen(getter, js_name = galileoDataSources)]
+    pub fn galileo_data_sources(&self) -> Option<u32> {
+        self.inner.galileo_data_sources()
+    }
+
+    /// BeiDou AODC as stated, or `undefined`.
+    #[wasm_bindgen(getter, js_name = beidouAodc)]
+    pub fn beidou_aodc(&self) -> Option<f64> {
+        self.inner.beidou_aodc()
+    }
+
+    /// Transmission time of message, seconds of week, as stated, or
+    /// `undefined`.
+    #[wasm_bindgen(getter, js_name = transmissionTimeSow)]
+    pub fn transmission_time_sow(&self) -> Option<f64> {
+        self.inner.transmission_time_sow()
     }
 
     /// GPS curve-fit interval, seconds, or `undefined` when not broadcast.
@@ -576,10 +630,107 @@ impl GlonassRecordJs {
         self.inner.sv_health
     }
 
-    /// FDMA frequency-channel number.
+    /// FDMA frequency-channel number. A stated channel above 128 reads as that
+    /// value less 256, as RTKLIB reads it.
     #[wasm_bindgen(getter, js_name = freqChannel)]
     pub fn freq_channel(&self) -> i32 {
         self.inner.freq_channel
+    }
+
+    /// The frequency channel as the record states it.
+    #[wasm_bindgen(getter, js_name = statedFreqChannel)]
+    pub fn stated_freq_channel(&self) -> i32 {
+        self.inner.stated_freq_channel
+    }
+
+    /// The record epoch as stated, UTC seconds past J2000 (`toeUtcJ2000S` is
+    /// that epoch rounded to the 15-minute grid, as RTKLIB rounds `tb`).
+    #[wasm_bindgen(getter, js_name = epochUtcJ2000S)]
+    pub fn epoch_utc_j2000_s(&self) -> f64 {
+        self.inner.epoch_utc_j2000_s
+    }
+
+    /// The reference epoch in GPS time, seconds past J2000, converted with the
+    /// leap-second table at that instant, as RTKLIB `utc2gpst` converts it.
+    #[wasm_bindgen(getter, js_name = toeGpstJ2000S)]
+    pub fn toe_gpst_j2000_s(&self) -> f64 {
+        self.inner.toe_gpst_j2000_s()
+    }
+
+    /// Message frame time, seconds, as stated, or `undefined`.
+    #[wasm_bindgen(getter, js_name = messageFrameTimeS)]
+    pub fn message_frame_time_s(&self) -> Option<f64> {
+        self.inner.message_frame_time_s
+    }
+
+    /// Age of operation information, days, or `undefined`.
+    #[wasm_bindgen(getter, js_name = ageDays)]
+    pub fn age_days(&self) -> Option<f64> {
+        self.inner.age_days
+    }
+
+    /// Status flags (RINEX 3.05 fourth orbit line) as stated, or `undefined`.
+    #[wasm_bindgen(getter, js_name = statusFlags)]
+    pub fn status_flags(&self) -> Option<f64> {
+        self.inner.status_flags
+    }
+
+    /// L1/L2 group delay difference field as stated, seconds, or `undefined`.
+    #[wasm_bindgen(getter, js_name = l1L2GroupDelayFieldS)]
+    pub fn l1_l2_group_delay_field_s(&self) -> Option<f64> {
+        self.inner.l1_l2_group_delay_field_s
+    }
+
+    /// Raw accuracy index URAI as stated, or `undefined`.
+    #[wasm_bindgen(getter)]
+    pub fn urai(&self) -> Option<f64> {
+        self.inner.urai
+    }
+
+    /// Health flags as stated, or `undefined`.
+    #[wasm_bindgen(getter, js_name = healthFlags)]
+    pub fn health_flags(&self) -> Option<f64> {
+        self.inner.health_flags
+    }
+
+    /// The L1/L2 group delay difference `ΔτN`, seconds, or `undefined` when
+    /// blank or stated as not known.
+    #[wasm_bindgen(getter, js_name = l1L2GroupDelayS)]
+    pub fn l1_l2_group_delay_s(&self) -> Option<f64> {
+        self.inner.l1_l2_group_delay_s()
+    }
+
+    /// The status flags as a word, or `undefined`.
+    #[wasm_bindgen(getter, js_name = statusFlagsWord)]
+    pub fn status_flags_word(&self) -> Option<u32> {
+        self.inner.status_flags_word()
+    }
+
+    /// The health flags as a word, or `undefined`.
+    #[wasm_bindgen(getter, js_name = healthFlagsWord)]
+    pub fn health_flags_word(&self) -> Option<u32> {
+        self.inner.health_flags_word()
+    }
+
+    /// Whether the record reports the satellite healthy by the RINEX 3.05
+    /// Table A10 health fields.
+    #[wasm_bindgen(getter, js_name = isHealthy)]
+    pub fn is_healthy(&self) -> bool {
+        self.inner.is_healthy()
+    }
+
+    /// RTKLIB `prange`'s G1 single-frequency group delay `-ΔτN / (γ - 1)`,
+    /// seconds, or `undefined` when `ΔτN` is not known.
+    #[wasm_bindgen(getter, js_name = singleFrequencyGroupDelayS)]
+    pub fn single_frequency_group_delay_s(&self) -> Option<f64> {
+        self.inner.single_frequency_group_delay_s()
+    }
+
+    /// RTKLIB `geph2clk`: the clock bias at a satellite clock time, GPST
+    /// seconds past J2000.
+    #[wasm_bindgen(js_name = clockBiasAtS)]
+    pub fn clock_bias_at_s(&self, t_sv_gpst_j2000_s: f64) -> f64 {
+        self.inner.clock_bias_s(t_sv_gpst_j2000_s)
     }
 }
 
@@ -631,13 +782,45 @@ impl IonoCorrectionsJs {
             .beidou
             .map(|inner| KlobucharAlphaBetaJs { inner })
     }
+
+    /// QZSS Klobuchar coefficients (`QZSA`/`QZSB` or a RINEX 4 frame).
+    #[wasm_bindgen(getter)]
+    pub fn qzss(&self) -> Option<KlobucharAlphaBetaJs> {
+        self.inner.qzss.map(|inner| KlobucharAlphaBetaJs { inner })
+    }
+
+    /// NavIC Klobuchar coefficients (`IRNA`/`IRNB` or a RINEX 4 frame).
+    #[wasm_bindgen(getter)]
+    pub fn navic(&self) -> Option<KlobucharAlphaBetaJs> {
+        self.inner.navic.map(|inner| KlobucharAlphaBetaJs { inner })
+    }
+
+    /// Galileo NeQuick G coefficients `[ai0, ai1, ai2]`, or `undefined`.
+    #[wasm_bindgen(getter, js_name = galileoNequick)]
+    pub fn galileo_nequick(&self) -> Option<Vec<f64>> {
+        self.inner
+            .galileo
+            .map(|coeffs| vec![coeffs.ai0, coeffs.ai1, coeffs.ai2])
+    }
+
+    /// Galileo ionospheric disturbance flags word as stated, or `undefined`.
+    #[wasm_bindgen(getter, js_name = galileoDisturbanceFlags)]
+    pub fn galileo_disturbance_flags(&self) -> Option<f64> {
+        self.inner.galileo_disturbance_flags
+    }
+
+    /// BeiDou BDGIM coefficients (nine), or `undefined`.
+    #[wasm_bindgen(getter, js_name = beidouBdgim)]
+    pub fn beidou_bdgim(&self) -> Option<Vec<f64>> {
+        self.inner.beidou_bdgim.map(|coeffs| coeffs.to_vec())
+    }
 }
 
 /// A parsed broadcast ephemeris store from a RINEX NAV file. `records` are the
 /// usable GPS/Galileo/BeiDou records selected by the core default SPP policy.
 #[wasm_bindgen]
 pub struct BroadcastEphemeris {
-    pub(crate) inner: CoreBroadcastStore,
+    pub(crate) inner: Arc<CoreBroadcastStore>,
     leap_seconds: Option<f64>,
 }
 
@@ -663,6 +846,47 @@ impl SkippedNavBlock {
     pub fn message(&self) -> String {
         self.inner.message.clone()
     }
+
+    /// One-based line number of the block's first line.
+    #[wasm_bindgen(getter)]
+    pub fn line(&self) -> usize {
+        self.inner.line
+    }
+}
+
+/// A departure from the format read through, with its line.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NavDiagnosticJs {
+    line: usize,
+    satellite: String,
+    message: String,
+}
+
+fn diagnostics_to_js(
+    diagnostics: &[sidereon_core::rinex::nav::NavDiagnostic],
+) -> Result<JsValue, JsValue> {
+    let rows: Vec<NavDiagnosticJs> = diagnostics
+        .iter()
+        .map(|diagnostic| NavDiagnosticJs {
+            line: diagnostic.line,
+            satellite: diagnostic.satellite.clone(),
+            message: diagnostic.error.to_string(),
+        })
+        .collect();
+    crate::error::to_plain_js(&rows, "RINEX NAV departures")
+}
+
+/// A navigation block of a kind `parseRinexNavLenient` does not return as a
+/// broadcast record: GLONASS, SBAS, system time offset, Earth orientation,
+/// ionosphere, and the BeiDou CNAV-1/2/3 and NavIC L1 frames.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OtherNavBlockJs {
+    line: usize,
+    satellite: String,
+    message_token: Option<String>,
+    kind: String,
 }
 
 /// Result of lenient RINEX NAV parsing.
@@ -682,7 +906,7 @@ impl RinexNavParse {
         self.inner
             .records
             .iter()
-            .copied()
+            .cloned()
             .map(BroadcastRecordJs::from_core)
             .collect()
     }
@@ -708,6 +932,31 @@ impl RinexNavParse {
     #[wasm_bindgen(getter, js_name = skippedCount)]
     pub fn skipped_count(&self) -> usize {
         self.inner.skipped.len()
+    }
+
+    /// Departures from the format read through, as `{ line, satellite,
+    /// message }`.
+    #[wasm_bindgen(getter, unchecked_return_type = "RinexNavDiagnostic[]")]
+    pub fn departures(&self) -> Result<JsValue, JsValue> {
+        diagnostics_to_js(&self.inner.departures)
+    }
+
+    /// Blocks of kinds this reader does not return as broadcast records, as
+    /// `{ line, satellite, messageToken, kind }`.
+    #[wasm_bindgen(getter, unchecked_return_type = "RinexNavOtherBlock[]")]
+    pub fn other(&self) -> Result<JsValue, JsValue> {
+        let rows: Vec<OtherNavBlockJs> = self
+            .inner
+            .other
+            .iter()
+            .map(|block| OtherNavBlockJs {
+                line: block.line,
+                satellite: block.satellite.clone(),
+                message_token: block.message_token.clone(),
+                kind: format!("{:?}", block.kind),
+            })
+            .collect();
+        crate::error::to_plain_js(&rows, "other RINEX NAV blocks")
     }
 }
 
@@ -745,24 +994,96 @@ impl BroadcastStoreEvaluation {
 
 #[wasm_bindgen]
 impl BroadcastEphemeris {
+    #[wasm_bindgen(js_name = selectedPositionClockAtExactQueries, unchecked_return_type = "Ut1Validated<SelectedPositionClock> | null")]
+    pub fn selected_position_clock_at_exact_queries(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = GnssSatelliteId::from_str(satellite)
+            .map_err(|_| type_error("invalid satellite token"))?;
+        crate::sp3::selected_position_clock_at_queries(
+            self.inner.as_ref(),
+            satellite,
+            state_epoch,
+            selection_epoch,
+        )
+    }
+
+    #[wasm_bindgen(js_name = transmitEpochClockAtExactQueries, unchecked_return_type = "Ut1Validated<number> | null")]
+    pub fn transmit_epoch_clock_at_exact_queries(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = GnssSatelliteId::from_str(satellite)
+            .map_err(|_| type_error("invalid satellite token"))?;
+        crate::sp3::transmit_epoch_clock_at_queries(
+            self.inner.as_ref(),
+            satellite,
+            state_epoch,
+            selection_epoch,
+        )
+    }
+
+    #[wasm_bindgen(js_name = ephemerisVarianceAtExactQuery)]
+    pub fn ephemeris_variance_at_exact_query(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        selection_epoch: &ExactEpochQueryValue,
+    ) -> Result<f64, JsValue> {
+        let satellite = GnssSatelliteId::from_str(satellite)
+            .map_err(|_| type_error("invalid satellite token"))?;
+        Ok(crate::sp3::precise_variance_at_queries(
+            self.inner.as_ref(),
+            satellite,
+            state_epoch,
+            selection_epoch,
+        ))
+    }
+
+    #[wasm_bindgen(js_name = clockRelativityAtExactQuery, unchecked_return_type = "ClockRelativity")]
+    pub fn clock_relativity_at_exact_query(
+        &self,
+        satellite: &str,
+        state_epoch: &ExactEpochQueryValue,
+        position_ecef_m: Vec<f64>,
+    ) -> Result<JsValue, JsValue> {
+        let satellite = GnssSatelliteId::from_str(satellite)
+            .map_err(|_| type_error("invalid satellite token"))?;
+        let position_ecef_m: [f64; 3] = position_ecef_m
+            .try_into()
+            .map_err(|_| type_error("positionEcefM must contain exactly three coordinates"))?;
+        crate::sp3::precise_clock_relativity_at_query(
+            self.inner.as_ref(),
+            satellite,
+            state_epoch,
+            position_ecef_m,
+        )
+    }
+
     /// Usable GPS, Galileo, and BeiDou broadcast records in file order.
     #[wasm_bindgen(getter)]
     pub fn records(&self) -> Vec<BroadcastRecordJs> {
         self.inner
             .records()
             .iter()
-            .copied()
+            .cloned()
             .map(BroadcastRecordJs::from_core)
             .collect()
     }
 
-    /// Healthy GLONASS broadcast records in file order.
+    /// GLONASS broadcast records in file order, unhealthy ones included; a
+    /// query applies the health rule to the record it selects.
     #[wasm_bindgen(getter, js_name = glonassRecords)]
     pub fn glonass_records(&self) -> Vec<GlonassRecordJs> {
         self.inner
             .glonass_records()
             .iter()
-            .copied()
+            .cloned()
             .map(|inner| GlonassRecordJs { inner })
             .collect()
     }
@@ -787,10 +1108,43 @@ impl BroadcastEphemeris {
         self.inner.records().len()
     }
 
-    /// Number of usable GLONASS records.
+    /// Number of GLONASS records.
     #[wasm_bindgen(getter, js_name = glonassRecordCount)]
     pub fn glonass_record_count(&self) -> usize {
         self.inner.glonass_records().len()
+    }
+
+    /// Blocks the store could not read, each with its line; the rest of the
+    /// file was read.
+    #[wasm_bindgen(getter)]
+    pub fn skipped(&self) -> Vec<SkippedNavBlock> {
+        self.inner
+            .skipped()
+            .iter()
+            .cloned()
+            .map(|inner| SkippedNavBlock { inner })
+            .collect()
+    }
+
+    /// Departures from the format read through, as `{ line, satellite,
+    /// message }`, including a malformed optional header row whose value is
+    /// then absent.
+    #[wasm_bindgen(getter, unchecked_return_type = "RinexNavDiagnostic[]")]
+    pub fn departures(&self) -> Result<JsValue, JsValue> {
+        diagnostics_to_js(self.inner.departures())
+    }
+
+    /// The broadcast ionosphere coefficients in effect at `tJ2000S`: each
+    /// header set replaced by the frame of its system and model transmitted
+    /// latest at or before the epoch.
+    #[wasm_bindgen(js_name = ionoCorrectionsAt)]
+    pub fn iono_corrections_at(&self, t_j2000_s: f64) -> Result<IonoCorrectionsJs, JsValue> {
+        if !t_j2000_s.is_finite() {
+            return Err(range_error("tJ2000S must be a finite number"));
+        }
+        Ok(IonoCorrectionsJs {
+            inner: self.inner.iono_corrections_at(t_j2000_s),
+        })
     }
 
     /// Evaluate the store-selected broadcast state for `satellite` at GPST-like
@@ -818,14 +1172,17 @@ impl BroadcastEphemeris {
             }))
     }
 
-    /// Serialize the usable GPS, Galileo, and BeiDou broadcast records to
-    /// standard RINEX 3 navigation text. Deterministic: the same record set
-    /// always produces byte-identical text, and re-parsing the output yields the
-    /// same records. GLONASS state-vector records are not part of the Keplerian
-    /// broadcast-orbit grammar this writer emits and are therefore not included.
+    /// Serialize the Keplerian broadcast records to RINEX navigation text,
+    /// with a `PGM / RUN BY / DATE` record. Deterministic: the same record set
+    /// always produces byte-identical text. GLONASS state-vector records are
+    /// not part of the Keplerian broadcast-orbit grammar this writer emits and
+    /// are therefore not included; `parseRinexNavFile` keeps and restates a
+    /// whole file. Throws an `Error` for a set holding both a CNAV-family
+    /// record (RINEX 4 only) and an unclassified Galileo record (RINEX 3
+    /// only), or a CNAV-family record without CNAV parameters.
     #[wasm_bindgen(js_name = toRinexString)]
-    pub fn to_rinex_string(&self) -> String {
-        encode_nav(self.inner.records())
+    pub fn to_rinex_string(&self) -> Result<String, JsValue> {
+        encode_nav(self.inner.records()).map_err(engine_error)
     }
 }
 
@@ -834,8 +1191,11 @@ impl BroadcastEphemeris {
 #[wasm_bindgen(js_name = parseRinexNav)]
 pub fn parse_rinex_nav(bytes: &[u8]) -> Result<BroadcastEphemeris, JsValue> {
     let text = utf8_text(bytes, "RINEX NAV source")?;
-    let inner = CoreBroadcastStore::from_nav(&text).map_err(engine_error)?;
-    let leap_seconds = parse_leap_seconds(&text).map_err(engine_error)?;
+    let inner = Arc::new(CoreBroadcastStore::from_nav(&text).map_err(engine_error)?);
+    // A malformed LEAP SECONDS row leaves the value absent, as the store
+    // leaves every malformed optional header row, and is reported in the
+    // store's `departures`.
+    let leap_seconds = parse_leap_seconds(&text).ok().flatten();
     Ok(BroadcastEphemeris {
         inner,
         leap_seconds,
@@ -876,11 +1236,53 @@ pub fn parse_rinex_nav_lenient(bytes: &[u8]) -> Result<RinexNavParse, JsValue> {
 
 /// Encode an arbitrary caller-supplied list of broadcast records as RINEX NAV
 /// text. The list is consumed by the WASM boundary and the bytes are produced
-/// by the core's deterministic encoder.
+/// by the core's deterministic encoder. Throws an `Error` for a record set the
+/// writer refuses (see `BroadcastEphemeris.toRinexString`).
 #[wasm_bindgen(js_name = encodeRinexNav)]
-pub fn encode_rinex_nav(records: Vec<BroadcastRecordJs>) -> String {
+pub fn encode_rinex_nav(records: Vec<BroadcastRecordJs>) -> Result<String, JsValue> {
     let records: Vec<BroadcastRecord> = records.into_iter().map(|record| record.inner).collect();
-    encode_nav(&records)
+    encode_nav(&records).map_err(engine_error)
+}
+
+/// A whole RINEX navigation file: every header record and every block,
+/// decoded or not, with its text and line number.
+#[wasm_bindgen]
+pub struct RinexNavFile {
+    inner: sidereon_core::rinex::nav::NavFile,
+}
+
+#[wasm_bindgen]
+impl RinexNavFile {
+    /// Number of body blocks, in file order.
+    #[wasm_bindgen(getter, js_name = entryCount)]
+    pub fn entry_count(&self) -> usize {
+        self.inner.entries.len()
+    }
+
+    /// Header and body departures from the format read through, as
+    /// `{ line, satellite, message }`.
+    #[wasm_bindgen(getter, unchecked_return_type = "RinexNavDiagnostic[]")]
+    pub fn departures(&self) -> Result<JsValue, JsValue> {
+        diagnostics_to_js(&self.inner.departures())
+    }
+
+    /// Write the file back. A file read and written unchanged comes back byte
+    /// for byte. Throws an `Error` when the writer refuses the content.
+    #[wasm_bindgen(js_name = toRinexString)]
+    pub fn to_rinex_string(&self) -> Result<String, JsValue> {
+        sidereon_core::rinex::nav::encode_nav_file(&self.inner).map_err(engine_error)
+    }
+}
+
+/// Read a whole RINEX 2, 3 or 4 navigation file, keeping every header record
+/// and every block, decoded or not, so `toRinexString` restates it. Throws a
+/// `TypeError` on non-UTF-8 input and an `Error` on a header failure.
+#[wasm_bindgen(js_name = parseRinexNavFile)]
+pub fn parse_rinex_nav_file(bytes: &[u8]) -> Result<RinexNavFile, JsValue> {
+    let text = utf8_text(bytes, "RINEX NAV source")?;
+    Ok(RinexNavFile {
+        inner: sidereon_core::rinex::nav::parse_nav_file(&text).map_err(engine_error)?,
+    })
 }
 
 /// Parse all GLONASS state-vector records from RINEX NAV bytes.

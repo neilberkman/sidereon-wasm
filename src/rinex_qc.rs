@@ -1,5 +1,7 @@
 //! RINEX lint, repair, and observation QC bindings.
 
+use std::cell::OnceCell;
+
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -15,13 +17,15 @@ use sidereon_core::observation_qc::{
     SatelliteSignalQc, SnrStats, SsiHistogram, SystemCycleSlipQc, SystemMultipathQc,
     SystemSignalQc,
 };
+use sidereon_core::rinex::crinex::encode_crinex;
 use sidereon_core::rinex::nav::encode_nav;
-use sidereon_core::rinex::observations::{ObsEpochTime, PgmRunByDate};
+use sidereon_core::rinex::observations::{ObsEpochTime, PgmRunByDate, RinexObsWriteError};
 use sidereon_core::GnssSystem;
 
 use crate::error::{engine_error, type_error, utf8_text};
+use crate::label::{upper_snake_variant, Label};
 use crate::rinex_nav::{BroadcastRecordJs, IonoCorrectionsJs};
-use crate::rinex_obs::RinexObs;
+use crate::rinex_obs::{rinex_obs_write_error, RinexObs};
 
 fn to_value<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(value).map_err(|e| type_error(&e.to_string()))
@@ -62,7 +66,7 @@ struct FindingJs {
     spec_ref: &'static str,
     repairable: bool,
     at: FindingRefJs,
-    detail: String,
+    detail: FindingDetailJs,
 }
 
 fn finding_js(finding: &Finding) -> FindingJs {
@@ -72,7 +76,326 @@ fn finding_js(finding: &Finding) -> FindingJs {
         spec_ref: finding.spec_ref(),
         repairable: finding.is_repairable(),
         at: FindingRefJs::from(finding.at()),
-        detail: format!("{finding:?}"),
+        detail: FindingDetailJs::from(finding),
+    }
+}
+
+/// What a lint finding states, as a union on `kind` (the engine variant in
+/// UPPER_SNAKE_CASE) with the fields that variant carries. A satellite is its
+/// token (`"G05"`), a system its name (`"GPS"`), a time scale its label
+/// (`"gpst"`). A variant a later engine adds crosses as `OTHER` with its own
+/// name in `variant` and the engine's text in `text`.
+#[derive(Serialize)]
+#[serde(tag = "kind")]
+enum FindingDetailJs {
+    #[serde(rename = "OBS_FATAL_PARSE", rename_all = "camelCase")]
+    ObsFatalParse { message: String },
+    #[serde(rename = "OBS_UNPUBLISHED_VERSION", rename_all = "camelCase")]
+    ObsUnpublishedVersion { version: f64 },
+    #[serde(rename = "OBS_MISSING_HEADER", rename_all = "camelCase")]
+    ObsMissingHeader { label: &'static str },
+    #[serde(rename = "OBS_MISSING_OBS_TYPES")]
+    ObsMissingObsTypes,
+    #[serde(rename = "OBS_INVALID_OBS_CODE", rename_all = "camelCase")]
+    ObsInvalidObsCode { system: &'static str, code: String },
+    #[serde(rename = "OBS_DUPLICATE_OBS_CODE", rename_all = "camelCase")]
+    ObsDuplicateObsCode { system: &'static str, code: String },
+    #[serde(rename = "OBS_TIME_OF_FIRST_MISMATCH", rename_all = "camelCase")]
+    ObsTimeOfFirstMismatch {
+        declared: ObsEpochTimeJs,
+        declared_scale: &'static str,
+        observed: ObsEpochTimeJs,
+        observed_scale: &'static str,
+    },
+    #[serde(rename = "OBS_TIME_OF_LAST_MISMATCH", rename_all = "camelCase")]
+    ObsTimeOfLastMismatch {
+        declared: ObsEpochTimeJs,
+        declared_scale: &'static str,
+        observed: ObsEpochTimeJs,
+        observed_scale: &'static str,
+    },
+    #[serde(rename = "OBS_INTERVAL_MISMATCH", rename_all = "camelCase")]
+    ObsIntervalMismatch { declared_s: f64, observed_s: f64 },
+    #[serde(rename = "OBS_SATELLITE_COUNT_MISMATCH", rename_all = "camelCase")]
+    ObsSatelliteCountMismatch { declared: usize, observed: usize },
+    #[serde(rename = "OBS_PRN_OBS_COUNT_MISMATCH", rename_all = "camelCase")]
+    ObsPrnObsCountMismatch {
+        satellite: String,
+        code: String,
+        declared: Option<usize>,
+        observed: usize,
+    },
+    #[serde(rename = "OBS_GLONASS_SLOT_ISSUE", rename_all = "camelCase")]
+    ObsGlonassSlotIssue {
+        satellite: String,
+        issue: &'static str,
+    },
+    #[serde(rename = "OBS_PHASE_SHIFT_UNDECLARED_CODE", rename_all = "camelCase")]
+    ObsPhaseShiftUndeclaredCode { system: &'static str, code: String },
+    #[serde(rename = "OBS_SCALE_FACTOR_ISSUE", rename_all = "camelCase")]
+    ObsScaleFactorIssue {
+        system: &'static str,
+        code: Option<String>,
+    },
+    #[serde(rename = "OBS_MARKER_TYPE_ISSUE", rename_all = "camelCase")]
+    ObsMarkerTypeIssue { marker_type: String },
+    #[serde(rename = "OBS_IDENTITY_FIELD_ISSUE", rename_all = "camelCase")]
+    ObsIdentityFieldIssue { label: &'static str, value: String },
+    #[serde(rename = "OBS_IMPLAUSIBLE_APPROX_POSITION", rename_all = "camelCase")]
+    ObsImplausibleApproxPosition { radius_m: f64 },
+    #[serde(rename = "OBS_IMPLAUSIBLE_ANTENNA_DELTA", rename_all = "camelCase")]
+    ObsImplausibleAntennaDelta { component: usize, value_m: f64 },
+    #[serde(rename = "OBS_EPOCH_ORDER", rename_all = "camelCase")]
+    ObsEpochOrder {
+        previous: ObsEpochTimeJs,
+        current: ObsEpochTimeJs,
+    },
+    #[serde(rename = "OBS_DUPLICATE_EPOCH", rename_all = "camelCase")]
+    ObsDuplicateEpoch { epoch: ObsEpochTimeJs },
+    #[serde(rename = "OBS_SKIPPED_RECORDS", rename_all = "camelCase")]
+    ObsSkippedRecords { count: usize },
+    #[serde(rename = "OBS_EPOCH_SAT_COUNT_MISMATCH", rename_all = "camelCase")]
+    ObsEpochSatCountMismatch { declared: usize, retained: usize },
+    #[serde(rename = "OBS_UNRETAINED_HEADER", rename_all = "camelCase")]
+    ObsUnretainedHeader { label: String },
+    #[serde(rename = "OBS_PSEUDORANGE_OUT_OF_RANGE", rename_all = "camelCase")]
+    ObsPseudorangeOutOfRange { code: String, value_m: f64 },
+    #[serde(rename = "OBS_LOSS_OF_LOCK_OUT_OF_RANGE", rename_all = "camelCase")]
+    ObsLossOfLockOutOfRange { code: String, lli: u8 },
+    #[serde(rename = "OBS_EVENT_HEADER_UNREADABLE", rename_all = "camelCase")]
+    ObsEventHeaderUnreadable { message: String },
+    #[serde(rename = "OBS_EVENT_EPOCH", rename_all = "camelCase")]
+    ObsEventEpoch { flag: u8 },
+    #[serde(rename = "OBS_EMPTY_SATELLITE_RECORD")]
+    ObsEmptySatelliteRecord,
+    #[serde(rename = "OBS_EPOCH_GAP", rename_all = "camelCase")]
+    ObsEpochGap { gap_s: f64, interval_s: f64 },
+    #[serde(rename = "OBS_INTERVAL_UNAVAILABLE")]
+    ObsIntervalUnavailable,
+    #[serde(rename = "OBS_INVALID_INTERVAL", rename_all = "camelCase")]
+    ObsInvalidInterval { declared_s: f64 },
+    #[serde(rename = "NAV_FATAL_PARSE", rename_all = "camelCase")]
+    NavFatalParse { message: String },
+    #[serde(rename = "NAV_LEAP_SECONDS_ABSENT")]
+    NavLeapSecondsAbsent,
+    #[serde(rename = "NAV_IONO_MALFORMED", rename_all = "camelCase")]
+    NavIonoMalformed { message: String },
+    #[serde(rename = "NAV_DROPPED_BLOCK", rename_all = "camelCase")]
+    NavDroppedBlock { satellite: String, message: String },
+    #[serde(rename = "NAV_DUPLICATE_RECORD", rename_all = "camelCase")]
+    NavDuplicateRecord {
+        satellite: String,
+        same_payload: bool,
+    },
+    #[serde(rename = "NAV_UNSORTED_RECORDS")]
+    NavUnsortedRecords,
+    #[serde(rename = "NAV_IMPLAUSIBLE_RECORD", rename_all = "camelCase")]
+    NavImplausibleRecord {
+        satellite: String,
+        field: &'static str,
+        value: f64,
+    },
+    #[serde(rename = "NAV_UNHEALTHY_RECORDS", rename_all = "camelCase")]
+    NavUnhealthyRecords { system: &'static str, count: usize },
+    #[serde(rename = "NAV_OUT_OF_SCOPE_RECORDS", rename_all = "camelCase")]
+    NavOutOfScopeRecords { class: String, count: usize },
+    #[serde(rename = "OTHER", rename_all = "camelCase")]
+    Other { variant: Label, text: String },
+}
+
+impl From<&Finding> for FindingDetailJs {
+    fn from(finding: &Finding) -> Self {
+        use crate::bias::time_scale_label as scale;
+        match finding {
+            Finding::ObsFatalParse { message, .. } => Self::ObsFatalParse {
+                message: message.clone(),
+            },
+            Finding::ObsUnpublishedVersion { version, .. } => {
+                Self::ObsUnpublishedVersion { version: *version }
+            }
+            Finding::ObsMissingHeader { label, .. } => Self::ObsMissingHeader { label },
+            Finding::ObsMissingObsTypes { .. } => Self::ObsMissingObsTypes,
+            Finding::ObsInvalidObsCode { system, code, .. } => Self::ObsInvalidObsCode {
+                system: system_label(*system),
+                code: code.clone(),
+            },
+            Finding::ObsDuplicateObsCode { system, code, .. } => Self::ObsDuplicateObsCode {
+                system: system_label(*system),
+                code: code.clone(),
+            },
+            Finding::ObsTimeOfFirstMismatch {
+                declared,
+                declared_scale,
+                observed,
+                observed_scale,
+                ..
+            } => Self::ObsTimeOfFirstMismatch {
+                declared: epoch_time_js(*declared),
+                declared_scale: scale(*declared_scale),
+                observed: epoch_time_js(*observed),
+                observed_scale: scale(*observed_scale),
+            },
+            Finding::ObsTimeOfLastMismatch {
+                declared,
+                declared_scale,
+                observed,
+                observed_scale,
+                ..
+            } => Self::ObsTimeOfLastMismatch {
+                declared: epoch_time_js(*declared),
+                declared_scale: scale(*declared_scale),
+                observed: epoch_time_js(*observed),
+                observed_scale: scale(*observed_scale),
+            },
+            Finding::ObsIntervalMismatch {
+                declared_s,
+                observed_s,
+                ..
+            } => Self::ObsIntervalMismatch {
+                declared_s: *declared_s,
+                observed_s: *observed_s,
+            },
+            Finding::ObsSatelliteCountMismatch {
+                declared, observed, ..
+            } => Self::ObsSatelliteCountMismatch {
+                declared: *declared,
+                observed: *observed,
+            },
+            Finding::ObsPrnObsCountMismatch {
+                satellite,
+                code,
+                declared,
+                observed,
+                ..
+            } => Self::ObsPrnObsCountMismatch {
+                satellite: satellite.to_string(),
+                code: code.clone(),
+                declared: *declared,
+                observed: *observed,
+            },
+            Finding::ObsGlonassSlotIssue {
+                satellite, issue, ..
+            } => Self::ObsGlonassSlotIssue {
+                satellite: satellite.to_string(),
+                issue,
+            },
+            Finding::ObsPhaseShiftUndeclaredCode { system, code, .. } => {
+                Self::ObsPhaseShiftUndeclaredCode {
+                    system: system_label(*system),
+                    code: code.clone(),
+                }
+            }
+            Finding::ObsScaleFactorIssue { system, code, .. } => Self::ObsScaleFactorIssue {
+                system: system_label(*system),
+                code: code.clone(),
+            },
+            Finding::ObsMarkerTypeIssue { marker_type, .. } => Self::ObsMarkerTypeIssue {
+                marker_type: marker_type.clone(),
+            },
+            Finding::ObsIdentityFieldIssue { label, value, .. } => Self::ObsIdentityFieldIssue {
+                label,
+                value: value.clone(),
+            },
+            Finding::ObsImplausibleApproxPosition { radius_m, .. } => {
+                Self::ObsImplausibleApproxPosition {
+                    radius_m: *radius_m,
+                }
+            }
+            Finding::ObsImplausibleAntennaDelta {
+                component, value_m, ..
+            } => Self::ObsImplausibleAntennaDelta {
+                component: *component,
+                value_m: *value_m,
+            },
+            Finding::ObsEpochOrder {
+                previous, current, ..
+            } => Self::ObsEpochOrder {
+                previous: epoch_time_js(*previous),
+                current: epoch_time_js(*current),
+            },
+            Finding::ObsDuplicateEpoch { epoch, .. } => Self::ObsDuplicateEpoch {
+                epoch: epoch_time_js(*epoch),
+            },
+            Finding::ObsSkippedRecords { count, .. } => Self::ObsSkippedRecords { count: *count },
+            Finding::ObsEpochSatCountMismatch {
+                declared, retained, ..
+            } => Self::ObsEpochSatCountMismatch {
+                declared: *declared,
+                retained: *retained,
+            },
+            Finding::ObsUnretainedHeader { label, .. } => Self::ObsUnretainedHeader {
+                label: label.clone(),
+            },
+            Finding::ObsPseudorangeOutOfRange { code, value_m, .. } => {
+                Self::ObsPseudorangeOutOfRange {
+                    code: code.clone(),
+                    value_m: *value_m,
+                }
+            }
+            Finding::ObsLossOfLockOutOfRange { code, lli, .. } => Self::ObsLossOfLockOutOfRange {
+                code: code.clone(),
+                lli: *lli,
+            },
+            Finding::ObsEventHeaderUnreadable { message, .. } => Self::ObsEventHeaderUnreadable {
+                message: message.clone(),
+            },
+            Finding::ObsEventEpoch { flag, .. } => Self::ObsEventEpoch { flag: *flag },
+            Finding::ObsEmptySatelliteRecord { .. } => Self::ObsEmptySatelliteRecord,
+            Finding::ObsEpochGap {
+                gap_s, interval_s, ..
+            } => Self::ObsEpochGap {
+                gap_s: *gap_s,
+                interval_s: *interval_s,
+            },
+            Finding::ObsIntervalUnavailable { .. } => Self::ObsIntervalUnavailable,
+            Finding::ObsInvalidInterval { declared_s, .. } => Self::ObsInvalidInterval {
+                declared_s: *declared_s,
+            },
+            Finding::NavFatalParse { message, .. } => Self::NavFatalParse {
+                message: message.clone(),
+            },
+            Finding::NavLeapSecondsAbsent { .. } => Self::NavLeapSecondsAbsent,
+            Finding::NavIonoMalformed { message, .. } => Self::NavIonoMalformed {
+                message: message.clone(),
+            },
+            Finding::NavDroppedBlock {
+                satellite, message, ..
+            } => Self::NavDroppedBlock {
+                satellite: satellite.clone(),
+                message: message.clone(),
+            },
+            Finding::NavDuplicateRecord {
+                satellite,
+                same_payload,
+                ..
+            } => Self::NavDuplicateRecord {
+                satellite: satellite.to_string(),
+                same_payload: *same_payload,
+            },
+            Finding::NavUnsortedRecords { .. } => Self::NavUnsortedRecords,
+            Finding::NavImplausibleRecord {
+                satellite,
+                field,
+                value,
+                ..
+            } => Self::NavImplausibleRecord {
+                satellite: satellite.to_string(),
+                field,
+                value: *value,
+            },
+            Finding::NavUnhealthyRecords { system, count, .. } => Self::NavUnhealthyRecords {
+                system: system_label(*system),
+                count: *count,
+            },
+            Finding::NavOutOfScopeRecords { class, count, .. } => Self::NavOutOfScopeRecords {
+                class: class.clone(),
+                count: *count,
+            },
+            other => Self::Other {
+                variant: upper_snake_variant(other),
+                text: format!("{other:?}"),
+            },
+        }
     }
 }
 
@@ -177,24 +500,38 @@ fn repair_options(value: JsValue) -> Result<RepairOptions, JsValue> {
 }
 
 /// Lint RINEX observation text.
-#[wasm_bindgen(js_name = lintRinexObs)]
+#[wasm_bindgen(js_name = lintRinexObs, unchecked_return_type = "RinexLintReport")]
 pub fn lint_rinex_obs(bytes: &[u8]) -> Result<JsValue, JsValue> {
     let text = utf8_text(bytes, "RINEX OBS source")?;
     to_value(&lint_report_js(&sidereon::lint_rinex_obs(&text)))
 }
 
 /// Lint RINEX navigation text.
-#[wasm_bindgen(js_name = lintRinexNav)]
+#[wasm_bindgen(js_name = lintRinexNav, unchecked_return_type = "RinexLintReport")]
 pub fn lint_rinex_nav(bytes: &[u8]) -> Result<JsValue, JsValue> {
     let text = utf8_text(bytes, "RINEX NAV source")?;
     to_value(&lint_report_js(&sidereon::lint_rinex_nav(&text)))
 }
 
 /// Observation repair result.
+///
+/// The repaired product, the actions and the remaining lint report are
+/// available whether or not the product can be written. The text is written
+/// when first asked for, and a product the strict writer refuses throws the
+/// same typed `RinexObsWriteError` from `repairedText` and `toCrinexString`
+/// that `RinexObs.toRinexString` throws.
 #[wasm_bindgen]
 pub struct RinexObsRepair {
     inner: CoreObsRepair,
-    repaired_text: String,
+    repaired_text: OnceCell<Result<String, RinexObsWriteError>>,
+}
+
+impl RinexObsRepair {
+    /// The repaired product written by the strict writer, once.
+    fn written(&self) -> &Result<String, RinexObsWriteError> {
+        self.repaired_text
+            .get_or_init(|| self.inner.repaired.to_rinex_string())
+    }
 }
 
 #[wasm_bindgen]
@@ -204,9 +541,12 @@ impl RinexObsRepair {
         RinexObs::from_core(self.inner.repaired.clone())
     }
 
+    /// The repaired product as RINEX observation text. Throws a
+    /// `RinexObsWriteError` whose `detail` names what the text could not
+    /// carry, rather than returning text that reads back as something else.
     #[wasm_bindgen(getter, js_name = repairedText)]
-    pub fn repaired_text(&self) -> String {
-        self.repaired_text.clone()
+    pub fn repaired_text(&self) -> Result<String, JsValue> {
+        self.written().clone().map_err(rinex_obs_write_error)
     }
 
     #[wasm_bindgen(getter)]
@@ -215,7 +555,7 @@ impl RinexObsRepair {
         to_value(&actions)
     }
 
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, unchecked_return_type = "RinexLintReport")]
     pub fn remaining(&self) -> Result<JsValue, JsValue> {
         to_value(&lint_report_js(&self.inner.remaining))
     }
@@ -225,22 +565,31 @@ impl RinexObsRepair {
         self.inner.decoded_from_crinex
     }
 
+    /// The repaired product as CRINEX text: the strict RINEX writer's text
+    /// compressed by the CRINEX encoder, as `repair_obs_to_crinex_string`
+    /// composes them. A writer refusal throws the typed `RinexObsWriteError`
+    /// `repairedText` throws; an encoder refusal throws an `Error` with the
+    /// encoder's message.
     #[wasm_bindgen(js_name = toCrinexString)]
     pub fn to_crinex_string(&self) -> Result<String, JsValue> {
-        sidereon_core::rinex::qc::repair_obs_to_crinex_string(&self.inner).map_err(engine_error)
+        let text = self.written().clone().map_err(rinex_obs_write_error)?;
+        encode_crinex(&text).map_err(engine_error)
     }
 }
 
 /// Repair RINEX observation text.
+///
+/// The repair is returned whether or not its product can be written; writing
+/// happens in `repairedText` and `toCrinexString`, which throw the typed
+/// writer refusal.
 #[wasm_bindgen(js_name = repairRinexObs)]
 pub fn repair_rinex_obs(bytes: &[u8], options: JsValue) -> Result<RinexObsRepair, JsValue> {
     let text = utf8_text(bytes, "RINEX OBS source")?;
     let inner =
         sidereon::repair_rinex_obs(&text, &repair_options(options)?).map_err(engine_error)?;
-    let repaired_text = inner.repaired.to_rinex_string();
     Ok(RinexObsRepair {
         inner,
-        repaired_text,
+        repaired_text: OnceCell::new(),
     })
 }
 
@@ -274,7 +623,7 @@ impl RinexNavRepair {
         to_value(&actions)
     }
 
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, unchecked_return_type = "RinexLintReport")]
     pub fn remaining(&self) -> Result<JsValue, JsValue> {
         to_value(&lint_report_js(&self.inner.remaining))
     }
@@ -296,7 +645,7 @@ pub fn repair_rinex_nav(bytes: &[u8], options: JsValue) -> Result<RinexNavRepair
     let text = utf8_text(bytes, "RINEX NAV source")?;
     let inner =
         sidereon::repair_rinex_nav(&text, &repair_options(options)?).map_err(engine_error)?;
-    let repaired_text = encode_nav(&inner.records);
+    let repaired_text = encode_nav(&inner.records).map_err(engine_error)?;
     Ok(RinexNavRepair {
         inner,
         repaired_text,
@@ -613,6 +962,105 @@ fn note_js(note: ObservationQcNote) -> ObservationQcNoteJs {
             kind: "intervalUnresolved",
             epoch_index: None,
         },
+        // An event's header records did not read, so every epoch was taken
+        // with the file header. A product read from text always reads, so only
+        // a product built or changed in memory reaches this.
+        ObservationQcNote::EventHeaderRecordsUnread => ObservationQcNoteJs {
+            kind: "eventHeaderRecordsUnread",
+            epoch_index: None,
+        },
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ObservationQcReceiverJs {
+    number: String,
+    receiver_type: String,
+    version: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ObservationQcAntennaJs {
+    number: String,
+    antenna_type: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ObservationQcTimeJs {
+    epoch: ObsEpochTimeJs,
+    time_scale: Option<String>,
+}
+
+fn qc_time_js(time: &sidereon_core::observation_qc::ObservationQcTime) -> ObservationQcTimeJs {
+    ObservationQcTimeJs {
+        epoch: epoch_time_js(time.epoch),
+        time_scale: time.time_scale.clone(),
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ObservationQcHeaderJs {
+    marker_name: Option<String>,
+    marker_number: Option<String>,
+    marker_type: Option<String>,
+    receiver: Option<ObservationQcReceiverJs>,
+    antenna: Option<ObservationQcAntennaJs>,
+    approx_position_m: Option<[f64; 3]>,
+    antenna_delta_hen_m: Option<[f64; 3]>,
+    time_of_first_obs: Option<ObservationQcTimeJs>,
+    time_of_last_obs: Option<ObservationQcTimeJs>,
+    duration_s: Option<f64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemObservationQcJs {
+    system: &'static str,
+    satellites_seen: usize,
+    epochs_with_observations: usize,
+    value_observations: usize,
+    expected_observations: usize,
+    completeness_ratio: Option<f64>,
+    gap_count: usize,
+    total_gap_s: f64,
+}
+
+fn qc_header_js(h: &sidereon_core::observation_qc::ObservationQcHeader) -> ObservationQcHeaderJs {
+    ObservationQcHeaderJs {
+        marker_name: h.marker_name.clone(),
+        marker_number: h.marker_number.clone(),
+        marker_type: h.marker_type.clone(),
+        receiver: h.receiver.as_ref().map(|r| ObservationQcReceiverJs {
+            number: r.number.clone(),
+            receiver_type: r.receiver_type.clone(),
+            version: r.version.clone(),
+        }),
+        antenna: h.antenna.as_ref().map(|a| ObservationQcAntennaJs {
+            number: a.number.clone(),
+            antenna_type: a.antenna_type.clone(),
+        }),
+        approx_position_m: h.approx_position_m,
+        antenna_delta_hen_m: h.antenna_delta_hen_m,
+        time_of_first_obs: h.time_of_first_obs.as_ref().map(qc_time_js),
+        time_of_last_obs: h.time_of_last_obs.as_ref().map(qc_time_js),
+        duration_s: h.duration_s,
+    }
+}
+
+fn system_qc_js(row: &sidereon_core::observation_qc::SystemObservationQc) -> SystemObservationQcJs {
+    SystemObservationQcJs {
+        system: system_label(row.system),
+        satellites_seen: row.satellites_seen,
+        epochs_with_observations: row.epochs_with_observations,
+        value_observations: row.value_observations,
+        expected_observations: row.expected_observations,
+        completeness_ratio: row.completeness_ratio,
+        gap_count: row.gap_count,
+        total_gap_s: row.total_gap_s,
     }
 }
 
@@ -635,6 +1083,7 @@ fn observation_qc_finding_js(finding: &ObservationQcFinding) -> ObservationQcFin
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ObservationQcReportJs {
+    header: ObservationQcHeaderJs,
     total_epoch_records: usize,
     observation_epochs: usize,
     event_records: usize,
@@ -651,11 +1100,13 @@ struct ObservationQcReportJs {
     satellite_signals: Vec<SatelliteSignalQcJs>,
     system_signals: Vec<SystemSignalQcJs>,
     lint_findings: Vec<ObservationQcFindingJs>,
+    systems: Vec<SystemObservationQcJs>,
     notes: Vec<ObservationQcNoteJs>,
 }
 
 fn observation_qc_report_js(report: &CoreObservationQcReport) -> ObservationQcReportJs {
     ObservationQcReportJs {
+        header: qc_header_js(&report.header),
         total_epoch_records: report.total_epoch_records,
         observation_epochs: report.observation_epochs,
         event_records: report.event_records,
@@ -684,6 +1135,7 @@ fn observation_qc_report_js(report: &CoreObservationQcReport) -> ObservationQcRe
             .iter()
             .map(observation_qc_finding_js)
             .collect(),
+        systems: report.systems.iter().map(system_qc_js).collect(),
         notes: report.notes.iter().copied().map(note_js).collect(),
     }
 }
@@ -696,6 +1148,23 @@ pub struct ObservationQcReport {
 
 #[wasm_bindgen]
 impl ObservationQcReport {
+    /// The header fields the report was built from: marker, receiver,
+    /// antenna, approximate position, antenna delta, first and last
+    /// observation times and the duration between them. A field the header
+    /// does not state is `null`.
+    #[wasm_bindgen(getter, unchecked_return_type = "ObservationQcHeader")]
+    pub fn header(&self) -> Result<JsValue, JsValue> {
+        crate::error::to_plain_js(&qc_header_js(&self.inner.header), "observation QC header")
+    }
+
+    /// Per-system completeness, in the order the report lists the systems.
+    #[wasm_bindgen(getter, unchecked_return_type = "SystemObservationQc[]")]
+    pub fn systems(&self) -> Result<JsValue, JsValue> {
+        let rows: Vec<SystemObservationQcJs> =
+            self.inner.systems.iter().map(system_qc_js).collect();
+        crate::error::to_plain_js(&rows, "observation QC systems")
+    }
+
     #[wasm_bindgen(getter, js_name = totalEpochRecords)]
     pub fn total_epoch_records(&self) -> usize {
         self.inner.total_epoch_records
@@ -826,4 +1295,466 @@ pub fn observation_qc(obs: &RinexObs, options: JsValue) -> Result<ObservationQcR
     let inner = observation_qc_with_options(&obs.inner, observation_qc_options(options)?)
         .map_err(engine_error)?;
     Ok(ObservationQcReport { inner })
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const TS_RINEX_LINT: &str = r#"
+/** A header time of an observation QC report, with the time system the header names. */
+export interface ObservationQcTime {
+    epoch: RinexLintEpochTime;
+    timeScale: string | null;
+}
+
+/** The header fields an observation QC report was built from; null where the header states none. */
+export interface ObservationQcHeader {
+    markerName: string | null;
+    markerNumber: string | null;
+    markerType: string | null;
+    receiver: { number: string; receiverType: string; version: string } | null;
+    antenna: { number: string; antennaType: string } | null;
+    approxPositionM: [number, number, number] | null;
+    antennaDeltaHenM: [number, number, number] | null;
+    timeOfFirstObs: ObservationQcTime | null;
+    timeOfLastObs: ObservationQcTime | null;
+    durationS: number | null;
+}
+
+/** Per-system completeness of an observation QC report. */
+export interface SystemObservationQc {
+    system: RinexLintSystem;
+    satellitesSeen: number;
+    epochsWithObservations: number;
+    valueObservations: number;
+    expectedObservations: number;
+    completenessRatio: number | null;
+    gapCount: number;
+    totalGapS: number;
+}
+
+/** The GNSS system a lint finding names. */
+export type RinexLintSystem = "GPS" | "GLONASS" | "Galileo" | "BeiDou" | "QZSS" | "SBAS" | "NavIC";
+
+/** The time scale a lint finding names. */
+export type RinexLintTimeScale = "utc" | "tai" | "tt" | "tdb" | "gpst" | "gst" | "bdt" | "glonasst" | "qzsst" | "tcg" | "tcb";
+
+/** A civil epoch of a lint finding, in the file's own time scale. */
+export interface RinexLintEpochTime {
+    year: number;
+    month: number;
+    day: number;
+    hour: number;
+    minute: number;
+    second: number;
+}
+
+/**
+ * What a lint finding states, as a union on kind (the engine variant in
+ * UPPER_SNAKE_CASE) with its fields. A variant a later engine adds crosses as
+ * OTHER with its own name in variant.
+ */
+export type RinexLintFindingDetail =
+    | { kind: "OBS_FATAL_PARSE"; message: string }
+    | { kind: "OBS_UNPUBLISHED_VERSION"; version: number }
+    | { kind: "OBS_MISSING_HEADER"; label: string }
+    | { kind: "OBS_MISSING_OBS_TYPES" }
+    | { kind: "OBS_INVALID_OBS_CODE"; system: RinexLintSystem; code: string }
+    | { kind: "OBS_DUPLICATE_OBS_CODE"; system: RinexLintSystem; code: string }
+    | { kind: "OBS_TIME_OF_FIRST_MISMATCH"; declared: RinexLintEpochTime; declaredScale: RinexLintTimeScale; observed: RinexLintEpochTime; observedScale: RinexLintTimeScale }
+    | { kind: "OBS_TIME_OF_LAST_MISMATCH"; declared: RinexLintEpochTime; declaredScale: RinexLintTimeScale; observed: RinexLintEpochTime; observedScale: RinexLintTimeScale }
+    | { kind: "OBS_INTERVAL_MISMATCH"; declaredS: number; observedS: number }
+    | { kind: "OBS_SATELLITE_COUNT_MISMATCH"; declared: number; observed: number }
+    | { kind: "OBS_PRN_OBS_COUNT_MISMATCH"; satellite: string; code: string; declared: number | undefined; observed: number }
+    | { kind: "OBS_GLONASS_SLOT_ISSUE"; satellite: string; issue: string }
+    | { kind: "OBS_PHASE_SHIFT_UNDECLARED_CODE"; system: RinexLintSystem; code: string }
+    | { kind: "OBS_SCALE_FACTOR_ISSUE"; system: RinexLintSystem; code: string | undefined }
+    | { kind: "OBS_MARKER_TYPE_ISSUE"; markerType: string }
+    | { kind: "OBS_IDENTITY_FIELD_ISSUE"; label: string; value: string }
+    | { kind: "OBS_IMPLAUSIBLE_APPROX_POSITION"; radiusM: number }
+    | { kind: "OBS_IMPLAUSIBLE_ANTENNA_DELTA"; component: number; valueM: number }
+    | { kind: "OBS_EPOCH_ORDER"; previous: RinexLintEpochTime; current: RinexLintEpochTime }
+    | { kind: "OBS_DUPLICATE_EPOCH"; epoch: RinexLintEpochTime }
+    | { kind: "OBS_SKIPPED_RECORDS"; count: number }
+    | { kind: "OBS_EPOCH_SAT_COUNT_MISMATCH"; declared: number; retained: number }
+    | { kind: "OBS_UNRETAINED_HEADER"; label: string }
+    | { kind: "OBS_PSEUDORANGE_OUT_OF_RANGE"; code: string; valueM: number }
+    | { kind: "OBS_LOSS_OF_LOCK_OUT_OF_RANGE"; code: string; lli: number }
+    | { kind: "OBS_EVENT_HEADER_UNREADABLE"; message: string }
+    | { kind: "OBS_EVENT_EPOCH"; flag: number }
+    | { kind: "OBS_EMPTY_SATELLITE_RECORD" }
+    | { kind: "OBS_EPOCH_GAP"; gapS: number; intervalS: number }
+    | { kind: "OBS_INTERVAL_UNAVAILABLE" }
+    | { kind: "OBS_INVALID_INTERVAL"; declaredS: number }
+    | { kind: "NAV_FATAL_PARSE"; message: string }
+    | { kind: "NAV_LEAP_SECONDS_ABSENT" }
+    | { kind: "NAV_IONO_MALFORMED"; message: string }
+    | { kind: "NAV_DROPPED_BLOCK"; satellite: string; message: string }
+    | { kind: "NAV_DUPLICATE_RECORD"; satellite: string; samePayload: boolean }
+    | { kind: "NAV_UNSORTED_RECORDS" }
+    | { kind: "NAV_IMPLAUSIBLE_RECORD"; satellite: string; field: string; value: number }
+    | { kind: "NAV_UNHEALTHY_RECORDS"; system: RinexLintSystem; count: number }
+    | { kind: "NAV_OUT_OF_SCOPE_RECORDS"; class: string; count: number }
+    | { kind: "OTHER"; variant: string; text: string };
+
+/** One lint finding. */
+export interface RinexLintFinding {
+    code: string;
+    severity: "fatal" | "error" | "warning" | "info";
+    specRef: string;
+    repairable: boolean;
+    at: {
+        epochIndex: number | undefined;
+        satellite: string | undefined;
+        field: string | undefined;
+    };
+    detail: RinexLintFindingDetail;
+}
+
+/** The result of lintRinexObs and lintRinexNav. */
+export interface RinexLintReport {
+    clean: boolean;
+    decodedFromCrinex: boolean;
+    findingCount: number;
+    counts: { fatal: number; error: number; warning: number; info: number };
+    findings: RinexLintFinding[];
+}
+"#;
+
+#[cfg(test)]
+mod finding_detail_conversion_tests {
+    use super::*;
+    use serde_json::json;
+    use sidereon_core::astro::time::TimeScale;
+    use sidereon_core::{GnssSatelliteId, GnssSystem};
+
+    #[test]
+    fn all_forty_variants_preserve_payload_fields_and_five_methods() {
+        let at = FindingRef {
+            epoch_index: Some(7),
+            satellite: Some("G09".into()),
+            field: Some("SYS / # / OBS TYPES"),
+        };
+        let epoch = ObsEpochTime {
+            year: 2024,
+            month: 2,
+            day: 3,
+            hour: 4,
+            minute: 5,
+            second: 6.25,
+        };
+        let sat = GnssSatelliteId::new(GnssSystem::Gps, 9).unwrap();
+        let cases: Vec<(Finding, serde_json::Value)> = vec![
+            (
+                Finding::ObsFatalParse {
+                    at: at.clone(),
+                    message: "m01".into(),
+                },
+                json!({"kind":"OBS_FATAL_PARSE","message":"m01"}),
+            ),
+            (
+                Finding::ObsUnpublishedVersion {
+                    at: at.clone(),
+                    version: 9.125,
+                },
+                json!({"kind":"OBS_UNPUBLISHED_VERSION","version":9.125}),
+            ),
+            (
+                Finding::ObsMissingHeader {
+                    at: at.clone(),
+                    label: "L03",
+                },
+                json!({"kind":"OBS_MISSING_HEADER","label":"L03"}),
+            ),
+            (
+                Finding::ObsMissingObsTypes { at: at.clone() },
+                json!({"kind":"OBS_MISSING_OBS_TYPES"}),
+            ),
+            (
+                Finding::ObsInvalidObsCode {
+                    at: at.clone(),
+                    system: GnssSystem::Gps,
+                    code: "C1Z".into(),
+                },
+                json!({"kind":"OBS_INVALID_OBS_CODE","system":"GPS","code":"C1Z"}),
+            ),
+            (
+                Finding::ObsDuplicateObsCode {
+                    at: at.clone(),
+                    system: GnssSystem::Gps,
+                    code: "L1C".into(),
+                },
+                json!({"kind":"OBS_DUPLICATE_OBS_CODE","system":"GPS","code":"L1C"}),
+            ),
+            (
+                Finding::ObsTimeOfFirstMismatch {
+                    at: at.clone(),
+                    declared: epoch,
+                    declared_scale: TimeScale::Gpst,
+                    observed: epoch,
+                    observed_scale: TimeScale::Utc,
+                },
+                json!({"kind":"OBS_TIME_OF_FIRST_MISMATCH","declared":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25},"declaredScale":"gpst","observed":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25},"observedScale":"utc"}),
+            ),
+            (
+                Finding::ObsTimeOfLastMismatch {
+                    at: at.clone(),
+                    declared: epoch,
+                    declared_scale: TimeScale::Gpst,
+                    observed: epoch,
+                    observed_scale: TimeScale::Utc,
+                },
+                json!({"kind":"OBS_TIME_OF_LAST_MISMATCH","declared":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25},"declaredScale":"gpst","observed":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25},"observedScale":"utc"}),
+            ),
+            (
+                Finding::ObsIntervalMismatch {
+                    at: at.clone(),
+                    declared_s: 9.5,
+                    observed_s: 10.5,
+                },
+                json!({"kind":"OBS_INTERVAL_MISMATCH","declaredS":9.5,"observedS":10.5}),
+            ),
+            (
+                Finding::ObsSatelliteCountMismatch {
+                    at: at.clone(),
+                    declared: 11,
+                    observed: 12,
+                },
+                json!({"kind":"OBS_SATELLITE_COUNT_MISMATCH","declared":11,"observed":12}),
+            ),
+            (
+                Finding::ObsPrnObsCountMismatch {
+                    at: at.clone(),
+                    satellite: sat,
+                    code: "C1C".into(),
+                    declared: Some(13),
+                    observed: 14,
+                },
+                json!({"kind":"OBS_PRN_OBS_COUNT_MISMATCH","satellite":"G09","code":"C1C","declared":13,"observed":14}),
+            ),
+            (
+                Finding::ObsGlonassSlotIssue {
+                    at: at.clone(),
+                    satellite: sat,
+                    issue: "missing slot",
+                },
+                json!({"kind":"OBS_GLONASS_SLOT_ISSUE","satellite":"G09","issue":"missing slot"}),
+            ),
+            (
+                Finding::ObsPhaseShiftUndeclaredCode {
+                    at: at.clone(),
+                    system: GnssSystem::Gps,
+                    code: "L1C".into(),
+                },
+                json!({"kind":"OBS_PHASE_SHIFT_UNDECLARED_CODE","system":"GPS","code":"L1C"}),
+            ),
+            (
+                Finding::ObsScaleFactorIssue {
+                    at: at.clone(),
+                    system: GnssSystem::Gps,
+                    code: Some("C1C".into()),
+                },
+                json!({"kind":"OBS_SCALE_FACTOR_ISSUE","system":"GPS","code":"C1C"}),
+            ),
+            (
+                Finding::ObsMarkerTypeIssue {
+                    at: at.clone(),
+                    marker_type: "M15".into(),
+                },
+                json!({"kind":"OBS_MARKER_TYPE_ISSUE","markerType":"M15"}),
+            ),
+            (
+                Finding::ObsIdentityFieldIssue {
+                    at: at.clone(),
+                    label: "L16",
+                    value: "V16".into(),
+                },
+                json!({"kind":"OBS_IDENTITY_FIELD_ISSUE","label":"L16","value":"V16"}),
+            ),
+            (
+                Finding::ObsImplausibleApproxPosition {
+                    at: at.clone(),
+                    radius_m: 17.5,
+                },
+                json!({"kind":"OBS_IMPLAUSIBLE_APPROX_POSITION","radiusM":17.5}),
+            ),
+            (
+                Finding::ObsImplausibleAntennaDelta {
+                    at: at.clone(),
+                    component: 18,
+                    value_m: 19.5,
+                },
+                json!({"kind":"OBS_IMPLAUSIBLE_ANTENNA_DELTA","component":18,"valueM":19.5}),
+            ),
+            (
+                Finding::ObsEpochOrder {
+                    at: at.clone(),
+                    previous: epoch,
+                    current: epoch,
+                },
+                json!({"kind":"OBS_EPOCH_ORDER","previous":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25},"current":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25}}),
+            ),
+            (
+                Finding::ObsDuplicateEpoch {
+                    at: at.clone(),
+                    epoch,
+                },
+                json!({"kind":"OBS_DUPLICATE_EPOCH","epoch":{"year":2024,"month":2,"day":3,"hour":4,"minute":5,"second":6.25}}),
+            ),
+            (
+                Finding::ObsSkippedRecords {
+                    at: at.clone(),
+                    count: 21,
+                },
+                json!({"kind":"OBS_SKIPPED_RECORDS","count":21}),
+            ),
+            (
+                Finding::ObsEpochSatCountMismatch {
+                    at: at.clone(),
+                    declared: 22,
+                    retained: 23,
+                },
+                json!({"kind":"OBS_EPOCH_SAT_COUNT_MISMATCH","declared":22,"retained":23}),
+            ),
+            (
+                Finding::ObsUnretainedHeader {
+                    at: at.clone(),
+                    label: "L24".into(),
+                },
+                json!({"kind":"OBS_UNRETAINED_HEADER","label":"L24"}),
+            ),
+            (
+                Finding::ObsPseudorangeOutOfRange {
+                    at: at.clone(),
+                    code: "C1C".into(),
+                    value_m: 25.5,
+                },
+                json!({"kind":"OBS_PSEUDORANGE_OUT_OF_RANGE","code":"C1C","valueM":25.5}),
+            ),
+            (
+                Finding::ObsLossOfLockOutOfRange {
+                    at: at.clone(),
+                    code: "L1C".into(),
+                    lli: 26,
+                },
+                json!({"kind":"OBS_LOSS_OF_LOCK_OUT_OF_RANGE","code":"L1C","lli":26}),
+            ),
+            (
+                Finding::ObsEventHeaderUnreadable {
+                    at: at.clone(),
+                    message: "m27".into(),
+                },
+                json!({"kind":"OBS_EVENT_HEADER_UNREADABLE","message":"m27"}),
+            ),
+            (
+                Finding::ObsEventEpoch {
+                    at: at.clone(),
+                    flag: 28,
+                },
+                json!({"kind":"OBS_EVENT_EPOCH","flag":28}),
+            ),
+            (
+                Finding::ObsEmptySatelliteRecord { at: at.clone() },
+                json!({"kind":"OBS_EMPTY_SATELLITE_RECORD"}),
+            ),
+            (
+                Finding::ObsEpochGap {
+                    at: at.clone(),
+                    gap_s: 29.5,
+                    interval_s: 30.5,
+                },
+                json!({"kind":"OBS_EPOCH_GAP","gapS":29.5,"intervalS":30.5}),
+            ),
+            (
+                Finding::NavFatalParse {
+                    at: at.clone(),
+                    message: "m31".into(),
+                },
+                json!({"kind":"NAV_FATAL_PARSE","message":"m31"}),
+            ),
+            (
+                Finding::NavLeapSecondsAbsent { at: at.clone() },
+                json!({"kind":"NAV_LEAP_SECONDS_ABSENT"}),
+            ),
+            (
+                Finding::NavIonoMalformed {
+                    at: at.clone(),
+                    message: "m33".into(),
+                },
+                json!({"kind":"NAV_IONO_MALFORMED","message":"m33"}),
+            ),
+            (
+                Finding::NavDroppedBlock {
+                    at: at.clone(),
+                    satellite: "G09".into(),
+                    message: "m34".into(),
+                },
+                json!({"kind":"NAV_DROPPED_BLOCK","satellite":"G09","message":"m34"}),
+            ),
+            (
+                Finding::NavDuplicateRecord {
+                    at: at.clone(),
+                    satellite: sat,
+                    same_payload: true,
+                },
+                json!({"kind":"NAV_DUPLICATE_RECORD","satellite":"G09","samePayload":true}),
+            ),
+            (
+                Finding::NavUnsortedRecords { at: at.clone() },
+                json!({"kind":"NAV_UNSORTED_RECORDS"}),
+            ),
+            (
+                Finding::NavImplausibleRecord {
+                    at: at.clone(),
+                    satellite: sat,
+                    field: "F37",
+                    value: 37.5,
+                },
+                json!({"kind":"NAV_IMPLAUSIBLE_RECORD","satellite":"G09","field":"F37","value":37.5}),
+            ),
+            (
+                Finding::NavUnhealthyRecords {
+                    at: at.clone(),
+                    system: GnssSystem::Gps,
+                    count: 38,
+                },
+                json!({"kind":"NAV_UNHEALTHY_RECORDS","system":"GPS","count":38}),
+            ),
+            (
+                Finding::NavOutOfScopeRecords {
+                    at: at.clone(),
+                    class: "C39".into(),
+                    count: 39,
+                },
+                json!({"kind":"NAV_OUT_OF_SCOPE_RECORDS","class":"C39","count":39}),
+            ),
+            (
+                Finding::ObsIntervalUnavailable { at: at.clone() },
+                json!({"kind":"OBS_INTERVAL_UNAVAILABLE"}),
+            ),
+            (
+                Finding::ObsInvalidInterval {
+                    at,
+                    declared_s: 40.5,
+                },
+                json!({"kind":"OBS_INVALID_INTERVAL","declaredS":40.5}),
+            ),
+        ];
+        assert_eq!(cases.len(), 40);
+        for (finding, expected) in cases {
+            let binding = finding_js(&finding);
+            assert_eq!(
+                serde_json::to_value(&binding.detail).unwrap(),
+                expected,
+                "{}",
+                finding.code()
+            );
+            assert_eq!(binding.code, finding.code());
+            assert_eq!(binding.severity, severity_label(finding.severity()));
+            assert_eq!(binding.spec_ref, finding.spec_ref());
+            assert_eq!(binding.repairable, finding.is_repairable());
+            assert_eq!(
+                serde_json::to_value(&binding.at).unwrap(),
+                json!({"epochIndex":7,"satellite":"G09","field":"SYS / # / OBS TYPES"})
+            );
+        }
+    }
 }

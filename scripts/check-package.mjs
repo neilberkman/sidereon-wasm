@@ -69,9 +69,9 @@ try {
     "licenses/IERS-Conventions-Software-License.txt",
     "licenses/SciPy-BSD-3-Clause.txt",
     "licenses/libloading-ISC.txt",
-    "third_party_source/sidereon-core-0.36.3/tides/mod.rs",
-    "third_party_source/sidereon-core-0.36.3/tides/ocean.rs",
-    "third_party_source/sidereon-core-0.36.3/tides/pole.rs",
+    "third_party_source/sidereon-core-3.0.0/tides/mod.rs",
+    "third_party_source/sidereon-core-3.0.0/tides/ocean.rs",
+    "third_party_source/sidereon-core-3.0.0/tides/pole.rs",
     "pkg/sidereon.js",
     "pkg/sidereon.d.ts",
     "pkg/sidereon_bg.wasm",
@@ -94,11 +94,11 @@ try {
   }
 
   const coreSourceDigests = {
-    "third_party_source/sidereon-core-0.36.3/tides/mod.rs":
-      "7c71cb8facbd81af8473d3634e4c63d97dda8cb37a2f59888d3397cfdde4d39b",
-    "third_party_source/sidereon-core-0.36.3/tides/ocean.rs":
-      "6bd72d6647b634f979b670040d8c0b659e1f581fa41fdeec41b74b85d8c26c01",
-    "third_party_source/sidereon-core-0.36.3/tides/pole.rs":
+    "third_party_source/sidereon-core-3.0.0/tides/mod.rs":
+      "0703d1b3470f59528880ae34990f064897d34876d5ff30b4fc860afdcadf7433",
+    "third_party_source/sidereon-core-3.0.0/tides/ocean.rs":
+      "25946677944425671a92717860ac2d70f255de5403eeb1fbf98b361716821d5c",
+    "third_party_source/sidereon-core-3.0.0/tides/pole.rs":
       "b4cc4c16bdd8ce1d8f04073602ab47dfb85a002b946ab192e8d4d2d600f0a1f8",
   };
   const exactThirdPartyDigests = {
@@ -122,6 +122,7 @@ try {
     "ExactSp3ParseResult",
     "ExactSp3Request",
     "NominalIssue",
+    "Sgp4Satellite",
     "Sp3ContentStartConvention",
     "chanHoInitialGuess",
     "closedFormInitialGuess",
@@ -142,6 +143,7 @@ try {
     "export class ExactSp3ParseResult",
     "export class ExactSp3Request",
     "export class NominalIssue",
+    "export class Sgp4Satellite",
     "export interface SourceLocateOptions",
     "export interface WindowContinuityVerdict",
     "export function chanHoInitialGuess(",
@@ -154,8 +156,18 @@ try {
     "export function sp3ContentStartOffsetSeconds(",
     "export function supportedSamples(",
     "export function validateExactSp3(",
+    "static fromOmm(omm: Omm): Sgp4Satellite;",
+    "propagate(epochs_unix_us: BigInt64Array): TlePropagation;",
     "continuityVerdict(fromJ2000S: number, throughJ2000S: number, orbitClass?: string | null, residualToleranceM?: number | null, gapThresholdFactor?: number | null): WindowContinuityVerdict;",
-    "continuityVerdict(merged: Sp3, fromJ2000S: number, throughJ2000S: number): WindowContinuityVerdict | null;",
+    "continuityVerdict(fromJ2000S: number, throughJ2000S: number): WindowContinuityVerdict | null;",
+    'readonly reason: "datum_not_observable" | "preferred_source_without_clock" | "no_consensus";',
+    'readonly reason: "off_target_grid" | "not_on_tick_axis";',
+    "readonly continuity: MergeContinuityReport | null;",
+    "readonly provenance: MergeProvenance | null;",
+    "selectedNodes(satellite: string, fromJ2000S: number, throughJ2000S: number): Float64Array;",
+    "continuitySelectedNodes(satellite: string, fromJ2000S: number, throughJ2000S: number): Float64Array | undefined;",
+    "export interface MergeProvenance",
+    'provenance?: "summary" | "full" | null;',
     "stencilExtent(): { beforeS: number; afterS: number };",
     "readonly covers: NominalCoverage;",
     'compression: "none" | "gzip" | "unix_compress";',
@@ -247,6 +259,22 @@ assert.equal(typeof Sidereon.default, "object", "Node ESM loaded the web initial
 for (const name of ${requiredExportsLiteral}) {
   assert.ok(name in Sidereon, \`Node ESM is missing runtime export \${name}\`);
 }
+assert.equal(typeof Sidereon.Sgp4Satellite, "function");
+const esmOmmEpoch = new Sidereon.OmmEpoch(2026, 6, 17, 6, 0, 0, 0);
+const esmOmm = new Sidereon.Omm(esmOmmEpoch, 15.5, 0.0001, 51.6, 20, 30, 40, 25544, {
+  centerName: "EARTH",
+  refFrame: "TEME",
+  timeSystem: "UTC",
+  meanElementTheory: "SGP4",
+  bstar: 0.00001,
+});
+const esmOmmSatellite = Sidereon.Sgp4Satellite.fromOmm(esmOmm);
+const esmOmmEpochs = new BigInt64Array([BigInt(Date.UTC(2026, 5, 17, 6)) * 1000n]);
+const esmOmmState = esmOmmSatellite.propagate(esmOmmEpochs);
+assert.equal(esmOmmState.positionKm.length, 3);
+assert.equal(esmOmmState.velocityKmS.length, 3);
+assert.ok(Array.from(esmOmmState.positionKm).every(Number.isFinite));
+assert.ok(Array.from(esmOmmState.velocityKmS).every(Number.isFinite));
 assert.equal(Sidereon.defaultSampleForDate("gfz", "sp3", 2021, 5, 17), "15M");
 const contentStart = Sidereon.sp3ContentStartConvention("gfz_ult", 2022, 9, 7, "0300");
 assert.equal(contentStart, Sidereon.Sp3ContentStartConvention.FilenameEpochMinusOneDay);
@@ -274,6 +302,22 @@ assert.deepEqual(Object.keys(LegacyTypes), []);
 for (const name of ${requiredExportsLiteral}) {
   assert.ok(name in Sidereon, \`CommonJS is missing runtime export \${name}\`);
 }
+assert.equal(typeof Sidereon.Sgp4Satellite, "function");
+const cjsOmmEpoch = new Sidereon.OmmEpoch(2026, 6, 17, 6, 0, 0, 0);
+const cjsOmm = new Sidereon.Omm(cjsOmmEpoch, 15.5, 0.0001, 51.6, 20, 30, 40, 25544, {
+  centerName: "EARTH",
+  refFrame: "TEME",
+  timeSystem: "UTC",
+  meanElementTheory: "SGP4",
+  bstar: 0.00001,
+});
+const cjsOmmSatellite = Sidereon.Sgp4Satellite.fromOmm(cjsOmm);
+const cjsOmmEpochs = new BigInt64Array([BigInt(Date.UTC(2026, 5, 17, 6)) * 1000n]);
+const cjsOmmState = cjsOmmSatellite.propagate(cjsOmmEpochs);
+assert.equal(cjsOmmState.positionKm.length, 3);
+assert.equal(cjsOmmState.velocityKmS.length, 3);
+assert.ok(Array.from(cjsOmmState.positionKm).every(Number.isFinite));
+assert.ok(Array.from(cjsOmmState.velocityKmS).every(Number.isFinite));
 assert.equal(Sidereon.defaultSampleForDate("gfz", "sp3", 2021, 5, 17), "15M");
 const contentStart = Sidereon.sp3ContentStartConvention("gfz_ult", 2022, 9, 7, "0300");
 assert.equal(contentStart, Sidereon.Sp3ContentStartConvention.FilenameEpochMinusOneDay);
@@ -288,6 +332,7 @@ assert.equal(nextIssue.covers.observed.from.toISOString(), "2026-08-03T00:00:00.
   writeConsumer(
     "browser-condition.mjs",
     `import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import initialize, * as Sidereon from "@neilberkman/sidereon";
 
 assert.equal(typeof initialize, "function", "browser condition did not load the web build");
@@ -295,6 +340,34 @@ assert.equal(typeof Sidereon.initSync, "function");
 for (const name of ${requiredExportsLiteral}) {
   assert.ok(name in Sidereon, \`browser condition is missing runtime export \${name}\`);
 }
+assert.equal(typeof Sidereon.Sgp4Satellite, "function");
+const browserEntry = import.meta.resolve("@neilberkman/sidereon");
+Sidereon.initSync({ module: readFileSync(new URL("./sidereon_bg.wasm", browserEntry)) });
+const browserOmmEpoch = new Sidereon.OmmEpoch(2026, 6, 17, 6, 0, 0, 0);
+const browserOmm = new Sidereon.Omm(
+  browserOmmEpoch,
+  15.5,
+  0.0001,
+  51.6,
+  20,
+  30,
+  40,
+  25544,
+  {
+    centerName: "EARTH",
+    refFrame: "TEME",
+    timeSystem: "UTC",
+    meanElementTheory: "SGP4",
+    bstar: 0.00001,
+  },
+);
+const browserOmmSatellite = Sidereon.Sgp4Satellite.fromOmm(browserOmm);
+const browserOmmEpochs = new BigInt64Array([BigInt(Date.UTC(2026, 5, 17, 6)) * 1000n]);
+const browserOmmState = browserOmmSatellite.propagate(browserOmmEpochs);
+assert.equal(browserOmmState.positionKm.length, 3);
+assert.equal(browserOmmState.velocityKmS.length, 3);
+assert.ok(Array.from(browserOmmState.positionKm).every(Number.isFinite));
+assert.ok(Array.from(browserOmmState.velocityKmS).every(Number.isFinite));
 `,
   );
   run(process.execPath, ["node-esm.mjs"], consumerDirectory);

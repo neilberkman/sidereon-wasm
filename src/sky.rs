@@ -13,13 +13,20 @@ use wasm_bindgen::prelude::*;
 use sidereon::passes::UtcInstant;
 use sidereon_core::astro::bodies::{
     find_moon_elevation_crossings as core_find_moon_elevation_crossings,
-    find_moon_transits as core_find_moon_transits, moon_az_el as core_moon_az_el,
-    moon_illumination as core_moon_illumination, sun_az_el as core_sun_az_el, BodyAzEl,
-    MoonElevationCrossingKind, MoonElevationOptions, MoonIllumination, MoonTransitKind,
+    find_moon_elevation_crossings_with_validity as core_find_moon_elevation_crossings_with_validity,
+    find_moon_transits as core_find_moon_transits,
+    find_moon_transits_with_validity as core_find_moon_transits_with_validity,
+    moon_az_el as core_moon_az_el, moon_az_el_with_validity as core_moon_az_el_with_validity,
+    moon_illumination as core_moon_illumination,
+    moon_illumination_with_validity as core_moon_illumination_with_validity,
+    sun_az_el as core_sun_az_el, sun_az_el_with_validity as core_sun_az_el_with_validity, BodyAzEl,
+    MoonElevationCrossing as CoreMoonElevationCrossing, MoonElevationCrossingKind,
+    MoonElevationOptions, MoonIllumination, MoonTransit as CoreMoonTransit, MoonTransitKind,
 };
 use sidereon_core::astro::frames::transforms::GeodeticStationKm;
 
-use crate::error::{engine_error, range_error, type_error};
+use crate::astro_error::{body_observation_error, event_finder_error};
+use crate::error::{range_error, type_error, ut1_validity, validated_object};
 
 /// Build a geodetic station from degrees / kilometres, rejecting non-finite
 /// fields (`RangeError`).
@@ -97,7 +104,7 @@ pub fn sun_az_el(
 ) -> Result<JsValue, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
     let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
-    let az_el = core_sun_az_el(&station, time).map_err(engine_error)?;
+    let az_el = core_sun_az_el(&station, time).map_err(body_observation_error)?;
     to_object(&BodyAzElObject::from(az_el))
 }
 
@@ -113,8 +120,71 @@ pub fn moon_az_el(
 ) -> Result<JsValue, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
     let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
-    let az_el = core_moon_az_el(&station, time).map_err(engine_error)?;
+    let az_el = core_moon_az_el(&station, time).map_err(body_observation_error)?;
     to_object(&BodyAzElObject::from(az_el))
+}
+
+/// [`sunAzEl`] under a UT1 validity policy: `"strict"` (the default) refuses
+/// an instant outside the UT1 table, `"permissive"` accepts it. Returns
+/// `{ value, ut1Degraded }` with `value` the `sunAzEl` result.
+#[wasm_bindgen(js_name = sunAzElWithValidity, unchecked_return_type = "Ut1Validated<BodyAzEl>")]
+pub fn sun_az_el_with_validity(
+    latitude_deg: f64,
+    longitude_deg: f64,
+    altitude_km: f64,
+    epoch_unix_us: i64,
+    ut1: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let station = station(latitude_deg, longitude_deg, altitude_km)?;
+    let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
+    let validated = core_sun_az_el_with_validity(&station, time, ut1_validity(ut1)?)
+        .map_err(body_observation_error)?;
+    validated_object(
+        &to_object(&BodyAzElObject::from(validated.value))?,
+        validated.degraded,
+    )
+}
+
+/// [`moonAzEl`] under a UT1 validity policy, as [`sunAzElWithValidity`].
+#[wasm_bindgen(js_name = moonAzElWithValidity, unchecked_return_type = "Ut1Validated<BodyAzEl>")]
+pub fn moon_az_el_with_validity(
+    latitude_deg: f64,
+    longitude_deg: f64,
+    altitude_km: f64,
+    epoch_unix_us: i64,
+    ut1: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let station = station(latitude_deg, longitude_deg, altitude_km)?;
+    let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
+    let validated = core_moon_az_el_with_validity(&station, time, ut1_validity(ut1)?)
+        .map_err(body_observation_error)?;
+    validated_object(
+        &to_object(&BodyAzElObject::from(validated.value))?,
+        validated.degraded,
+    )
+}
+
+/// [`moonIllumination`] under a UT1 validity policy, as
+/// [`sunAzElWithValidity`].
+#[wasm_bindgen(
+    js_name = moonIlluminationWithValidity,
+    unchecked_return_type = "Ut1Validated<MoonIlluminationResult>"
+)]
+pub fn moon_illumination_with_validity(
+    latitude_deg: f64,
+    longitude_deg: f64,
+    altitude_km: f64,
+    epoch_unix_us: i64,
+    ut1: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let station = station(latitude_deg, longitude_deg, altitude_km)?;
+    let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
+    let validated = core_moon_illumination_with_validity(&station, time, ut1_validity(ut1)?)
+        .map_err(body_observation_error)?;
+    validated_object(
+        &to_object(&MoonIlluminationObject::from(validated.value))?,
+        validated.degraded,
+    )
 }
 
 /// Illuminated fraction of the Moon as seen from a ground site. Returns
@@ -130,7 +200,7 @@ pub fn moon_illumination(
 ) -> Result<JsValue, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
     let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
-    let illum = core_moon_illumination(&station, time).map_err(engine_error)?;
+    let illum = core_moon_illumination(&station, time).map_err(body_observation_error)?;
     to_object(&MoonIlluminationObject::from(illum))
 }
 
@@ -150,7 +220,7 @@ pub fn moon_elevation_deg(
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
     let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
     Ok(core_moon_az_el(&station, time)
-        .map_err(engine_error)?
+        .map_err(body_observation_error)?
         .elevation_deg)
 }
 
@@ -226,27 +296,67 @@ pub fn find_moon_elevation_crossings(
     options: JsValue,
 ) -> Result<Vec<MoonElevationCrossing>, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
-    let opts: MoonElevationOptionsInput = if options.is_undefined() || options.is_null() {
-        MoonElevationOptionsInput::default()
-    } else {
-        serde_wasm_bindgen::from_value(options)
-            .map_err(|e| type_error(&format!("invalid moon elevation options: {e}")))?
-    };
+    let opts = moon_elevation_options(options)?;
     let start = UtcInstant::from_unix_microseconds(start_unix_us);
     let end = UtcInstant::from_unix_microseconds(end_unix_us);
     let crossings = core_find_moon_elevation_crossings(&station, start, end, opts.to_core())
-        .map_err(engine_error)?;
-    Ok(crossings
-        .into_iter()
-        .map(|c| MoonElevationCrossing {
-            time_unix_us: c.time.unix_microseconds(),
-            kind: match c.kind {
-                MoonElevationCrossingKind::Rising => "rising",
-                MoonElevationCrossingKind::Setting => "setting",
-            },
-            elevation_deg: c.elevation_deg,
-        })
-        .collect())
+        .map_err(event_finder_error)?;
+    Ok(crossings.into_iter().map(crossing_js).collect())
+}
+
+fn crossing_js(c: CoreMoonElevationCrossing) -> MoonElevationCrossing {
+    MoonElevationCrossing {
+        time_unix_us: c.time.unix_microseconds(),
+        kind: match c.kind {
+            MoonElevationCrossingKind::Rising => "rising",
+            MoonElevationCrossingKind::Setting => "setting",
+        },
+        elevation_deg: c.elevation_deg,
+    }
+}
+
+fn moon_elevation_options(options: JsValue) -> Result<MoonElevationOptionsInput, JsValue> {
+    if options.is_undefined() || options.is_null() {
+        Ok(MoonElevationOptionsInput::default())
+    } else {
+        serde_wasm_bindgen::from_value(options)
+            .map_err(|e| type_error(&format!("invalid moon elevation options: {e}")))
+    }
+}
+
+/// [`findMoonElevationCrossings`] under a UT1 validity policy. The search
+/// checks every instant it evaluates, so under `"strict"` (the default) a
+/// window reaching past the UT1 table is refused rather than cut short.
+/// Returns `{ value, ut1Degraded }` with `value` the crossings.
+#[wasm_bindgen(
+    js_name = findMoonElevationCrossingsWithValidity,
+    unchecked_return_type = "Ut1Validated<MoonElevationCrossing[]>"
+)]
+#[allow(clippy::too_many_arguments)]
+pub fn find_moon_elevation_crossings_with_validity(
+    latitude_deg: f64,
+    longitude_deg: f64,
+    altitude_km: f64,
+    start_unix_us: i64,
+    end_unix_us: i64,
+    options: JsValue,
+    ut1: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let station = station(latitude_deg, longitude_deg, altitude_km)?;
+    let opts = moon_elevation_options(options)?;
+    let validated = core_find_moon_elevation_crossings_with_validity(
+        &station,
+        UtcInstant::from_unix_microseconds(start_unix_us),
+        UtcInstant::from_unix_microseconds(end_unix_us),
+        opts.to_core(),
+        ut1_validity(ut1)?,
+    )
+    .map_err(event_finder_error)?;
+    let values = js_sys::Array::new();
+    for crossing in validated.value {
+        values.push(&JsValue::from(crossing_js(crossing)));
+    }
+    validated_object(&values.into(), validated.degraded)
 }
 
 /// One refined Moon meridian transit (culmination).
@@ -301,16 +411,51 @@ pub fn find_moon_transits(
     let end = UtcInstant::from_unix_microseconds(end_unix_us);
     let transits =
         core_find_moon_transits(&station, start, end, step_seconds, time_tolerance_seconds)
-            .map_err(engine_error)?;
-    Ok(transits
-        .into_iter()
-        .map(|t| MoonTransit {
-            time_unix_us: t.time.unix_microseconds(),
-            kind: match t.kind {
-                MoonTransitKind::Upper => "upper",
-                MoonTransitKind::Lower => "lower",
-            },
-            elevation_deg: t.elevation_deg,
-        })
-        .collect())
+            .map_err(event_finder_error)?;
+    Ok(transits.into_iter().map(transit_js).collect())
+}
+
+fn transit_js(t: CoreMoonTransit) -> MoonTransit {
+    MoonTransit {
+        time_unix_us: t.time.unix_microseconds(),
+        kind: match t.kind {
+            MoonTransitKind::Upper => "upper",
+            MoonTransitKind::Lower => "lower",
+        },
+        elevation_deg: t.elevation_deg,
+    }
+}
+
+/// [`findMoonTransits`] under a UT1 validity policy, as
+/// [`findMoonElevationCrossingsWithValidity`].
+#[wasm_bindgen(
+    js_name = findMoonTransitsWithValidity,
+    unchecked_return_type = "Ut1Validated<MoonTransit[]>"
+)]
+#[allow(clippy::too_many_arguments)]
+pub fn find_moon_transits_with_validity(
+    latitude_deg: f64,
+    longitude_deg: f64,
+    altitude_km: f64,
+    start_unix_us: i64,
+    end_unix_us: i64,
+    step_seconds: f64,
+    time_tolerance_seconds: f64,
+    ut1: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let station = station(latitude_deg, longitude_deg, altitude_km)?;
+    let validated = core_find_moon_transits_with_validity(
+        &station,
+        UtcInstant::from_unix_microseconds(start_unix_us),
+        UtcInstant::from_unix_microseconds(end_unix_us),
+        step_seconds,
+        time_tolerance_seconds,
+        ut1_validity(ut1)?,
+    )
+    .map_err(event_finder_error)?;
+    let values = js_sys::Array::new();
+    for transit in validated.value {
+        values.push(&JsValue::from(transit_js(transit)));
+    }
+    validated_object(&values.into(), validated.degraded)
 }

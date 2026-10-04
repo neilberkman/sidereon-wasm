@@ -9,7 +9,8 @@ use sidereon_core::astro::anomaly::{
 };
 use sidereon_core::astro::elements::{ClassicalElements, OrbitType};
 
-use crate::error::{engine_error, type_error};
+use crate::domain_error::anomaly_error;
+use crate::error::type_error;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -122,7 +123,7 @@ fn coe_to_js(coe: ClassicalElements) -> Result<JsValue, JsValue> {
 
 #[wasm_bindgen(js_name = solveKepler)]
 pub fn solve_kepler(mean_anomaly_rad: f64, eccentricity: f64) -> Result<JsValue, JsValue> {
-    let solution = core_solve_kepler(mean_anomaly_rad, eccentricity).map_err(engine_error)?;
+    let solution = core_solve_kepler(mean_anomaly_rad, eccentricity).map_err(anomaly_error)?;
     serde_wasm_bindgen::to_value(&KeplerSolutionJs {
         anomaly: solution.anomaly,
         iterations: solution.iterations,
@@ -132,37 +133,37 @@ pub fn solve_kepler(mean_anomaly_rad: f64, eccentricity: f64) -> Result<JsValue,
 
 #[wasm_bindgen(js_name = meanToEccentric)]
 pub fn mean_to_eccentric(mean_anomaly_rad: f64, eccentricity: f64) -> Result<f64, JsValue> {
-    core_mean_to_eccentric(mean_anomaly_rad, eccentricity).map_err(engine_error)
+    core_mean_to_eccentric(mean_anomaly_rad, eccentricity).map_err(anomaly_error)
 }
 
 #[wasm_bindgen(js_name = eccentricToMean)]
 pub fn eccentric_to_mean(eccentric_anomaly_rad: f64, eccentricity: f64) -> Result<f64, JsValue> {
-    core_eccentric_to_mean(eccentric_anomaly_rad, eccentricity).map_err(engine_error)
+    core_eccentric_to_mean(eccentric_anomaly_rad, eccentricity).map_err(anomaly_error)
 }
 
 #[wasm_bindgen(js_name = eccentricToTrue)]
 pub fn eccentric_to_true(eccentric_anomaly_rad: f64, eccentricity: f64) -> Result<f64, JsValue> {
-    core_eccentric_to_true(eccentric_anomaly_rad, eccentricity).map_err(engine_error)
+    core_eccentric_to_true(eccentric_anomaly_rad, eccentricity).map_err(anomaly_error)
 }
 
 #[wasm_bindgen(js_name = trueToEccentric)]
 pub fn true_to_eccentric(true_anomaly_rad: f64, eccentricity: f64) -> Result<f64, JsValue> {
-    core_true_to_eccentric(true_anomaly_rad, eccentricity).map_err(engine_error)
+    core_true_to_eccentric(true_anomaly_rad, eccentricity).map_err(anomaly_error)
 }
 
 #[wasm_bindgen(js_name = meanToTrue)]
 pub fn mean_to_true(mean_anomaly_rad: f64, eccentricity: f64) -> Result<f64, JsValue> {
-    core_mean_to_true(mean_anomaly_rad, eccentricity).map_err(engine_error)
+    core_mean_to_true(mean_anomaly_rad, eccentricity).map_err(anomaly_error)
 }
 
 #[wasm_bindgen(js_name = trueToMean)]
 pub fn true_to_mean(true_anomaly_rad: f64, eccentricity: f64) -> Result<f64, JsValue> {
-    core_true_to_mean(true_anomaly_rad, eccentricity).map_err(engine_error)
+    core_true_to_mean(true_anomaly_rad, eccentricity).map_err(anomaly_error)
 }
 
 #[wasm_bindgen(js_name = propagateKepler)]
 pub fn propagate_kepler(coe: JsValue, mu_km3_s2: f64, dt_s: f64) -> Result<JsValue, JsValue> {
     let coe = coe_from_js(coe)?;
-    let propagated = core_propagate_kepler(&coe, mu_km3_s2, dt_s).map_err(engine_error)?;
+    let propagated = core_propagate_kepler(&coe, mu_km3_s2, dt_s).map_err(anomaly_error)?;
     coe_to_js(propagated)
 }

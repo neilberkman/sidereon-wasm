@@ -21,16 +21,23 @@ use sidereon_core::precise_positioning::{
         RATIO_THRESHOLD, ZTD_TOLERANCE_M,
     },
     solve_ppp_auto_init_fixed, solve_ppp_auto_init_float, FixedAmbiguityOptions, FixedSolution,
-    FixedSolveConfig, FloatEpoch, FloatObservation, FloatSolution, FloatSolveConfig,
-    FloatSolveOptions, FloatState, FloatStatus, IntegerStatus, MeasurementWeights,
-    PppAutoInitOptions, PppInitialGuess, RangeCorrections, TropoMapping, TroposphereOptions,
-    VmfSiteSample, VmfSiteSeries,
+    FixedSolveConfig, FloatEpoch, FloatObservation, FloatObservationSignals, FloatSolution,
+    FloatSolveConfig, FloatSolveOptions, FloatState, FloatStatus, IntegerStatus,
+    MeasurementWeights, PppAutoInitOptions, PppInitialGuess, RangeCorrections, TropoMapping,
+    TroposphereOptions, VmfSiteSample, VmfSiteSeries,
+};
+use sidereon_core::ssr::{
+    MissingCorrectionAction, SignalCode, SsrCorrectedEphemeris, SsrFallbackPolicy,
 };
 use sidereon_core::GnssSatelliteId;
 
 use crate::error::{engine_error, type_error};
+use crate::label::{lower_camel_variant, Label};
 use crate::marshal::mat3_flat;
+use crate::rinex_nav::BroadcastEphemeris;
 use crate::sp3::Sp3;
+use crate::ssr::SsrCorrectionSizeJs;
+use crate::ssr::SsrCorrectionStore;
 
 // --- input objects ----------------------------------------------------------
 
@@ -72,6 +79,40 @@ struct ObservationInput {
     freq2_hz: f64,
     #[serde(default)]
     glonass_channel: Option<i8>,
+    /// The tracking codes of the two pseudoranges and two carrier phases, as
+    /// RINEX 3.04 band-and-attribute codes (`"1C"`) or full observation codes
+    /// (`"C1C"`). They identify the signals an SSR bias applies to; absent is
+    /// an observation whose signals are not stated.
+    #[serde(default)]
+    signals: Option<ObservationSignalsInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ObservationSignalsInput {
+    code1: String,
+    code2: String,
+    phase1: String,
+    phase2: String,
+}
+
+fn signal_code(text: &str, field: &str) -> Result<SignalCode, JsValue> {
+    SignalCode::parse(text).ok_or_else(|| {
+        type_error(&format!(
+            "signals.{field} must be a RINEX 3 signal code such as \"1C\" or \"C1C\", got {text:?}"
+        ))
+    })
+}
+
+impl ObservationSignalsInput {
+    fn to_core(&self) -> Result<FloatObservationSignals, JsValue> {
+        Ok(FloatObservationSignals {
+            code1: signal_code(&self.code1, "code1")?,
+            code2: signal_code(&self.code2, "code2")?,
+            phase1: signal_code(&self.phase1, "phase1")?,
+            phase2: signal_code(&self.phase2, "phase2")?,
+        })
+    }
 }
 
 impl ObservationInput {
@@ -87,6 +128,11 @@ impl ObservationInput {
             freq1_hz: self.freq1_hz,
             freq2_hz: self.freq2_hz,
             glonass_channel: self.glonass_channel,
+            signals: self
+                .signals
+                .as_ref()
+                .map(ObservationSignalsInput::to_core)
+                .transpose()?,
         })
     }
 }
@@ -565,6 +611,60 @@ pub fn solve_ppp_float(
     Ok(PppFloatSolution { inner })
 }
 
+#[allow(clippy::too_many_arguments)]
+#[wasm_bindgen(js_name = solvePppFloatWithSsr)]
+pub fn solve_ppp_float_with_ssr(
+    broadcast: &BroadcastEphemeris,
+    store: &SsrCorrectionStore,
+    epochs: JsValue,
+    initial_state: JsValue,
+    config: JsValue,
+    fallback_to_broadcast: Option<bool>,
+    allow_regional_provider: Option<u16>,
+    validity: Option<String>,
+) -> Result<PppFloatSolution, JsValue> {
+    let epochs: Vec<EpochInput> = serde_wasm_bindgen::from_value(epochs)
+        .map_err(|error| type_error(&format!("invalid PPP epochs: {error}")))?;
+    let state: StateInput = serde_wasm_bindgen::from_value(initial_state)
+        .map_err(|error| type_error(&format!("invalid PPP initial state: {error}")))?;
+    let config: FloatConfigInput = serde_wasm_bindgen::from_value(config)
+        .map_err(|error| type_error(&format!("invalid PPP float config: {error}")))?;
+    let validity = crate::error::ut1_validity(validity)?;
+    let fallback = SsrFallbackPolicy {
+        on_missing_correction: if fallback_to_broadcast.unwrap_or(false) {
+            MissingCorrectionAction::FallBackToBroadcast
+        } else {
+            MissingCorrectionAction::Decline
+        },
+        ..Default::default()
+    };
+    let mut source = SsrCorrectedEphemeris::new(&broadcast.inner, store.core())
+        .with_fallback(fallback)
+        .with_validity(validity)
+        .with_correction_size_policy(store.correction_size_policy().into());
+    if let Some(provider) = allow_regional_provider {
+        source = source.allow_regional_provider(provider);
+    }
+    let epochs = epochs_to_core(&epochs)?;
+    let result = sidereon::solve_ppp_float(
+        &source as &dyn ObservableEphemerisSource,
+        &epochs,
+        state.to_core(),
+        config.to_core()?,
+    );
+    store.record_oversized(source.oversized_corrections());
+    let inner = result.map_err(|error| match error {
+        sidereon::Error::PppFloat(
+            sidereon_core::precise_positioning::FloatSolveError::Ut1OutsideCoverage(reason),
+        ) => crate::positioning_error::ut1_refusal_error(
+            reason,
+            format!("the ephemeris source refused a PPP satellite state: {reason}"),
+        ),
+        other => engine_error(other),
+    })?;
+    Ok(PppFloatSolution { inner })
+}
+
 /// Search integer ambiguities from a float PPP solution and re-solve fixed.
 ///
 /// `epochs` and `config` are plain objects (`PppEpoch`, `PppFixedConfig`);
@@ -591,6 +691,58 @@ pub fn solve_ppp_fixed(
     )
     .map_err(engine_error)?;
 
+    Ok(PppFixedSolution { inner })
+}
+
+#[allow(clippy::too_many_arguments)]
+#[wasm_bindgen(js_name = solvePppFixedWithSsr)]
+pub fn solve_ppp_fixed_with_ssr(
+    broadcast: &BroadcastEphemeris,
+    store: &SsrCorrectionStore,
+    epochs: JsValue,
+    float_solution: &PppFloatSolution,
+    config: JsValue,
+    fallback_to_broadcast: Option<bool>,
+    allow_regional_provider: Option<u16>,
+    validity: Option<String>,
+) -> Result<PppFixedSolution, JsValue> {
+    let epochs: Vec<EpochInput> = serde_wasm_bindgen::from_value(epochs)
+        .map_err(|error| type_error(&format!("invalid PPP epochs: {error}")))?;
+    let config: FixedConfigInput = serde_wasm_bindgen::from_value(config)
+        .map_err(|error| type_error(&format!("invalid PPP fixed config: {error}")))?;
+    let validity = crate::error::ut1_validity(validity)?;
+    let fallback = SsrFallbackPolicy {
+        on_missing_correction: if fallback_to_broadcast.unwrap_or(false) {
+            MissingCorrectionAction::FallBackToBroadcast
+        } else {
+            MissingCorrectionAction::Decline
+        },
+        ..Default::default()
+    };
+    let mut source = SsrCorrectedEphemeris::new(&broadcast.inner, store.core())
+        .with_fallback(fallback)
+        .with_validity(validity)
+        .with_correction_size_policy(store.correction_size_policy().into());
+    if let Some(provider) = allow_regional_provider {
+        source = source.allow_regional_provider(provider);
+    }
+    let epochs = epochs_to_core(&epochs)?;
+    let result = sidereon::solve_ppp_fixed(
+        &source as &dyn ObservableEphemerisSource,
+        &epochs,
+        float_solution.inner.clone(),
+        config.to_core()?,
+    );
+    store.record_oversized(source.oversized_corrections());
+    let inner = result.map_err(|error| match error {
+        sidereon::Error::PppFixed(sidereon_core::precise_positioning::FixedSolveError::Float(
+            sidereon_core::precise_positioning::FloatSolveError::Ut1OutsideCoverage(reason),
+        )) => crate::positioning_error::ut1_refusal_error(
+            reason,
+            format!("the ephemeris source refused a PPP satellite state: {reason}"),
+        ),
+        other => engine_error(other),
+    })?;
     Ok(PppFixedSolution { inner })
 }
 
@@ -636,6 +788,7 @@ fn to_js<T: Serialize>(value: &T) -> JsValue {
 struct PppResidualJs {
     epoch_index: usize,
     satellite_id: String,
+    ambiguity_id: String,
     code_m: f64,
     phase_m: f64,
     code_weight: f64,
@@ -647,12 +800,89 @@ impl From<&sidereon_core::precise_positioning::FloatResidual> for PppResidualJs 
         Self {
             epoch_index: value.epoch_index,
             satellite_id: value.satellite_id.clone(),
+            ambiguity_id: value.ambiguity_id.clone(),
             code_m: value.code_m,
             phase_m: value.phase_m,
             code_weight: value.code_weight,
             phase_weight: value.phase_weight,
         }
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PppObservationRefJs<'a> {
+    epoch_index: usize,
+    ambiguity_id: &'a str,
+}
+
+/// An observation the solve could not place at a transmission epoch.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PppUnplacedObservationJs<'a> {
+    /// Input epoch index.
+    epoch_index: usize,
+    satellite_id: &'a str,
+    ambiguity_id: &'a str,
+    reason: Label,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ssr_correction_size: Option<SsrCorrectionSizeJs>,
+}
+
+/// The iteration and convergence controls a PPP float solve ran with.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PppSolveOptionsJs {
+    max_iterations: usize,
+    position_tolerance_m: f64,
+    clock_tolerance_m: f64,
+    ambiguity_tolerance_m: f64,
+    ztd_tolerance_m: f64,
+}
+
+fn unplaced_observations(
+    rows: &[sidereon_core::precise_positioning::UnplacedObservation],
+) -> JsValue {
+    to_js(
+        &rows
+            .iter()
+            .map(PppUnplacedObservationJs::from_core)
+            .collect::<Vec<_>>(),
+    )
+}
+
+impl<'a> PppUnplacedObservationJs<'a> {
+    fn from_core(row: &'a sidereon_core::precise_positioning::UnplacedObservation) -> Self {
+        use sidereon_core::precise_positioning::UnplacedObservationReason;
+        Self {
+            epoch_index: row.epoch_index,
+            satellite_id: &row.satellite_id,
+            ambiguity_id: &row.ambiguity_id,
+            reason: match row.reason {
+                UnplacedObservationReason::CodeNotPositive => Label::Borrowed("codeNotPositive"),
+                UnplacedObservationReason::SsrCorrectionExceedsLimit(_) => {
+                    Label::Borrowed("ssrCorrectionExceedsLimit")
+                }
+                other => lower_camel_variant(&other),
+            },
+            ssr_correction_size: match row.reason {
+                UnplacedObservationReason::SsrCorrectionExceedsLimit(size) => Some(size.into()),
+                _ => None,
+            },
+        }
+    }
+}
+
+fn observation_refs(rows: &[(usize, String)]) -> JsValue {
+    to_js(
+        &rows
+            .iter()
+            .map(|(epoch_index, ambiguity_id)| PppObservationRefJs {
+                epoch_index: *epoch_index,
+                ambiguity_id,
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 #[derive(Serialize)]
@@ -699,10 +929,55 @@ impl PppFloatSolution {
         self.inner.position_m.to_vec()
     }
 
-    /// Epoch receiver clock states, metres.
+    /// Receiver clock states, metres, one per solved epoch in the order of
+    /// `solvedEpochIndices`.
     #[wasm_bindgen(getter, js_name = epochClocksM)]
     pub fn epoch_clocks_m(&self) -> Vec<f64> {
         self.inner.epoch_clocks_m.clone()
+    }
+
+    /// The input epoch index of each solved epoch, ascending. An input epoch
+    /// the elevation cutoff or the residual screen left without observations
+    /// has no receiver clock to estimate and is absent.
+    #[wasm_bindgen(getter, js_name = solvedEpochIndices)]
+    pub fn solved_epoch_indices(&self) -> Vec<usize> {
+        self.inner.solved_epoch_indices.clone()
+    }
+
+    /// Whether the solve ran the residual screen.
+    #[wasm_bindgen(getter, js_name = residualScreen)]
+    pub fn residual_screen(&self) -> bool {
+        self.inner.residual_screen
+    }
+
+    /// The iteration cap and convergence tolerances the solve ran with, as
+    /// `{ maxIterations, positionToleranceM, clockToleranceM,
+    /// ambiguityToleranceM, ztdToleranceM }`.
+    #[wasm_bindgen(getter, js_name = solveOptions, unchecked_return_type = "PppAppliedSolveOptions")]
+    pub fn solve_options(&self) -> JsValue {
+        let options = &self.inner.solve_options;
+        to_js(&PppSolveOptionsJs {
+            max_iterations: options.max_iterations,
+            position_tolerance_m: options.position_tolerance_m,
+            clock_tolerance_m: options.clock_tolerance_m,
+            ambiguity_tolerance_m: options.ambiguity_tolerance_m,
+            ztd_tolerance_m: options.ztd_tolerance_m,
+        })
+    }
+
+    /// Observations the solve left out before placement. Reasons are
+    /// `"codeNotPositive"` or `"ssrCorrectionExceedsLimit"`; the latter
+    /// includes its typed `ssrCorrectionSize` payload.
+    #[wasm_bindgen(getter, js_name = unplacedObservations, unchecked_return_type = "PppUnplacedObservation[]")]
+    pub fn unplaced_observations(&self) -> JsValue {
+        unplaced_observations(&self.inner.unplaced_observations)
+    }
+
+    /// Observations the residual screen removed from the accepted solution, as
+    /// `{ epochIndex, ambiguityId }` rows with the input epoch index.
+    #[wasm_bindgen(getter, js_name = residualScreenRemovals, unchecked_return_type = "PppObservationRef[]")]
+    pub fn residual_screen_removals(&self) -> JsValue {
+        observation_refs(&self.inner.residual_screen_removals)
     }
 
     /// Float ambiguities, metres, as an id-keyed object.
@@ -877,10 +1152,24 @@ impl PppFixedSolution {
         self.inner.position_m.to_vec()
     }
 
-    /// Epoch receiver clock states, metres.
+    /// Receiver clock states, metres, one per solved epoch in the order of
+    /// `solvedEpochIndices`.
     #[wasm_bindgen(getter, js_name = epochClocksM)]
     pub fn epoch_clocks_m(&self) -> Vec<f64> {
         self.inner.epoch_clocks_m.clone()
+    }
+
+    /// The input epoch index of each solved epoch, ascending.
+    #[wasm_bindgen(getter, js_name = solvedEpochIndices)]
+    pub fn solved_epoch_indices(&self) -> Vec<usize> {
+        self.inner.solved_epoch_indices.clone()
+    }
+
+    /// Observations the solve left out before placement, with the same typed
+    /// reasons and SSR correction-size payload as the float solution.
+    #[wasm_bindgen(getter, js_name = unplacedObservations, unchecked_return_type = "PppUnplacedObservation[]")]
+    pub fn unplaced_observations(&self) -> JsValue {
+        unplaced_observations(&self.inner.unplaced_observations)
     }
 
     /// Fixed ambiguities, integer cycles, as an id-keyed object.
@@ -1071,6 +1360,21 @@ impl PppFixedSolution {
     }
 }
 
+#[wasm_bindgen(typescript_custom_section)]
+const TS_PPP_UNPLACED_DEFINITIONS: &str = r#"
+/** Or, for a reason this binding does not name yet, the engine variant's name. */
+export type PppUnplacedObservationReason = "codeNotPositive" | "ssrCorrectionExceedsLimit" | (string & {});
+export interface PppUnplacedObservation {
+  /** Input epoch index. */
+  epochIndex: number;
+  satelliteId: string;
+  ambiguityId: string;
+  reason: PppUnplacedObservationReason;
+  /** Present only when `reason` is `"ssrCorrectionExceedsLimit"`. */
+  ssrCorrectionSize?: SsrCorrectionSize;
+}
+"#;
+
 #[cfg(test)]
 mod drift_tests {
     //! The PPP iteration, convergence-tolerance, and LAMBDA ratio defaults track
@@ -1100,5 +1404,25 @@ mod drift_tests {
         assert_eq!(AMBIGUITY_TOLERANCE_M, 1.0e-4);
         assert_eq!(ZTD_TOLERANCE_M, 1.0e-4);
         assert_eq!(RATIO_THRESHOLD, 3.0);
+    }
+
+    #[test]
+    fn oversized_ssr_unplaced_reason_keeps_typed_size_payload() {
+        let row = sidereon_core::precise_positioning::UnplacedObservation {
+            epoch_index: 2,
+            satellite_id: "G07".to_string(),
+            ambiguity_id: "G07:L1C/L2W".to_string(),
+            reason: sidereon_core::precise_positioning::UnplacedObservationReason::
+                SsrCorrectionExceedsLimit(sidereon_core::ssr::SsrCorrectionSize {
+                    orbit_m: 31.0,
+                    clock_m: -2.5,
+                }),
+        };
+        let value = serde_json::to_value(PppUnplacedObservationJs::from_core(&row)).unwrap();
+        assert_eq!(value["reason"], "ssrCorrectionExceedsLimit");
+        assert_eq!(value["ssrCorrectionSize"]["orbitM"], 31.0);
+        assert_eq!(value["ssrCorrectionSize"]["clockM"], -2.5);
+        assert_eq!(value["ssrCorrectionSize"]["orbitExceedsLimit"], true);
+        assert_eq!(value["ssrCorrectionSize"]["clockExceedsLimit"], false);
     }
 }

@@ -13,6 +13,7 @@ use sidereon_core::exact_cache::{
 };
 use wasm_bindgen::prelude::*;
 
+use crate::domain_error::exact_cache_error;
 use crate::error::{engine_error, range_error};
 
 #[derive(Serialize)]
@@ -55,7 +56,9 @@ impl ExactCacheSingleFlightWait {
         // opaque revision is harmless: the first browser observation differs
         // and resets the no-progress clock to its actual observation time.
         let mut inner = CoreWait::new(started);
-        inner.observe(started, &[], options).map_err(engine_error)?;
+        inner
+            .observe(started, &[], options)
+            .map_err(exact_cache_error)?;
         Ok(Self { inner, options })
     }
 
@@ -65,7 +68,7 @@ impl ExactCacheSingleFlightWait {
         let decision = match self
             .inner
             .observe(now, revision, self.options)
-            .map_err(engine_error)?
+            .map_err(exact_cache_error)?
         {
             CoreDecision::Wait(delay) => WaitDecision::Wait {
                 delay_ms: delay.as_secs_f64() * 1_000.0,

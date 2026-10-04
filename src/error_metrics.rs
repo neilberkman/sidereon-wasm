@@ -80,6 +80,8 @@ impl KinematicSolutionInput {
             used_sats: self.used_sats.clone(),
             innovation_rms_m: self.innovation_rms_m.unwrap_or(0.0),
             status: KinematicEpochStatus::Updated,
+            ssr_bias_exclusions: Vec::new(),
+            unplaced_observations: Vec::new(),
         }
     }
 }

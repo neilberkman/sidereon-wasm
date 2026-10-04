@@ -53,6 +53,20 @@ console.log(look.azimuthDeg[0], look.elevationDeg[0], look.rangeKm[0]);
 `BigInt64Array` of unix-microsecond epochs) and `findPasses(station, start, end,
 minElevationDeg)` for visibility windows.
 
+An OMM uses the same SGP4 kernel through its canonical mean-element bridge:
+
+```js
+import { parseOmmKvn, Sgp4Satellite } from "@neilberkman/sidereon";
+
+const omm = parseOmmKvn(ommText);
+const satellite = Sgp4Satellite.fromOmm(omm);
+const state = satellite.propagate(epochs);
+console.log(state.positionKm, state.velocityKmS);
+```
+
+`fromOmm` throws a typed `OmmError` when required SGP4 fields are absent or
+the message states an incompatible theory, center, frame, or time system.
+
 ### Node (ESM or CommonJS)
 
 Both module systems resolve to the Node build, which initializes the wasm while
@@ -279,10 +293,13 @@ and [Earthdata Login data access](https://urs.earthdata.nasa.gov/documentation/f
 
 Use `raim` on per-satellite post-fit residuals after a solve. The direct result
 has `faultDetected`, `testStatistic`, `threshold`, `worstSat`,
-`reducedChiSquare`, `normalizedResiduals`, `rmsM`, and `dof`. RAIM residual
-tests must use per-satellite residual variances; unit weights on metre-scale
-residuals make `faultDetected` saturate near 100%. The JS API takes
-inverse-variance weights, so compute them from your variance model.
+`reducedChiSquare`, `normalizedResiduals`, `rmsM`, `dof`, and `testable`. Raw
+`raim` input defaults to solution variances and therefore requires a
+`variancesM2` array aligned with `usedSats` and `residualsM`; use
+`weights: { isUnit: true }` for explicit unit weights, or pass explicit
+inverse-variance weights. Unit weights on metre-scale residuals can make
+`faultDetected` saturate near 100%. `raimForSolution` reads the actual variances
+and clock count retained by the solution.
 
 ```js
 import { RaimWeights, raim } from "@neilberkman/sidereon";
@@ -305,6 +322,16 @@ const integrity = raim(
 
 console.log(integrity.faultDetected, integrity.testStatistic, integrity.worstSat);
 ```
+
+`Sp3.fde` uses the solve's own variances by default, tries one exclusion by
+default, and rejects a candidate whose residual RMS exceeds 100 m. Set
+`weightsMode` to `"unit"` or `"bySatellite"` to select other detection weights;
+`maxExclusions` and `maxExclusionRmsM` override the exclusion policy;
+`maxIterations` is rejected. An explicitly empty legacy `weights` list still
+means unit weights. The
+accepted `FdeSolution.raim` is the core detection result for the retained
+solution. An unresolved fault throws a `PositioningError` with its reason, last
+solution, ordered exclusions, and complete RAIM result.
 
 Use `araim(geometry, ism, allocation)` for protection levels from line-of-sight
 geometry and an integrity support message. `araimLpv200Allocation()` provides the
@@ -340,11 +367,18 @@ record.
 returns a `RinexNavParse` with supported `records` in file order and `skipped`
 diagnostics for malformed supported blocks. `recordCount` and `skippedCount`
 are available as convenience getters. Header and UTF-8 failures throw; a
-skipped block exposes its `satellite` and core `message`.
+skipped block exposes its `satellite`, starting `line` and core `message`.
+`departures` lists what the reader read past, and `other` the blocks it keeps
+without evaluating them. A field the message does not state (a CNAV record's
+IODE, for example) is `undefined`, never `0`.
+
+`parseRinexNavFile(bytes)` returns a `RinexNavFile` that keeps every entry of
+the file, supported or not, and writes it back with `toRinexString()`.
 
 `encodeRinexNav(records)` accepts any caller-supplied JavaScript array of
 `BroadcastRecordJs` objects and delegates the deterministic RINEX NAV encoding
-to the core engine. The record wrapper list is consumed at the WASM boundary.
+to the core engine. It throws instead of writing a record set that would not
+read back. The record wrapper list is consumed at the WASM boundary.
 
 `rinexObservationFrequencyHz(system, code, rinexVersion, glonassChannel)` and
 `rinexObservationWavelengthM(...)` use the core's direct full observation-code
@@ -356,8 +390,30 @@ canonical band lookups.
 `parseSbasEmsLines(text)` and `parseSbasRtklibLines(text)` return full
 timestamped `SbasLogBlock` objects from the core engine. Each block exposes
 `satellite`/`satelliteId`, GPS `week` and `towS`, the selected wire `form`, raw
-`bytes`, and `decode()` for the structured SBAS message. Malformed recognized
-blocks throw an engine `Error`; unrelated lines are ignored.
+`bytes`, its `declaredMessageType`, and `decode(policy?)` for the structured
+SBAS message. Malformed recognized blocks throw an engine `Error`; unrelated
+lines are ignored. `parseSbasEmsLog(text, options)` and
+`parseSbasRtklibLog(text, options)` (`options` is `{ policy?, referenceWeek? }`)
+return an `SbasLog` that also reports the lines read as no record
+(`skippedLines`), the record lines refused (`refusedLines`) and, under
+`policy: "lenient"`, the departures read (`departures`).
+
+## Strict and lenient readers
+
+Readers that meet a departure from their format refuse it by default and name
+it; `"lenient"` reads it and reports it. This holds for `new Tle` and
+`parseTleFile` (checksum digits, reported in `checksumWarnings`),
+`decodeRtcm`/`decodeRtcmStream`/`decodeRtcmFrame` and the RTCM encoders,
+`decodeSbasMessage` and the SBAS log readers, `loadBiasSinex` and
+`loadCodeDcb` (reported in `notices`), and the space-weather lookups
+(`sampleAt`, `apHistoryAt`). Functions that read UT1 refuse an instant outside
+the UT1 table; each has a `WithValidity` variant that takes `"permissive"`
+and returns `{ value, ut1Degraded }`.
+
+CCSDS OMM, OPM, OEM and CDM readers and writers throw `OmmError`, `OpmError`,
+`OemError` and `CdmError`; `error.detail` is an `NdmErrorDetail` naming the
+engine variant (`kind`) and its fields. A value a message does not carry reads
+as `undefined`.
 
 ## Capabilities
 

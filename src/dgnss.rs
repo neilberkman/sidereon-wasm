@@ -20,7 +20,7 @@ use sidereon_core::positioning::{
     Corrections, KlobucharCoeffs, ReceiverSolution, SolveInputs, SurfaceMet,
 };
 
-use crate::error::{engine_error, range_error, type_error};
+use crate::error::{engine_error, type_error};
 
 /// One code pseudorange observation: `{ satelliteId: "G21", pseudorangeM: 2.3e7 }`.
 #[derive(Deserialize)]
@@ -70,6 +70,9 @@ struct SolveRequest {
     initial_guess: [f64; 4],
     #[serde(default = "default_true")]
     with_geodetic: bool,
+    /// Single-frequency (default) or ionosphere-free code, as on `solveSpp`.
+    #[serde(default)]
+    pseudorange_code: crate::spp::PseudorangeCodeInput,
 }
 
 fn default_true() -> bool {
@@ -77,12 +80,7 @@ fn default_true() -> bool {
 }
 
 fn map_err(err: DgnssError) -> JsValue {
-    match err {
-        DgnssError::InvalidInput { field, reason } => {
-            range_error(&format!("invalid DGNSS input {field}: {reason}"))
-        }
-        DgnssError::Spp(e) => engine_error(e),
-    }
+    crate::positioning_error::positioning_error(&crate::positioning_error::dgnss_detail(&err))
 }
 
 fn obs_vec(input: &[CodeObsInput]) -> Vec<CodeObservation> {
@@ -276,6 +274,9 @@ pub fn solve(eph: &CoreSp3, request: JsValue) -> Result<DgnssSolution, JsValue> 
             relative_humidity: 0.5,
         },
         robust: None,
+        pseudorange_code: req.pseudorange_code.into(),
+        qzss_clock: sidereon_core::positioning::QzssClock::Gps,
+        troposphere_model: sidereon_core::positioning::TroposphereModel::Rtklib,
     };
 
     let base = obs_vec(&req.base_observations);

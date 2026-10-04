@@ -103,22 +103,48 @@ test("FrameScanner walks every CRC-valid frame", () => {
   assert.equal(scanner.next(), undefined);
 });
 
-test("decodeRtcm returns an empty array for noise with no valid frame", () => {
+test("decodeRtcm refuses bytes outside CRC-valid frames; decodeRtcmStream reports them", () => {
   const noise = Uint8Array.from([0x00, 0xd3, 0x01, 0x02, 0x03, 0x04]);
-  assert.deepEqual(decodeRtcm(noise), []);
+  assert.throws(() => decodeRtcm(noise), /6 bytes outside CRC-valid frames/);
+  const stream = decodeRtcmStream(noise);
+  assert.deepEqual(stream.messages, []);
+  assert.equal(stream.diagnostics.resyncBytes, 6);
+  assert.equal(stream.diagnostics.crcFailures, 0);
+  assert.deepEqual(stream.diagnostics.skippedFrames, []);
+  assert.deepEqual(stream.diagnostics.departures, []);
 });
 
+// RTCM 3 transport frame around a raw body: preamble, six reserved bits and
+// the 10-bit length, the body, and the CRC-24Q of everything before it.
+function rawFrame(body, reserved = 0) {
+  const head = [0xd3, ((reserved & 0x3f) << 2) | ((body.length >> 8) & 0x03), body.length & 0xff];
+  const bytes = [...head, ...body];
+  let crc = 0;
+  for (const byte of bytes) {
+    crc ^= byte << 16;
+    for (let i = 0; i < 8; i++) {
+      crc <<= 1;
+      if (crc & 0x1000000) crc ^= 0x1864cfb;
+    }
+  }
+  crc &= 0xffffff;
+  return Uint8Array.from([...bytes, (crc >> 16) & 0xff, (crc >> 8) & 0xff, crc & 0xff]);
+}
+
 test("decodeRtcmStream reports resync bytes and skipped CRC-valid frames", () => {
-  const truncatedMsm = encodeRtcmFrame({
-    type: "unsupported",
-    messageNumber: 1077,
-    body: [0x43, 0x50],
-  });
+  // A 1077 is decoded into its typed variant, so the encoder refuses to
+  // write one as an unsupported body; the truncated frame is framed by hand.
+  assert.throws(
+    () => encodeRtcmFrame({ type: "unsupported", messageNumber: 1077, body: [0x43, 0x50] }),
+    (e) => e.name === "RtcmEncodeError" && /typed variant/.test(e.message),
+  );
+  const truncatedMsm = rawFrame([0x43, 0x50]);
   const bytes = concatBytes(Uint8Array.from([0x11, 0x22]), truncatedMsm, stream);
 
   const decoded = decodeRtcmStream(bytes);
   assert.equal(decoded.messages.length, 2);
   assert.equal(decoded.diagnostics.resyncBytes, 2);
+  assert.equal(decoded.diagnostics.crcFailures, 0);
   assert.deepEqual(decoded.diagnostics.skippedFrames, [
     {
       offset: 2,
@@ -126,6 +152,31 @@ test("decodeRtcmStream reports resync bytes and skipped CRC-valid frames", () =>
       reason: "truncated",
     },
   ]);
+  assert.throws(() => decodeRtcm(bytes), Error);
+});
+
+test("frame reserved bits are refused strict and kept lenient", () => {
+  const body = Array.from(new FrameScanner(stream).next().body);
+  const frame = rawFrame(body, 0x05);
+  const strict = decodeRtcmStream(frame);
+  assert.equal(strict.messages.length, 0);
+  assert.equal(strict.diagnostics.skippedFrames[0].reason, "departure");
+  assert.throws(() => decodeRtcmFrame(frame), /reserved bits/);
+  const lenient = decodeRtcmStream(frame, "lenient");
+  assert.equal(lenient.messages.length, 1);
+  assert.equal(lenient.diagnostics.departures.length, 1);
+  assert.equal(lenient.diagnostics.departures[0].kind, "frameReservedBits");
+  assert.equal(lenient.diagnostics.departures[0].reserved, 5);
+  assert.equal(lenient.diagnostics.departures[0].offset, 0);
+  const framed = decodeRtcmFrame(frame, "lenient");
+  assert.equal(framed.reserved, 5);
+  assert.equal(framed.departures[0].kind, "frameReservedBits");
+  // Written back with its reserved bits, the frame is the one read.
+  assert.deepEqual(
+    Array.from(encodeRtcmFrame(framed.message, "lenient", framed.reserved)),
+    Array.from(frame),
+  );
+  assert.throws(() => decodeRtcmStream(frame, "loose"), TypeError);
 });
 
 test("RTCM LLI helpers expose lock-time rules and RINEX signal codes", () => {

@@ -4,44 +4,151 @@
 //! this module marshals fields, optional blocks, segment arrays, and the flat
 //! 6x6 covariance.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::astro::oem::{
-    encode_kvn, encode_xml, parse_kvn, parse_xml, Oem as CoreOem,
+    encode_kvn, encode_xml, parse_kvn, parse_xml, Oem as CoreOem, OemComment as CoreOemComment,
     OemCovariance as CoreOemCovariance, OemMetadata as CoreOemMetadata,
-    OemSegment as CoreOemSegment, OemState as CoreOemState,
+    OemSegment as CoreOemSegment, OemSkippedState as CoreOemSkippedState, OemState as CoreOemState,
+    OemStateLineError,
 };
 
-use crate::error::{engine_error, type_error};
-use crate::marshal::{covariance6_flat, covariance6_from_flat, vec3};
+use crate::error::{reject_unknown_keys, to_plain_js, type_error};
+use crate::marshal::{
+    covariance6_error, covariance6_flat, lower_triangle21_from_input, lower_triangle21_to_full,
+    vec3,
+};
+use crate::ndm_error::oem_error;
 
-/// Optional OEM header fields, defaulting to the CCSDS-standard values.
+/// Optional OEM header fields. `ccsdsOemVers` defaults to `"2.0"`; every
+/// other absent field is absent from the message.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct OemHeaderMeta {
     ccsds_oem_vers: Option<String>,
+    classification: Option<String>,
     creation_date: Option<String>,
     originator: Option<String>,
+    message_id: Option<String>,
+    comments: Vec<String>,
 }
+
+const OEM_HEADER_KEYS: &[&str] = &[
+    "ccsdsOemVers",
+    "classification",
+    "creationDate",
+    "originator",
+    "messageId",
+    "comments",
+];
 
 /// Optional OEM segment-metadata fields.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct OemMetadataMeta {
+    ref_frame_epoch: Option<String>,
     useable_start_time: Option<String>,
     useable_stop_time: Option<String>,
     interpolation: Option<String>,
     interpolation_degree: Option<u32>,
+    comments: Vec<String>,
+}
+
+const OEM_METADATA_KEYS: &[&str] = &[
+    "refFrameEpoch",
+    "useableStartTime",
+    "useableStopTime",
+    "interpolation",
+    "interpolationDegree",
+    "comments",
+];
+
+/// A comment among the ephemeris lines or covariance matrices of a segment:
+/// `position` is the number of items of its list that precede it.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OemCommentJs {
+    position: usize,
+    text: String,
+}
+
+impl OemCommentJs {
+    fn from_core(value: &CoreOemComment) -> Self {
+        Self {
+            position: value.position,
+            text: value.text.clone(),
+        }
+    }
+
+    fn to_core(&self) -> CoreOemComment {
+        CoreOemComment {
+            position: self.position,
+            text: self.text.clone(),
+        }
+    }
+}
+
+fn comments_from_js(value: JsValue, label: &str) -> Result<Vec<CoreOemComment>, JsValue> {
+    if value.is_undefined() || value.is_null() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<OemCommentJs> = serde_wasm_bindgen::from_value(value)
+        .map_err(|e| type_error(&format!("invalid {label}: {e}")))?;
+    Ok(rows.iter().map(OemCommentJs::to_core).collect())
+}
+
+fn comments_to_js(rows: &[CoreOemComment], label: &str) -> Result<JsValue, JsValue> {
+    let rows: Vec<OemCommentJs> = rows.iter().map(OemCommentJs::from_core).collect();
+    to_plain_js(&rows, label)
+}
+
+/// A KVN ephemeris data line the forgiving reader skipped.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OemSkippedStateJs {
+    line: usize,
+    segment: usize,
+    text: String,
+    /// `"itemCount"` or `"invalidField"`.
+    reason: &'static str,
+    /// The number of items the line holds, for `"itemCount"`.
+    item_count: Option<usize>,
+    /// The field that failed, for `"invalidField"`.
+    field: Option<&'static str>,
+    /// The validation category, for `"invalidField"`.
+    issue: Option<String>,
+}
+
+impl From<&CoreOemSkippedState> for OemSkippedStateJs {
+    fn from(value: &CoreOemSkippedState) -> Self {
+        let (reason, item_count, field, issue) = match &value.reason {
+            OemStateLineError::ItemCount(count) => ("itemCount", Some(*count), None, None),
+            OemStateLineError::InvalidField { field, kind } => {
+                ("invalidField", None, Some(*field), Some(kind.to_string()))
+            }
+        };
+        Self {
+            line: value.line,
+            segment: value.segment,
+            text: value.text.clone(),
+            reason,
+            item_count,
+            field,
+            issue,
+        }
+    }
 }
 
 fn parse_meta<T: Default + for<'de> Deserialize<'de>>(
     value: JsValue,
     label: &str,
+    known: &[&str],
 ) -> Result<T, JsValue> {
     if value.is_undefined() || value.is_null() {
         Ok(T::default())
     } else {
+        reject_unknown_keys(&value, label, known)?;
         serde_wasm_bindgen::from_value(value)
             .map_err(|e| type_error(&format!("invalid {label}: {e}")))
     }
@@ -57,8 +164,9 @@ pub struct OemMetadata {
 #[wasm_bindgen]
 impl OemMetadata {
     /// Build OEM segment metadata. The seven leading arguments are required;
-    /// `meta` carries the optional fields (`useableStartTime`, `useableStopTime`,
-    /// `interpolation`, `interpolationDegree`).
+    /// `meta` carries the optional fields (`refFrameEpoch`, `useableStartTime`,
+    /// `useableStopTime`, `interpolation`, `interpolationDegree`, and the
+    /// block `comments`).
     #[wasm_bindgen(constructor)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -69,15 +177,17 @@ impl OemMetadata {
         time_system: String,
         start_time: String,
         stop_time: String,
-        meta: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "OemMetadataMeta | undefined | null")] meta: JsValue,
     ) -> Result<OemMetadata, JsValue> {
-        let m: OemMetadataMeta = parse_meta(meta, "OemMetadata meta")?;
+        let m: OemMetadataMeta = parse_meta(meta, "OemMetadata meta", OEM_METADATA_KEYS)?;
         Ok(OemMetadata {
             inner: CoreOemMetadata {
+                comments: m.comments,
                 object_name,
                 object_id,
                 center_name,
                 ref_frame,
+                ref_frame_epoch: m.ref_frame_epoch,
                 time_system,
                 start_time,
                 stop_time,
@@ -117,6 +227,18 @@ impl OemMetadata {
     #[wasm_bindgen(getter, js_name = timeSystem)]
     pub fn time_system(&self) -> String {
         self.inner.time_system.clone()
+    }
+
+    /// `REF_FRAME_EPOCH` as written, or `undefined`.
+    #[wasm_bindgen(getter, js_name = refFrameEpoch)]
+    pub fn ref_frame_epoch(&self) -> Option<String> {
+        self.inner.ref_frame_epoch.clone()
+    }
+
+    /// Metadata comments, in source order.
+    #[wasm_bindgen(getter)]
+    pub fn comments(&self) -> Vec<String> {
+        self.inner.comments.clone()
     }
 
     /// Segment start time text.
@@ -224,9 +346,11 @@ pub struct OemCovariance {
 
 #[wasm_bindgen]
 impl OemCovariance {
-    /// Build an OEM covariance block. `matrix` is a length-36 row-major
-    /// `Float64Array` for the `[r, v]` state; it must be finite, symmetric, and
-    /// positive semidefinite. `covRefFrame` is the optional frame label.
+    /// Build an OEM covariance block from the 21 lower-triangle values
+    /// (`CX_X`, `CY_X`, `CY_Y`, ...) or a length-36 row-major symmetric
+    /// matrix for the `[r, v]` state. The values are kept as given; no
+    /// definiteness check is applied, as a message holds them as stated.
+    /// `covRefFrame` is the optional frame label.
     #[wasm_bindgen(constructor)]
     pub fn new(
         epoch: String,
@@ -237,7 +361,7 @@ impl OemCovariance {
             inner: CoreOemCovariance {
                 epoch,
                 cov_ref_frame,
-                matrix: covariance6_from_flat("matrix", matrix)?,
+                lower_triangle: lower_triangle21_from_input("matrix", matrix)?,
             },
         })
     }
@@ -254,10 +378,28 @@ impl OemCovariance {
         self.inner.cov_ref_frame.clone()
     }
 
-    /// The 6x6 state covariance as a length-36 row-major `Float64Array`.
+    /// The 21 lower-triangle values exactly as read, row by row.
+    #[wasm_bindgen(getter, js_name = lowerTriangle)]
+    pub fn lower_triangle(&self) -> Vec<f64> {
+        self.inner.lower_triangle.to_vec()
+    }
+
+    /// The stated values as a length-36 row-major symmetric matrix, without
+    /// validation.
     #[wasm_bindgen(getter)]
     pub fn matrix(&self) -> Vec<f64> {
-        covariance6_flat(&self.inner.matrix)
+        lower_triangle21_to_full(&self.inner.lower_triangle)
+    }
+
+    /// The matrix validated as a state covariance (finite and positive
+    /// semidefinite within the covariance tolerance), as a length-36 row-major
+    /// `Float64Array`. Throws a `RangeError` when it is not one.
+    #[wasm_bindgen(js_name = toValidatedMatrix)]
+    pub fn to_validated_matrix(&self) -> Result<Vec<f64>, JsValue> {
+        self.inner
+            .to_covariance6()
+            .map(|covariance| covariance6_flat(&covariance))
+            .map_err(|error| covariance6_error("covariance", error))
     }
 }
 
@@ -271,20 +413,40 @@ pub struct OemSegment {
 #[wasm_bindgen]
 impl OemSegment {
     /// Build an OEM segment from its metadata, state samples, and (possibly
-    /// empty) covariance blocks.
+    /// empty) covariance blocks. `dataComments` and `covarianceComments` are
+    /// optional `{ position, text }` arrays placing each comment after
+    /// `position` state lines or covariance matrices.
     #[wasm_bindgen(constructor)]
     pub fn new(
         metadata: &OemMetadata,
         states: Vec<OemState>,
         covariances: Vec<OemCovariance>,
-    ) -> OemSegment {
-        OemSegment {
+        #[wasm_bindgen(unchecked_param_type = "OemComment[] | undefined | null")]
+        data_comments: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "OemComment[] | undefined | null")]
+        covariance_comments: JsValue,
+    ) -> Result<OemSegment, JsValue> {
+        Ok(OemSegment {
             inner: CoreOemSegment {
                 metadata: metadata.inner.clone(),
+                data_comments: comments_from_js(data_comments, "dataComments")?,
                 states: states.into_iter().map(|s| s.inner).collect(),
+                covariance_comments: comments_from_js(covariance_comments, "covarianceComments")?,
                 covariances: covariances.into_iter().map(|c| c.inner).collect(),
             },
-        }
+        })
+    }
+
+    /// Comments among the ephemeris lines, as `{ position, text }`.
+    #[wasm_bindgen(getter, js_name = dataComments, unchecked_return_type = "OemComment[]")]
+    pub fn data_comments(&self) -> Result<JsValue, JsValue> {
+        comments_to_js(&self.inner.data_comments, "OEM data comments")
+    }
+
+    /// Comments among the covariance matrices, as `{ position, text }`.
+    #[wasm_bindgen(getter, js_name = covarianceComments, unchecked_return_type = "OemComment[]")]
+    pub fn covariance_comments(&self) -> Result<JsValue, JsValue> {
+        comments_to_js(&self.inner.covariance_comments, "OEM covariance comments")
     }
 
     /// Segment metadata.
@@ -329,22 +491,47 @@ pub struct Oem {
 #[wasm_bindgen]
 impl Oem {
     /// Build an OEM from one or more segments. `meta` carries the optional header
-    /// fields (`ccsdsOemVers`, `creationDate`, `originator`).
+    /// fields (`ccsdsOemVers`, `classification`, `creationDate`, `originator`,
+    /// `messageId`, header `comments`).
     #[wasm_bindgen(constructor)]
-    pub fn new(segments: Vec<OemSegment>, meta: JsValue) -> Result<Oem, JsValue> {
+    pub fn new(
+        segments: Vec<OemSegment>,
+        #[wasm_bindgen(unchecked_param_type = "OemMeta | undefined | null")] meta: JsValue,
+    ) -> Result<Oem, JsValue> {
         if segments.is_empty() {
             return Err(type_error("Oem requires at least one segment"));
         }
-        let header: OemHeaderMeta = parse_meta(meta, "Oem meta")?;
+        let header: OemHeaderMeta = parse_meta(meta, "Oem meta", OEM_HEADER_KEYS)?;
         Ok(Oem {
             inner: CoreOem {
                 ccsds_oem_vers: header.ccsds_oem_vers.unwrap_or_else(|| "2.0".to_string()),
+                comments: header.comments,
+                classification: header.classification,
                 creation_date: header.creation_date,
                 originator: header.originator,
+                message_id: header.message_id,
                 segments: segments.into_iter().map(|s| s.inner).collect(),
-                skipped_states: 0,
+                skipped_states: Vec::new(),
             },
         })
+    }
+
+    /// Header `CLASSIFICATION`.
+    #[wasm_bindgen(getter)]
+    pub fn classification(&self) -> Option<String> {
+        self.inner.classification.clone()
+    }
+
+    /// Header `MESSAGE_ID`.
+    #[wasm_bindgen(getter, js_name = messageId)]
+    pub fn message_id(&self) -> Option<String> {
+        self.inner.message_id.clone()
+    }
+
+    /// Header comments, in source order.
+    #[wasm_bindgen(getter)]
+    pub fn comments(&self) -> Vec<String> {
+        self.inner.comments.clone()
     }
 
     /// CCSDS OEM version string.
@@ -382,40 +569,58 @@ impl Oem {
         self.inner.segments.len()
     }
 
-    /// Forgiving-parse count of ephemeris data lines skipped as malformed (KVN
-    /// only; 0 for a constructed or XML-parsed message).
-    #[wasm_bindgen(getter, js_name = skippedStates)]
-    pub fn skipped_states(&self) -> usize {
-        self.inner.skipped_states
+    /// KVN ephemeris data lines the forgiving reader skipped, in input order,
+    /// as `{ line, segment, text, reason, itemCount, field, issue }`: `line`
+    /// is one-based, `segment` zero-based, and `reason` is `"itemCount"` (with
+    /// the number of items the line holds) or `"invalidField"` (with the field
+    /// and validation category). Empty for a constructed or XML-parsed message.
+    #[wasm_bindgen(getter, js_name = skippedStates, unchecked_return_type = "OemSkippedState[]")]
+    pub fn skipped_states(&self) -> Result<JsValue, JsValue> {
+        let rows: Vec<OemSkippedStateJs> = self
+            .inner
+            .skipped_states
+            .iter()
+            .map(OemSkippedStateJs::from)
+            .collect();
+        to_plain_js(&rows, "skipped OEM states")
     }
 
-    /// Encode this OEM to CCSDS OEM KVN text.
+    /// Number of entries in `skippedStates`.
+    #[wasm_bindgen(getter, js_name = skippedStateCount)]
+    pub fn skipped_state_count(&self) -> usize {
+        self.inner.skipped_states.len()
+    }
+
+    /// Encode this OEM to CCSDS OEM KVN text. Throws an `OemError` for what
+    /// the reader would not return unchanged (`UNWRITABLE_TEXT`) and for a
+    /// non-finite number (`INVALID_FIELD`).
     #[wasm_bindgen(js_name = toKvnString)]
-    pub fn to_kvn_string(&self) -> String {
-        encode_kvn(&self.inner)
+    pub fn to_kvn_string(&self) -> Result<String, JsValue> {
+        encode_kvn(&self.inner).map_err(oem_error)
     }
 
-    /// Encode this OEM to CCSDS OEM XML text.
+    /// Encode this OEM to CCSDS OEM XML text. Throws an `OemError` as
+    /// `toKvnString` does.
     #[wasm_bindgen(js_name = toXmlString)]
-    pub fn to_xml_string(&self) -> String {
-        encode_xml(&self.inner)
+    pub fn to_xml_string(&self) -> Result<String, JsValue> {
+        encode_xml(&self.inner).map_err(oem_error)
     }
 }
 
 /// Parse CCSDS OEM KVN text. The KVN reader is forgiving: malformed ephemeris
-/// lines are skipped and counted in `skippedStates`. Throws an `Error` on a
-/// structural failure.
+/// lines are skipped and reported in `skippedStates`. Throws an `OemError` on
+/// a structural failure.
 #[wasm_bindgen(js_name = parseOemKvn)]
 pub fn parse_oem_kvn(text: &str) -> Result<Oem, JsValue> {
     parse_kvn(text)
         .map(|inner| Oem { inner })
-        .map_err(engine_error)
+        .map_err(oem_error)
 }
 
-/// Parse CCSDS OEM XML text. Throws an `Error` on a parse failure.
+/// Parse CCSDS OEM XML text. Throws an `OemError` on a parse failure.
 #[wasm_bindgen(js_name = parseOemXml)]
 pub fn parse_oem_xml(text: &str) -> Result<Oem, JsValue> {
     parse_xml(text)
         .map(|inner| Oem { inner })
-        .map_err(engine_error)
+        .map_err(oem_error)
 }

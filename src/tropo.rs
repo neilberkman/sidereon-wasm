@@ -13,13 +13,15 @@
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
+use sidereon_core::astro::time::model::TimeModelError;
 use sidereon_core::astro::time::model::{Instant, JulianDateSplit, TimeScale};
 use sidereon_core::atmosphere::troposphere::{
     tropo_mapping, tropo_slant, tropo_zenith, MappingModel, Met, TropoModel,
 };
-use sidereon_core::{Error as CoreError, Wgs84Geodetic};
+use sidereon_core::{Error as CoreError, FrameValueError, Wgs84Geodetic};
 
-use crate::error::{engine_error, range_error, require_finite, type_error};
+use crate::core_error::CoreErrorDetail;
+use crate::error::{error_with_detail, require_finite, type_error};
 
 /// One rounding, matching the core/Python `math.radians` and Elixir's constant.
 const DEG_TO_RAD: f64 = core::f64::consts::PI / 180.0;
@@ -29,11 +31,90 @@ fn deg_to_rad(deg: f64) -> f64 {
 }
 
 fn tropo_error(error: CoreError) -> JsValue {
+    let name = if matches!(&error, CoreError::InvalidInput(_)) {
+        "RangeError"
+    } else {
+        "Error"
+    };
+    let message = error.to_string();
+    let detail = CoreErrorDetail::from(&error);
+    error_with_detail(name, &message, &detail)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TroposphereInputErrorDetail<'a> {
+    family: &'static str,
+    kind: &'static str,
+    message: String,
+    field: &'a str,
+    reason: &'a str,
+}
+
+fn frame_value_error(error: FrameValueError) -> JsValue {
+    let message = error.to_string();
     match error {
-        CoreError::InvalidInput(_) => range_error(&error.to_string()),
-        _ => engine_error(error),
+        FrameValueError::InvalidInput { field, reason } => error_with_detail(
+            "RangeError",
+            &message,
+            &TroposphereInputErrorDetail {
+                family: "FrameValueError",
+                kind: "FRAME_VALUE_INVALID_INPUT",
+                message: message.clone(),
+                field,
+                reason,
+            },
+        ),
     }
 }
+
+pub(crate) fn time_model_error(error: TimeModelError) -> JsValue {
+    let message = error.to_string();
+    time_model_error_with(error, "RangeError", &message)
+}
+
+pub(crate) fn time_model_error_with(
+    error: TimeModelError,
+    js_error_name: &str,
+    message: &str,
+) -> JsValue {
+    match error {
+        TimeModelError::InvalidInput { field, reason } => error_with_detail(
+            js_error_name,
+            message,
+            &TroposphereInputErrorDetail {
+                family: "TimeModelError",
+                kind: "TIME_MODEL_INVALID_INPUT",
+                message: error.to_string(),
+                field,
+                reason,
+            },
+        ),
+    }
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const TROPOSPHERE_ERROR_TYPES: &'static str = r#"
+/** An Error thrown by troposphere APIs with the complete refusal attached. */
+export interface TroposphereCoreError extends Error {
+  readonly detail: CoreErrorDetail | TroposphereFrameValueErrorDetail | TimeModelCoreErrorDetail;
+}
+export interface TimeModelCoreErrorDetail {
+  readonly family: "TimeModelError";
+  readonly kind: "TIME_MODEL_INVALID_INPUT";
+  readonly message: string;
+  readonly field: string;
+  readonly reason: string;
+}
+export interface TroposphereFrameValueErrorDetail {
+  readonly family: "FrameValueError";
+  readonly kind: "FRAME_VALUE_INVALID_INPUT";
+  readonly message: string;
+  readonly field: string;
+  readonly reason: string;
+}
+export interface TroposphereTimeModelErrorDetail extends TimeModelCoreErrorDetail {}
+"#;
 
 /// Surface meteorology: `{ pressureHpa, temperatureK, relativeHumidity }`.
 /// Pressure in hectopascals, temperature in kelvin, humidity a `[0, 1]` fraction.
@@ -58,12 +139,11 @@ fn met_from_js(met: JsValue) -> Result<Met, JsValue> {
 
 fn receiver(lat_deg: f64, lon_deg: f64, height_m: f64) -> Result<Wgs84Geodetic, JsValue> {
     Wgs84Geodetic::new(deg_to_rad(lat_deg), deg_to_rad(lon_deg), height_m)
-        .map_err(|error| range_error(&error.to_string()))
+        .map_err(frame_value_error)
 }
 
 fn epoch(jd_whole: f64, jd_fraction: f64) -> Result<Instant, JsValue> {
-    let split = JulianDateSplit::new(jd_whole, jd_fraction)
-        .map_err(|error| range_error(&error.to_string()))?;
+    let split = JulianDateSplit::new(jd_whole, jd_fraction).map_err(time_model_error)?;
     Ok(Instant::from_julian_date(TimeScale::Gpst, split))
 }
 

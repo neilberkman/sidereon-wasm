@@ -211,6 +211,7 @@ fn geometry(input: AraimGeometryInput) -> Result<CoreAraimGeometry, JsValue> {
         rows,
         receiver,
         clock_systems,
+        ut1_degraded: None,
     })
 }
 

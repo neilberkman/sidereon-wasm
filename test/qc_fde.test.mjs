@@ -19,10 +19,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { loadSp3 } from "../pkg-node/sidereon.js";
+import { synthSp3Pseudoranges } from "./helpers.mjs";
 
 const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
-const C_M_S = 299792458.0;
-const OMEGA_E = 7.2921151467e-5; // Earth rotation rate, rad/s
 const norm3 = (a) => Math.hypot(a[0], a[1], a[2]);
 const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 
@@ -44,50 +43,13 @@ async function loadFixtureSp3() {
   return loadSp3(await readFile(here("./fixtures/GRG0MGXFIN_20201760000_01D_15M_ORB.SP3")));
 }
 
-// Self-consistent GPS pseudoranges: light-time iterated transmit time plus the
-// Sagnac rotation of the satellite into the reception-epoch ECEF frame, so the
-// SPP residuals are ~mm and RAIM sees no fault.
-function synth(sp3, tRx, rx, rxClockS) {
-  const rxRadius = norm3(rx);
-  const up = rx.map((c) => c / rxRadius);
-  const out = [];
-  for (const sat of sp3.satellites.filter((s) => s.startsWith("G"))) {
-    let dtFlight = 0.075;
-    let p;
-    let dtSat;
-    let range = 0;
-    for (let it = 0; it < 4; it++) {
-      const tTx = tRx - dtFlight;
-      const interp = sp3.interpolate(sat, Float64Array.of(tTx));
-      const raw = interp.positionM;
-      dtSat = interp.clockS[0];
-      if (!Number.isFinite(raw[0]) || !Number.isFinite(dtSat)) {
-        p = null;
-        break;
-      }
-      const theta = OMEGA_E * dtFlight;
-      p = [
-        raw[0] * Math.cos(theta) + raw[1] * Math.sin(theta),
-        -raw[0] * Math.sin(theta) + raw[1] * Math.cos(theta),
-        raw[2],
-      ];
-      range = norm3(sub3(p, rx));
-      dtFlight = range / C_M_S;
-    }
-    if (!p) continue;
-    const los = sub3(p, rx);
-    const elDeg =
-      (Math.asin((los[0] * up[0] + los[1] * up[1] + los[2] * up[2]) / range) * 180) / Math.PI;
-    if (elDeg < 10) continue;
-    out.push({ satelliteId: sat, pseudorangeM: range + C_M_S * (rxClockS - dtSat) });
-  }
-  return out;
-}
-
 function scenario(sp3) {
   const tRx = sp3.epochsJ2000Seconds()[48];
   const rx = geodeticToEcef(48.0, 11.0, 600.0);
-  const observations = synth(sp3, tRx, rx, 0.0);
+  // Self-consistent GPS pseudoranges (light time, Earth rotation and the
+  // precise-clock relativistic term), so the SPP residuals are ~mm and RAIM
+  // sees no fault.
+  const observations = synthSp3Pseudoranges(sp3, tRx, rx, 0.0);
   const request = {
     observations,
     tRxJ2000S: tRx,
@@ -108,6 +70,14 @@ test("a clean set passes RAIM with no exclusions and recovers the position", asy
   const fde = sp3.fde(request);
   assert.deepEqual(fde.excluded, []);
   assert.equal(fde.iterations, 0);
+  assert.equal(fde.raim.testable, true);
+  assert.equal(fde.raim.faultDetected, false);
+  assert.equal(Object.keys(fde.raim.normalizedResiduals).length, fde.usedSats.length);
+  assert.deepEqual(fde.solution.usedSats, fde.usedSats);
+  assert.deepEqual(Array.from(fde.solution.residualsM), Array.from(fde.residualsM));
+  assert.equal(fde.solution.pseudorangeVariancesM2.length, fde.usedSats.length);
+  assert.equal(fde.solution.weights.length, fde.usedSats.length);
+  assert.equal(fde.solution.metadata.usedCount, fde.usedSats.length);
 
   const err = norm3(sub3(Array.from(fde.positionM), rx));
   assert.ok(err < 1.0, `clean FDE recovered within ${err.toFixed(4)} m`);
@@ -133,6 +103,16 @@ test("a single large fault is detected and excluded by name", async () => {
   const fde = sp3.fde({ ...request, observations: faulted });
   assert.ok(fde.excluded.includes(faultSat), `excluded ${faultSat}`);
   assert.ok(!fde.usedSats.includes(faultSat), "faulted satellite is not in the solution");
+  assert.deepEqual(fde.solution.usedSats, fde.usedSats);
+  assert.equal(fde.raim.faultDetected, false);
+  assert.equal(fde.raim.testable, true);
+
+  const unitWeighted = sp3.fde({
+    ...request,
+    observations: faulted,
+    weightsMode: "unit",
+  });
+  assert.ok(unitWeighted.excluded.includes(faultSat));
 
   const fdeErr = norm3(sub3(Array.from(fde.positionM), rx));
   assert.ok(fdeErr < biasedErr / 5.0, `FDE (${fdeErr.toFixed(2)} m) beats biased`);
@@ -155,12 +135,38 @@ test("the robust FDE driver accepts robust tuning and excludes the fault", async
   assert.ok(fde.excluded.includes(faultSat), `excluded ${faultSat}`);
   assert.ok(!fde.usedSats.includes(faultSat));
   assert.ok(fde.positionM.every(Number.isFinite));
+  const solution = fde.solution;
+  assert.equal(solution.weights.length, solution.usedSats.length);
+  assert.equal(solution.pseudorangeVariancesM2.length, solution.usedSats.length);
 });
 
 test("an out-of-range RAIM probability is rejected", async () => {
   const sp3 = await loadFixtureSp3();
   const { request } = scenario(sp3);
-  assert.throws(() => sp3.fde({ ...request, pFa: 1.5 }), RangeError);
-  assert.throws(() => sp3.fde({ ...request, pFa: 0 }), RangeError);
-  assert.throws(() => sp3.fde({ ...request, pFa: Infinity }), RangeError);
+  for (const pFa of [1.5, 0, Infinity]) {
+    assert.throws(
+      () => sp3.fde({ ...request, pFa }),
+      (error) => error instanceof RangeError && error.detail.kind === "INVALID_PROBABILITY",
+    );
+  }
+  for (const nSystems of [4294967297, -4294967295]) {
+    assert.throws(
+      () => sp3.fde({ ...request, nSystems }),
+      (error) => error instanceof RangeError && error.detail.kind === "INVALID_SYSTEM_COUNT",
+    );
+  }
+});
+
+test("FDE accepts the legacy empty weight list as explicit unit weights", async () => {
+  const sp3 = await loadFixtureSp3();
+  const { request } = scenario(sp3);
+  const fde = sp3.fde({ ...request, weights: [] });
+  assert.equal(fde.raim.faultDetected, false);
+});
+
+test("FDE accepts an empty explicit BySatellite map", async () => {
+  const sp3 = await loadFixtureSp3();
+  const { request } = scenario(sp3);
+  const fde = sp3.fde({ ...request, weightsMode: "bySatellite", weights: [] });
+  assert.equal(fde.raim.faultDetected, false);
 });

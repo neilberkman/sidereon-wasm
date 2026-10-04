@@ -9,7 +9,10 @@
 //! (`n`-by-3) of states plus a `BigInt64Array` of unix-microsecond epochs and
 //! run the per-row loop inside Rust.
 
+use serde::Serialize;
+use wasm_bindgen::convert::TryFromJsValue;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 
 use sidereon::passes::UtcInstant;
 use sidereon_core::astro::frames::nutation::{
@@ -19,7 +22,7 @@ use sidereon_core::astro::frames::precession::compute_skyfield_precession_matrix
 use sidereon_core::astro::frames::transforms::{
     gcrs_to_itrs_compute, geodetic_to_itrs, greenwich_apparent_sidereal_time_radians,
     greenwich_mean_sidereal_time_radians, itrs_to_gcrs_compute, itrs_to_geodetic_compute,
-    teme_to_gcrs_compute, TemeStateKm,
+    teme_to_gcrs_compute, with_ut1_validity, FrameTransformError, TemeStateKm,
 };
 use sidereon_core::astro::time::civil::{
     civil_from_j2000_seconds, day_of_year as core_day_of_year, j2000_seconds,
@@ -31,12 +34,16 @@ use sidereon_core::astro::time::scales::{
     leap_second_table, tai_utc_offset_s as core_tai_utc_offset_s, ut1_coverage,
 };
 use sidereon_core::astro::time::{
-    timescale_offset_at_s, timescale_offset_s, GnssWeekTow as CoreGnssWeekTow,
+    timescale_offset_at_s, timescale_offset_s, ExactEpoch as CoreExactEpoch,
+    ExactEpochQuery as CoreExactEpochQuery, GnssWeekTow as CoreGnssWeekTow, TimeOffsetError,
     TimeScale as CoreTimeScale, TimeScales,
 };
 use sidereon_core::data::{day_of_year as core_data_day_of_year, ProductDate};
 
-use crate::error::{engine_error, range_error, type_error};
+use crate::domain_error::{frame_error, nutation_error, precession_error};
+use crate::error::{
+    engine_error, error_with_detail, range_error, type_error, ut1_validity, validated_object,
+};
 use crate::marshal::{flat3, mat3_flat, rows3, same_len};
 
 const SECONDS_PER_DAY: f64 = 86_400.0;
@@ -112,6 +119,58 @@ pub fn time_scale_abbrev(scale: TimeScale) -> String {
     CoreTimeScale::from(scale).abbrev().to_string()
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TimeOffsetErrorDetailJs {
+    family: &'static str,
+    kind: &'static str,
+    message: String,
+    scale: &'static str,
+}
+
+fn time_offset_error(error: TimeOffsetError) -> JsValue {
+    use TimeOffsetError as E;
+    let (kind, scale) = match error {
+        E::EpochRequired(scale) => ("EPOCH_REQUIRED", scale),
+        E::Unsupported(scale) => ("UNSUPPORTED", scale),
+        E::NonFiniteEpoch(scale) => ("NON_FINITE_EPOCH", scale),
+    };
+    let message = error.to_string();
+    error_with_detail(
+        "RangeError",
+        &message,
+        &TimeOffsetErrorDetailJs {
+            family: "TimeOffsetError",
+            kind,
+            message: message.clone(),
+            scale,
+        },
+    )
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const TIME_OFFSET_ERROR_TYPES: &'static str = r#"
+export type TimeOffsetErrorDetail =
+  | {
+      readonly family: "TimeOffsetError";
+      readonly kind: "EPOCH_REQUIRED";
+      readonly message: string;
+      readonly scale: "UTC" | "GLONASST";
+    }
+  | {
+      readonly family: "TimeOffsetError";
+      readonly kind: "UNSUPPORTED";
+      readonly message: string;
+      readonly scale: "TCG" | "TDB" | "TCB";
+    }
+  | {
+      readonly family: "TimeOffsetError";
+      readonly kind: "NON_FINITE_EPOCH";
+      readonly message: string;
+      readonly scale: "UTC" | "GLONASST";
+    };
+"#;
+
 /// Fixed inter-system offset `to_reading - from_reading`, in seconds, for the
 /// same physical instant. Add the result to a `from`-scale reading to get the
 /// `to`-scale reading.
@@ -119,11 +178,11 @@ pub fn time_scale_abbrev(scale: TimeScale) -> String {
 /// Covers the atomic scales (TAI/TT/GPST/GST/QZSST/BDT), whose mutual offsets
 /// are constants fixed by their ICDs. Throws a `RangeError` when either scale is
 /// UTC-based (`Utc`/`Glonasst`): those carry leap seconds, so their offset is
-/// epoch-dependent and needs [`timescaleOffsetAtS`], or for `Tdb` (no fixed
+/// epoch-dependent and needs [`timescaleOffsetAtS`], or for `Tcg`, `Tdb`, or `Tcb` (no fixed
 /// offset; resolve it through an `Instant`).
 #[wasm_bindgen(js_name = timescaleOffsetS)]
 pub fn timescale_offset_s_js(from: TimeScale, to: TimeScale) -> Result<f64, JsValue> {
-    timescale_offset_s(from.into(), to.into()).map_err(|e| range_error(&e.to_string()))
+    timescale_offset_s(from.into(), to.into()).map_err(time_offset_error)
 }
 
 /// Leap-aware inter-system offset `to_reading - from_reading`, in seconds, at a
@@ -133,14 +192,14 @@ pub fn timescale_offset_s_js(from: TimeScale, to: TimeScale) -> Result<f64, JsVa
 /// `utcJd` is the UTC Julian date of the instant; it is consulted only to
 /// resolve the leap-second count when `from` or `to` is UTC-based
 /// (`Utc`/`Glonasst`), and is ignored for purely atomic pairs. Throws a
-/// `RangeError` for `Tdb` or a non-finite `utcJd` when a leap count is needed.
+/// `RangeError` for `Tcg`/`Tdb`/`Tcb`, or a non-finite `utcJd` when a leap count is needed.
 #[wasm_bindgen(js_name = timescaleOffsetAtS)]
 pub fn timescale_offset_at_s_js(
     from: TimeScale,
     to: TimeScale,
     utc_jd: f64,
 ) -> Result<f64, JsValue> {
-    timescale_offset_at_s(from.into(), to.into(), utc_jd).map_err(|e| range_error(&e.to_string()))
+    timescale_offset_at_s(from.into(), to.into(), utc_jd).map_err(time_offset_error)
 }
 
 /// A two-part Julian date: an integer-day boundary plus a residual fraction,
@@ -162,6 +221,234 @@ pub struct CivilDateTime {
     hour: i64,
     minute: i64,
     second: i64,
+}
+
+#[wasm_bindgen(js_name = ExactEpoch)]
+#[derive(Clone)]
+pub struct ExactEpochValue {
+    inner: CoreExactEpoch,
+}
+
+impl ExactEpochValue {
+    pub(crate) fn from_core(inner: CoreExactEpoch) -> Self {
+        Self { inner }
+    }
+
+    pub(crate) fn from_js(value: &JsValue, field: &str) -> Result<Option<CoreExactEpoch>, JsValue> {
+        if value.is_null() || value.is_undefined() {
+            return Ok(None);
+        }
+        let clone = js_sys::Reflect::get(value, &JsValue::from_str("clone"))?
+            .dyn_into::<js_sys::Function>()
+            .map_err(|_| type_error(&format!("{field} must be an ExactEpoch instance or null")))?
+            .call0(value)?;
+        let epoch = ExactEpochValue::try_from_js_value(clone)
+            .map_err(|_| type_error(&format!("{field} must be an ExactEpoch instance or null")))?;
+        Ok(Some(epoch.inner))
+    }
+
+    pub(crate) fn core(&self) -> CoreExactEpoch {
+        self.inner
+    }
+}
+
+#[wasm_bindgen(js_class = "ExactEpoch")]
+impl ExactEpochValue {
+    #[wasm_bindgen(constructor)]
+    pub fn new(whole_seconds: i64, attoseconds: u64) -> Result<ExactEpochValue, JsValue> {
+        let inner = CoreExactEpoch::new(whole_seconds, attoseconds)
+            .ok_or_else(|| range_error("attoseconds must be below 1e18"))?;
+        Ok(ExactEpochValue { inner })
+    }
+
+    #[wasm_bindgen(js_name = fromCivil)]
+    pub fn from_civil(
+        year: i32,
+        month: i32,
+        day: i32,
+        hour: i32,
+        minute: i32,
+        second: f64,
+    ) -> Result<ExactEpochValue, JsValue> {
+        let inner = CoreExactEpoch::from_civil(year, month, day, hour, minute, second)
+            .ok_or_else(|| range_error("civil fields do not identify a representable epoch"))?;
+        Ok(ExactEpochValue { inner })
+    }
+
+    #[wasm_bindgen(js_name = fromJ2000Seconds)]
+    pub fn from_j2000_seconds(seconds: f64) -> Result<ExactEpochValue, JsValue> {
+        let inner = CoreExactEpoch::from_j2000_seconds(seconds)
+            .ok_or_else(|| range_error("J2000 seconds must identify a representable epoch"))?;
+        Ok(ExactEpochValue { inner })
+    }
+
+    #[wasm_bindgen(js_name = j2000)]
+    pub fn j2000() -> ExactEpochValue {
+        ExactEpochValue {
+            inner: CoreExactEpoch::J2000,
+        }
+    }
+
+    #[wasm_bindgen(getter, js_name = wholeSeconds)]
+    pub fn whole_seconds(&self) -> i64 {
+        self.inner.whole_seconds()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn attoseconds(&self) -> u64 {
+        self.inner.attoseconds()
+    }
+
+    #[wasm_bindgen(getter, js_name = subAttosecondDigits)]
+    pub fn sub_attosecond_digits(&self) -> i64 {
+        self.inner.sub_attosecond().0
+    }
+
+    #[wasm_bindgen(getter, js_name = subAttosecondPlaces)]
+    pub fn sub_attosecond_places(&self) -> u16 {
+        self.inner.sub_attosecond().1
+    }
+
+    #[wasm_bindgen(js_name = j2000Seconds)]
+    pub fn j2000_seconds(&self) -> f64 {
+        self.inner.j2000_seconds()
+    }
+
+    #[wasm_bindgen(js_name = splitJulianDate)]
+    pub fn split_julian_date(&self) -> JulianDate {
+        let (whole, fraction) = self.inner.split_julian_date();
+        JulianDate { whole, fraction }
+    }
+
+    #[wasm_bindgen(js_name = secondsSince)]
+    pub fn seconds_since(&self, earlier: &ExactEpochValue) -> f64 {
+        self.inner.seconds_since(earlier.inner)
+    }
+
+    #[wasm_bindgen(js_name = checkedAddSeconds)]
+    pub fn checked_add_seconds(&self, seconds: f64) -> Result<ExactEpochValue, JsValue> {
+        let inner = self
+            .inner
+            .checked_add_seconds(seconds)
+            .ok_or_else(|| range_error("decimal epoch offset is not representable"))?;
+        Ok(ExactEpochValue { inner })
+    }
+
+    #[wasm_bindgen(js_name = checkedSubtractSeconds)]
+    pub fn checked_subtract_seconds(&self, seconds: f64) -> Result<ExactEpochValue, JsValue> {
+        let inner = self
+            .inner
+            .checked_sub_seconds(seconds)
+            .ok_or_else(|| range_error("decimal epoch offset is not representable"))?;
+        Ok(ExactEpochValue { inner })
+    }
+
+    #[wasm_bindgen(js_name = equals)]
+    pub fn equals(&self, other: &ExactEpochValue) -> bool {
+        self.inner == other.inner
+    }
+
+    #[wasm_bindgen(js_name = clone)]
+    pub fn clone_epoch(&self) -> ExactEpochValue {
+        ExactEpochValue { inner: self.inner }
+    }
+
+    #[wasm_bindgen(js_name = compare)]
+    pub fn compare(&self, other: &ExactEpochValue) -> i8 {
+        match self.inner.cmp(&other.inner) {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
+        }
+    }
+
+    #[wasm_bindgen(js_name = asQuery)]
+    pub fn as_query(&self) -> ExactEpochQueryValue {
+        ExactEpochQueryValue {
+            inner: self.inner.query(),
+        }
+    }
+}
+
+#[wasm_bindgen(js_name = ExactEpochQuery)]
+#[derive(Clone)]
+pub struct ExactEpochQueryValue {
+    inner: CoreExactEpochQuery,
+}
+
+impl ExactEpochQueryValue {
+    pub(crate) fn core(&self) -> CoreExactEpochQuery {
+        self.inner.clone()
+    }
+}
+
+#[wasm_bindgen(js_class = "ExactEpochQuery")]
+impl ExactEpochQueryValue {
+    #[wasm_bindgen(js_name = fromBinaryJ2000Seconds)]
+    pub fn from_binary_j2000_seconds(seconds: f64) -> Result<ExactEpochQueryValue, JsValue> {
+        let inner = CoreExactEpoch::from_binary_j2000_seconds(seconds)
+            .ok_or_else(|| range_error("J2000 seconds must be finite"))?;
+        Ok(ExactEpochQueryValue { inner })
+    }
+
+    #[wasm_bindgen(js_name = fromEpoch)]
+    pub fn from_epoch(epoch: &ExactEpochValue) -> ExactEpochQueryValue {
+        ExactEpochQueryValue {
+            inner: epoch.inner.query(),
+        }
+    }
+
+    #[wasm_bindgen(js_name = addBinarySeconds)]
+    pub fn add_binary_seconds(&self, seconds: f64) -> Result<ExactEpochQueryValue, JsValue> {
+        let inner = self
+            .inner
+            .clone()
+            .checked_add_binary_seconds(seconds)
+            .ok_or_else(|| range_error("query offset must be finite and representable"))?;
+        Ok(ExactEpochQueryValue { inner })
+    }
+
+    #[wasm_bindgen(js_name = subtractBinarySeconds)]
+    pub fn subtract_binary_seconds(&self, seconds: f64) -> Result<ExactEpochQueryValue, JsValue> {
+        let inner = self
+            .inner
+            .clone()
+            .checked_sub_binary_seconds(seconds)
+            .ok_or_else(|| range_error("query offset must be finite and representable"))?;
+        Ok(ExactEpochQueryValue { inner })
+    }
+
+    #[wasm_bindgen(getter, js_name = epoch)]
+    pub fn epoch(&self) -> ExactEpochValue {
+        ExactEpochValue {
+            inner: self.inner.epoch(),
+        }
+    }
+
+    #[wasm_bindgen(js_name = j2000Seconds)]
+    pub fn j2000_seconds(&self) -> f64 {
+        self.inner.j2000_seconds()
+    }
+
+    #[wasm_bindgen(js_name = secondsSince)]
+    pub fn seconds_since(&self, earlier: &ExactEpochQueryValue) -> f64 {
+        self.inner.seconds_since_query(&earlier.inner)
+    }
+
+    #[wasm_bindgen(js_name = secondsSinceEpoch)]
+    pub fn seconds_since_epoch(&self, earlier: &ExactEpochValue) -> f64 {
+        self.inner.seconds_since(earlier.inner)
+    }
+
+    #[wasm_bindgen(js_name = equals)]
+    pub fn equals(&self, other: &ExactEpochQueryValue) -> bool {
+        self.inner == other.inner
+    }
+}
+
+#[wasm_bindgen(js_name = exactEpochAttosecondsPerSecond)]
+pub fn exact_epoch_attoseconds_per_second() -> u64 {
+    CoreExactEpoch::ATTOSECONDS_PER_SECOND
 }
 
 #[wasm_bindgen]
@@ -291,7 +578,7 @@ impl JulianDate {
             minute.unwrap_or(0),
             second.unwrap_or(0.0),
         )
-        .map_err(|e| range_error(&e.to_string()))?;
+        .map_err(crate::tropo::time_model_error)?;
         let split = instant
             .julian_date()
             .ok_or_else(|| engine_error("civil instant did not resolve to a split Julian date"))?;
@@ -462,19 +749,56 @@ impl Instant {
     /// IAU mean obliquity of the ecliptic, radians.
     #[wasm_bindgen(getter, js_name = meanObliquityRadians)]
     pub fn mean_obliquity_radians(&self) -> Result<f64, JsValue> {
-        skyfield_mean_obliquity_radians(self.time_scales().jd_tdb).map_err(engine_error)
+        skyfield_mean_obliquity_radians(self.time_scales().jd_tdb).map_err(nutation_error)
+    }
+
+    /// The UT1 departure of this instant's time scales: `"beforeCoverage"` or
+    /// `"afterCoverage"` when the instant lies outside the UT1 table and UT1
+    /// comes from the long-term delta-T curve, `undefined` inside the table.
+    #[wasm_bindgen(getter, js_name = ut1Degraded, unchecked_return_type = "Ut1DegradeReason | undefined")]
+    pub fn ut1_degraded(&self) -> Option<String> {
+        self.time_scales()
+            .ut1_degraded
+            .map(|reason| crate::spp::degrade_reason_label(reason).to_owned())
+    }
+
+    /// [`gmstRadians`] under a UT1 validity policy: `"strict"` (the default)
+    /// refuses an instant outside the UT1 table, `"permissive"` accepts it.
+    /// Returns `{ value, ut1Degraded }`.
+    #[wasm_bindgen(js_name = gmstRadiansWithValidity, unchecked_return_type = "Ut1Validated<number>")]
+    pub fn gmst_radians_with_validity(&self, ut1: Option<String>) -> Result<JsValue, JsValue> {
+        let validated = with_ut1_validity(
+            &self.time_scales(),
+            ut1_validity(ut1)?,
+            greenwich_mean_sidereal_time_radians,
+        )
+        .map_err(frame_error)?;
+        validated_object(&JsValue::from_f64(validated.value), validated.degraded)
+    }
+
+    /// [`gastRadians`] under a UT1 validity policy, as
+    /// [`gmstRadiansWithValidity`].
+    #[wasm_bindgen(js_name = gastRadiansWithValidity, unchecked_return_type = "Ut1Validated<number>")]
+    pub fn gast_radians_with_validity(&self, ut1: Option<String>) -> Result<JsValue, JsValue> {
+        let validated = with_ut1_validity(
+            &self.time_scales(),
+            ut1_validity(ut1)?,
+            greenwich_apparent_sidereal_time_radians,
+        )
+        .map_err(frame_error)?;
+        validated_object(&JsValue::from_f64(validated.value), validated.degraded)
     }
 
     /// Greenwich Mean Sidereal Time, radians in `[0, 2pi)`.
     #[wasm_bindgen(js_name = gmstRadians)]
     pub fn gmst_radians(&self) -> Result<f64, JsValue> {
-        greenwich_mean_sidereal_time_radians(&self.time_scales()).map_err(engine_error)
+        greenwich_mean_sidereal_time_radians(&self.time_scales()).map_err(frame_error)
     }
 
     /// Greenwich Apparent Sidereal Time, radians in `[0, 2pi)`.
     #[wasm_bindgen(js_name = gastRadians)]
     pub fn gast_radians(&self) -> Result<f64, JsValue> {
-        greenwich_apparent_sidereal_time_radians(&self.time_scales()).map_err(engine_error)
+        greenwich_apparent_sidereal_time_radians(&self.time_scales()).map_err(frame_error)
     }
 
     /// IAU 2000A nutation in longitude and obliquity `[dpsi, deps]`, radians,
@@ -482,7 +806,7 @@ impl Instant {
     #[wasm_bindgen(js_name = nutationAngles)]
     pub fn nutation_angles(&self) -> Result<Vec<f64>, JsValue> {
         let (dpsi, deps) =
-            skyfield_iau2000a_radians(self.time_scales().jd_tt).map_err(engine_error)?;
+            skyfield_iau2000a_radians(self.time_scales().jd_tt).map_err(nutation_error)?;
         Ok(vec![dpsi, deps])
     }
 
@@ -490,8 +814,8 @@ impl Instant {
     /// length 9 (3-by-3).
     #[wasm_bindgen(js_name = precessionMatrix)]
     pub fn precession_matrix(&self) -> Result<Vec<f64>, JsValue> {
-        let m =
-            compute_skyfield_precession_matrix(self.time_scales().jd_tdb).map_err(engine_error)?;
+        let m = compute_skyfield_precession_matrix(self.time_scales().jd_tdb)
+            .map_err(precession_error)?;
         Ok(mat3_flat(&m))
     }
 
@@ -500,10 +824,10 @@ impl Instant {
     #[wasm_bindgen(js_name = nutationMatrix)]
     pub fn nutation_matrix(&self) -> Result<Vec<f64>, JsValue> {
         let ts = self.time_scales();
-        let (dpsi, deps) = skyfield_iau2000a_radians(ts.jd_tt).map_err(engine_error)?;
-        let mean_ob = skyfield_mean_obliquity_radians(ts.jd_tdb).map_err(engine_error)?;
-        let m =
-            build_skyfield_nutation_matrix(mean_ob, mean_ob + deps, dpsi).map_err(engine_error)?;
+        let (dpsi, deps) = skyfield_iau2000a_radians(ts.jd_tt).map_err(nutation_error)?;
+        let mean_ob = skyfield_mean_obliquity_radians(ts.jd_tdb).map_err(nutation_error)?;
+        let m = build_skyfield_nutation_matrix(mean_ob, mean_ob + deps, dpsi)
+            .map_err(nutation_error)?;
         Ok(mat3_flat(&m))
     }
 }
@@ -522,7 +846,7 @@ impl GnssWeekTow {
     pub fn new(system: TimeScale, week: u32, tow_s: f64) -> Result<GnssWeekTow, JsValue> {
         Ok(GnssWeekTow {
             inner: CoreGnssWeekTow::new(system.into(), week, tow_s)
-                .map_err(|e| range_error(&e.to_string()))?,
+                .map_err(crate::tropo::time_model_error)?,
         })
     }
 
@@ -551,7 +875,7 @@ impl GnssWeekTow {
             inner: self
                 .inner
                 .normalized()
-                .map_err(|e| range_error(&e.to_string()))?,
+                .map_err(crate::tropo::time_model_error)?,
         })
     }
 
@@ -560,7 +884,7 @@ impl GnssWeekTow {
     pub fn unrolled_week(&self, rollovers: u32) -> Result<u32, JsValue> {
         self.inner
             .unrolled_week(rollovers)
-            .map_err(|e| range_error(&e.to_string()))
+            .map_err(crate::tropo::time_model_error)
     }
 }
 
@@ -774,7 +1098,7 @@ pub fn teme_to_gcrs(
             ts,
             compat,
         )
-        .map_err(engine_error)?;
+        .map_err(frame_error)?;
         out_pos.push([p.0, p.1, p.2]);
         out_vel.push([v.0, v.1, v.2]);
     }
@@ -802,10 +1126,71 @@ pub fn gcrs_to_itrs(
         .map(|(p, ts)| {
             gcrs_to_itrs_compute(p[0], p[1], p[2], ts, compat)
                 .map(|(x, y, z)| [x, y, z])
-                .map_err(engine_error)
+                .map_err(frame_error)
         })
         .collect::<Result<Vec<_>, JsValue>>()?;
     Ok(flat3(&out))
+}
+
+/// Run `compute` at each epoch's time scales under `mode`, keeping the first
+/// UT1 departure accepted.
+fn per_epoch_with_validity<T>(
+    scales: &[TimeScales],
+    mode: sidereon_core::astro::time::ValidityMode,
+    mut compute: impl FnMut(usize, &TimeScales) -> Result<T, FrameTransformError>,
+) -> Result<(Vec<T>, Option<sidereon_core::astro::time::DegradeReason>), JsValue> {
+    let mut out = Vec::with_capacity(scales.len());
+    let mut degraded = None;
+    for (index, ts) in scales.iter().enumerate() {
+        let validated = with_ut1_validity(ts, mode, |accepted| compute(index, accepted))
+            .map_err(frame_error)?;
+        degraded = degraded.or(validated.degraded);
+        out.push(validated.value);
+    }
+    Ok((out, degraded))
+}
+
+/// [`gcrsToItrs`] under a UT1 validity policy: `"strict"` (the default)
+/// refuses an epoch outside the UT1 table, `"permissive"` accepts it. Returns
+/// `{ value, ut1Degraded }` with `value` the flat `(n, 3)` `Float64Array` and
+/// `ut1Degraded` the first departure accepted.
+#[wasm_bindgen(js_name = gcrsToItrsWithValidity, unchecked_return_type = "Ut1Validated<Float64Array>")]
+pub fn gcrs_to_itrs_with_validity(
+    position_km: &[f64],
+    epochs_unix_us: &[i64],
+    skyfield_compat: Option<bool>,
+    ut1: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let compat = skyfield_compat.unwrap_or(true);
+    let mode = ut1_validity(ut1)?;
+    let positions = rows3("positionKm", position_km, false)?;
+    let scales = scales_from_epochs(epochs_unix_us)?;
+    same_len("positionKm rows", positions.len(), "epochs", scales.len())?;
+    let (out, degraded) = per_epoch_with_validity(&scales, mode, |index, ts| {
+        let p = positions[index];
+        gcrs_to_itrs_compute(p[0], p[1], p[2], ts, compat).map(|(x, y, z)| [x, y, z])
+    })?;
+    let value = js_sys::Float64Array::from(flat3(&out).as_slice());
+    validated_object(&value.into(), degraded)
+}
+
+/// [`itrsToGcrs`] under a UT1 validity policy, as [`gcrsToItrsWithValidity`].
+#[wasm_bindgen(js_name = itrsToGcrsWithValidity, unchecked_return_type = "Ut1Validated<Float64Array>")]
+pub fn itrs_to_gcrs_with_validity(
+    position_km: &[f64],
+    epochs_unix_us: &[i64],
+    ut1: Option<String>,
+) -> Result<JsValue, JsValue> {
+    let mode = ut1_validity(ut1)?;
+    let positions = rows3("positionKm", position_km, false)?;
+    let scales = scales_from_epochs(epochs_unix_us)?;
+    same_len("positionKm rows", positions.len(), "epochs", scales.len())?;
+    let (out, degraded) = per_epoch_with_validity(&scales, mode, |index, ts| {
+        let p = positions[index];
+        itrs_to_gcrs_compute(p[0], p[1], p[2], ts).map(|(x, y, z)| [x, y, z])
+    })?;
+    let value = js_sys::Float64Array::from(flat3(&out).as_slice());
+    validated_object(&value.into(), degraded)
 }
 
 /// Transform a batch of ITRS (ECEF) positions to GCRS, each at its own epoch.
@@ -821,7 +1206,7 @@ pub fn itrs_to_gcrs(position_km: &[f64], epochs_unix_us: &[i64]) -> Result<Vec<f
         .map(|(p, ts)| {
             itrs_to_gcrs_compute(p[0], p[1], p[2], ts)
                 .map(|(x, y, z)| [x, y, z])
-                .map_err(engine_error)
+                .map_err(frame_error)
         })
         .collect::<Result<Vec<_>, JsValue>>()?;
     Ok(flat3(&out))
@@ -840,7 +1225,7 @@ pub fn geodetic_to_ecef(geodetic: &[f64]) -> Result<Vec<f64>, JsValue> {
         .map(|g| {
             geodetic_to_itrs(g[0], g[1], g[2])
                 .map(|(x, y, z)| [x, y, z])
-                .map_err(engine_error)
+                .map_err(frame_error)
         })
         .collect::<Result<Vec<_>, JsValue>>()?;
     Ok(flat3(&out))
@@ -859,7 +1244,7 @@ pub fn ecef_to_geodetic(position_km: &[f64]) -> Result<Vec<f64>, JsValue> {
         .map(|p| {
             itrs_to_geodetic_compute(p[0], p[1], p[2])
                 .map(|(lat, lon, alt)| [lat, lon, alt])
-                .map_err(engine_error)
+                .map_err(frame_error)
         })
         .collect::<Result<Vec<_>, JsValue>>()?;
     Ok(flat3(&out))

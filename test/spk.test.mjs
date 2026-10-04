@@ -13,7 +13,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import init, { Spk } from "../pkg/sidereon.js";
+import init, {
+  Spk,
+  SpkKernels,
+  spkInertialFrameName,
+  spkInertialFrameRotation,
+} from "../pkg/sidereon.js";
 
 const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 const wasmBytes = await readFile(here("../pkg/sidereon_bg.wasm"));
@@ -117,4 +122,88 @@ test("an epoch outside coverage is rejected with an Error", async () => {
     () => spk.state(EROS, SUN, seg.stopEt + 1e9),
     (e) => e instanceof Error,
   );
+});
+
+const J2000 = 1;
+const ECLIPJ2000 = 17;
+
+test("NAIF inertial frames are named and rotated as IRFNAM and IRFROT give them", () => {
+  assert.equal(spkInertialFrameName(J2000), "J2000");
+  assert.equal(spkInertialFrameName(ECLIPJ2000), "ECLIPJ2000");
+  assert.equal(spkInertialFrameName(0), undefined);
+  assert.equal(spkInertialFrameName(22), undefined);
+
+  // IRFROT forms the identity as a product of rotations, which can leave a
+  // signed zero; `+ 0` compares -0 and 0 as equal.
+  assert.deepEqual(
+    Array.from(spkInertialFrameRotation(J2000, J2000), (v) => v + 0),
+    [1, 0, 0, 0, 1, 0, 0, 0, 1],
+  );
+  const toEcliptic = spkInertialFrameRotation(J2000, ECLIPJ2000);
+  assert.equal(toEcliptic.length, 9);
+  // J2000 to ECLIPJ2000 is a rotation about x by the J2000 obliquity.
+  assert.equal(toEcliptic[0], 1);
+  assert.ok(Math.abs(toEcliptic[4] - Math.cos((84381.448 / 3600) * (Math.PI / 180))) < 1e-15);
+  assert.throws(() => spkInertialFrameRotation(J2000, 22), Error);
+});
+
+test("stateInFrame rotates the composed state into the requested inertial frame", async () => {
+  const spk = await loadKernel();
+  const [et] = REFERENCE[0];
+  const native = spk.state(EROS, SUN, et);
+  const same = spk.stateInFrame(EROS, SUN, et, native.frame);
+  assert.deepEqual(Array.from(same.positionKm), Array.from(native.positionKm));
+  assert.deepEqual(Array.from(same.velocityKmS), Array.from(native.velocityKmS));
+  assert.equal(same.frame, native.frame);
+
+  const other = native.frame === ECLIPJ2000 ? J2000 : ECLIPJ2000;
+  const rotated = spk.stateInFrame(EROS, SUN, et, other);
+  assert.equal(rotated.frame, other);
+  const m = spkInertialFrameRotation(native.frame, other);
+  // Each rotated component is a three-term dot product m_r . v. Evaluated in
+  // floating point in any order, it differs from the exact product by at most
+  // gamma_3 * sum_j |m_rj v_j|, gamma_3 = 3u / (1 - 3u), u = 2^-53 (Higham,
+  // Accuracy and Stability of Numerical Algorithms, 3.1). The engine's value
+  // and the one formed here therefore differ by at most twice that.
+  const u = 2 ** -53;
+  const gamma3 = (3 * u) / (1 - 3 * u);
+  const check = (got, v, label) => {
+    for (let r = 0; r < 3; r++) {
+      const row = [m[3 * r], m[3 * r + 1], m[3 * r + 2]];
+      const want = row[0] * v[0] + row[1] * v[1] + row[2] * v[2];
+      const bound = 2 * gamma3 * row.reduce((acc, mj, j) => acc + Math.abs(mj * v[j]), 0);
+      const diff = Math.abs(got[r] - want);
+      assert.ok(diff <= bound, `${label}[${r}]: ${diff} exceeds ${bound}`);
+    }
+  };
+  check(rotated.positionKm, native.positionKm, "position");
+  check(rotated.velocityKmS, native.velocityKmS, "velocity");
+  assert.throws(() => spk.stateInFrame(EROS, SUN, et, 22), Error);
+});
+
+test("SpkKernels resolves states across its kernels as the single kernel does", async () => {
+  const spk = await loadKernel();
+  const kernels = new SpkKernels();
+  assert.equal(kernels.length, 0);
+  assert.throws(() => kernels.state(EROS, SUN, REFERENCE[0][0]), Error);
+
+  kernels.push(spk);
+  kernels.pushBytes(
+    new Uint8Array(await readFile(here("./fixtures/spk/horizons_eros_type21.bsp"))),
+  );
+  assert.equal(kernels.length, 2);
+  // A buffer that is not a kernel is refused and leaves the set unchanged.
+  assert.throws(() => kernels.pushBytes(new Uint8Array(64)), Error);
+  assert.equal(kernels.length, 2);
+
+  for (const [et] of REFERENCE) {
+    const single = spk.state(EROS, SUN, et);
+    const set = kernels.state(EROS, SUN, et);
+    assert.deepEqual(Array.from(set.positionKm), Array.from(single.positionKm));
+    assert.deepEqual(Array.from(set.velocityKmS), Array.from(single.velocityKmS));
+    const inFrame = kernels.stateInFrame(EROS, SUN, et, ECLIPJ2000);
+    const direct = spk.stateInFrame(EROS, SUN, et, ECLIPJ2000);
+    assert.deepEqual(Array.from(inFrame.positionKm), Array.from(direct.positionKm));
+  }
+  assert.throws(() => kernels.state(EROS, SUN, Number.NaN), RangeError);
 });

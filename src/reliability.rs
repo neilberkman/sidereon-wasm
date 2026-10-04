@@ -10,13 +10,13 @@ use wasm_bindgen::prelude::*;
 use sidereon_core::quality::{
     reliability_araim as core_reliability_araim, reliability_design as core_reliability_design,
     wtest_noncentrality_components as core_wtest_noncentrality_components,
-    ObservationReliability as CoreObservationReliability, QualityError,
+    ObservationReliability as CoreObservationReliability,
     RangeReliabilityRow as CoreRangeReliabilityRow, ReliabilityOptions as CoreReliabilityOptions,
     ReliabilityReport as CoreReliabilityReport, ReliabilitySummary as CoreReliabilitySummary,
 };
 
 use crate::araim::{parse_geometry as parse_araim_geometry, parse_ism as parse_araim_ism};
-use crate::error::{engine_error, range_error, type_error};
+use crate::error::{engine_error, type_error};
 
 fn serializer() -> serde_wasm_bindgen::Serializer {
     serde_wasm_bindgen::Serializer::new()
@@ -28,17 +28,6 @@ fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     value
         .serialize(&serializer())
         .map_err(|e| engine_error(format!("failed to serialize result: {e}")))
-}
-
-fn quality_error(error: QualityError) -> JsValue {
-    match error {
-        QualityError::InvalidProbability
-        | QualityError::InvalidReliabilityParameter
-        | QualityError::InvalidWeight => range_error(&error.to_string()),
-        QualityError::InvalidDesign => type_error(&error.to_string()),
-        QualityError::SingularGeometry => engine_error(error),
-        _ => engine_error(error),
-    }
 }
 
 #[derive(Deserialize)]
@@ -215,7 +204,8 @@ fn parse_options(value: JsValue) -> Result<CoreReliabilityOptions, JsValue> {
 #[wasm_bindgen(js_name = wtestNoncentrality)]
 pub fn wtest_noncentrality(alpha: f64, power: f64) -> Result<JsValue, JsValue> {
     let beta = 1.0 - power;
-    let components = core_wtest_noncentrality_components(alpha, beta).map_err(quality_error)?;
+    let components = core_wtest_noncentrality_components(alpha, beta)
+        .map_err(crate::positioning_error::quality_error)?;
     to_js(&WtestNoncentralityJs {
         alpha,
         power,
@@ -240,7 +230,8 @@ pub fn reliability_design(rows: JsValue, options: JsValue) -> Result<JsValue, Js
         .map(CoreRangeReliabilityRow::from)
         .collect::<Vec<_>>();
     let options = parse_options(options)?;
-    let report = core_reliability_design(&rows, &options).map_err(quality_error)?;
+    let report = core_reliability_design(&rows, &options)
+        .map_err(crate::positioning_error::quality_error)?;
     to_js(&ReliabilityReportJs::from(report))
 }
 

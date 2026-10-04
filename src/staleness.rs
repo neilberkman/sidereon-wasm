@@ -29,6 +29,7 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+use sidereon_core::atmosphere::IonexEpochError;
 use sidereon_core::ephemeris::Sp3 as CoreSp3;
 use sidereon_core::positioning::{
     solve_broadcast as core_solve_broadcast, solve_with_fallback as core_solve_with_fallback,
@@ -43,6 +44,9 @@ use sidereon_core::GnssSatelliteId;
 
 use crate::error::{engine_error, require_finite, type_error};
 use crate::ionex::{slant_delay_deg, Ionex};
+use crate::positioning_error::{
+    fallback_detail, positioning_error, spp_detail, spp_error, PositioningErrorDetail,
+};
 use crate::rinex_nav::BroadcastEphemeris;
 use crate::sp3::Sp3;
 use crate::spp::{self, SppSolution};
@@ -157,6 +161,63 @@ struct SelectionErrorJs {
     max_staleness_s: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ionex_epoch: Option<IonexEpochErrorJs>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IonexEpochErrorJs {
+    kind: &'static str,
+    scale: Option<String>,
+    utc_j2000_s: Option<i64>,
+}
+
+impl From<IonexEpochError> for IonexEpochErrorJs {
+    fn from(error: IonexEpochError) -> Self {
+        match error {
+            IonexEpochError::NotWholeSecond { scale } => Self {
+                kind: "notWholeSecond",
+                scale: Some(format!("{scale:?}")),
+                utc_j2000_s: None,
+            },
+            IonexEpochError::FractionalUtcSecond { scale } => Self {
+                kind: "fractionalUtcSecond",
+                scale: Some(format!("{scale:?}")),
+                utc_j2000_s: None,
+            },
+            IonexEpochError::NoExactUtcOffset { scale } => Self {
+                kind: "noExactUtcOffset",
+                scale: Some(format!("{scale:?}")),
+                utc_j2000_s: None,
+            },
+            IonexEpochError::InsertedLeapSecond { scale } => Self {
+                kind: "insertedLeapSecond",
+                scale: Some(format!("{scale:?}")),
+                utc_j2000_s: None,
+            },
+            IonexEpochError::BeforeIntegerLeapSeconds { scale } => Self {
+                kind: "beforeIntegerLeapSeconds",
+                scale: Some(format!("{scale:?}")),
+                utc_j2000_s: None,
+            },
+            IonexEpochError::OutOfRange { scale } => Self {
+                kind: "outOfRange",
+                scale: Some(format!("{scale:?}")),
+                utc_j2000_s: None,
+            },
+            IonexEpochError::YearOutOfField { utc_j2000_s } => Self {
+                kind: "yearOutOfField",
+                scale: None,
+                utc_j2000_s: Some(utc_j2000_s),
+            },
+            _ => Self {
+                kind: "unknown",
+                scale: None,
+                utc_j2000_s: None,
+            },
+        }
+    }
 }
 
 impl SelectionErrorJs {
@@ -171,6 +232,7 @@ impl SelectionErrorJs {
             staleness_s: None,
             max_staleness_s: None,
             context: None,
+            ionex_epoch: None,
         }
     }
 }
@@ -220,6 +282,11 @@ impl From<&SelectionError> for SelectionErrorJs {
                 js.context = Some((*context).to_string());
                 js
             }
+            SelectionError::IonexEpoch(error) => {
+                let mut js = Self::new("IonexEpoch", message);
+                js.ionex_epoch = Some((*error).into());
+                js
+            }
         }
     }
 }
@@ -236,29 +303,11 @@ fn selection_error(error: &SelectionError) -> JsValue {
     value
 }
 
-/// A fallback failure as a plain object: which path failed (`name`) and the
-/// underlying solve error (`message`).
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct FallbackErrorJs {
-    name: &'static str,
-    message: String,
-}
-
-/// Build a typed JS `Error` from a fallback failure: `error.name` names which
-/// path failed (`"PreciseSolveError"` / `"BroadcastSolveError"`) and `error.detail`
-/// carries the same structured fields, mirroring [`selection_error`].
+/// A thrown `PositioningError` for a fallback failure: `detail.kind` names the
+/// path that failed (`"PRECISE_SOLVE_FAILED"` / `"BROADCAST_SOLVE_FAILED"`) and
+/// `detail.cause` carries that solve's own failure.
 fn fallback_error(error: &FallbackError) -> JsValue {
-    let name = match error {
-        FallbackError::Precise(_) => "PreciseSolveError",
-        FallbackError::Broadcast(_) => "BroadcastSolveError",
-    };
-    let message = error.to_string();
-    let js_error = js_sys::Error::new(&message);
-    js_error.set_name(name);
-    let value: JsValue = js_error.into();
-    attach_detail(&value, &FallbackErrorJs { name, message });
-    value
+    positioning_error(&fallback_detail(error))
 }
 
 /// Attach a serialized `detail` object to a thrown JS `Error`, surfacing any
@@ -341,8 +390,9 @@ pub fn select_ionex_js(
     require_finite(requested_epoch_j2000_s, "requestedEpochJ2000S")?;
     let policy = parse_policy(policy)?;
     let core: Vec<_> = products.into_iter().map(|p| p.inner).collect();
-    let selection = select_ionex(&core, requested_epoch_j2000_s as i64, policy)
-        .map_err(|e| selection_error(&e))?;
+    let requested_epoch = crate::ionex::j2000_seconds_to_instant(requested_epoch_j2000_s)?;
+    let selection =
+        select_ionex(&core, requested_epoch, policy).map_err(|e| selection_error(&e))?;
     Ok(IonexSelection {
         inner: selection.ionex().clone(),
         metadata: selection.metadata(),
@@ -362,13 +412,10 @@ pub fn select_ionex_over_range_js(
     require_finite(end_epoch_j2000_s, "endEpochJ2000S")?;
     let policy = parse_policy(policy)?;
     let core: Vec<_> = products.into_iter().map(|p| p.inner).collect();
-    let selection = select_ionex_over_range(
-        &core,
-        start_epoch_j2000_s as i64,
-        end_epoch_j2000_s as i64,
-        policy,
-    )
-    .map_err(|e| selection_error(&e))?;
+    let start_epoch = crate::ionex::j2000_seconds_to_instant(start_epoch_j2000_s)?;
+    let end_epoch = crate::ionex::j2000_seconds_to_instant(end_epoch_j2000_s)?;
+    let selection = select_ionex_over_range(&core, start_epoch, end_epoch, policy)
+        .map_err(|e| selection_error(&e))?;
     Ok(IonexSelection {
         inner: selection.ionex().clone(),
         metadata: selection.metadata(),
@@ -510,9 +557,9 @@ struct BroadcastReasonJs {
     /// The staleness of the precise product that was tried then fell back, for
     /// `"preciseDegradedUnusable"`.
     attempted_staleness: Option<StalenessMetadataJs>,
-    /// The precise solve error that triggered the fallback, for
-    /// `"preciseDegradedUnusable"`.
-    precise_error: Option<String>,
+    /// The precise solve failure that triggered the fallback, for
+    /// `"preciseDegradedUnusable"`, as a `PositioningErrorDetail`.
+    precise_error: Option<PositioningErrorDetail>,
 }
 
 impl From<&FixSource> for FixSourceJs {
@@ -551,7 +598,7 @@ impl From<&BroadcastReason> for BroadcastReasonJs {
                 kind: "preciseDegradedUnusable",
                 selection_error: None,
                 attempted_staleness: Some(StalenessMetadataJs::from(*staleness)),
-                precise_error: Some(error.to_string()),
+                precise_error: Some(spp_detail(error)),
             },
         }
     }
@@ -591,7 +638,7 @@ impl BroadcastEphemeris {
     pub fn solve_broadcast(&self, request: JsValue) -> Result<SppSolution, JsValue> {
         let (inputs, with_geodetic) = spp::build_inputs(request)?;
         let solution =
-            core_solve_broadcast(&self.inner, &inputs, with_geodetic).map_err(engine_error)?;
+            core_solve_broadcast(&self.inner, &inputs, with_geodetic).map_err(|e| spp_error(&e))?;
         Ok(SppSolution::from_inner(solution))
     }
 
@@ -602,7 +649,7 @@ impl BroadcastEphemeris {
     /// `sidereon_core::quality::fde_spp` over the broadcast store.
     #[wasm_bindgen(js_name = fde)]
     pub fn fde(&self, request: JsValue) -> Result<crate::qc::FdeSolution, JsValue> {
-        crate::qc::fde(&self.inner, request)
+        crate::qc::fde(self.inner.as_ref(), request)
     }
 }
 
@@ -625,8 +672,14 @@ pub fn solve_with_fallback_js(
     let policy = parse_policy(policy)?;
     let (inputs, with_geodetic) = spp::build_inputs(request)?;
     let core: Vec<_> = precise.into_iter().map(|p| p.inner).collect();
-    let sourced = core_solve_with_fallback(&core, &broadcast.inner, &inputs, policy, with_geodetic)
-        .map_err(|e| fallback_error(&e))?;
+    let sourced = core_solve_with_fallback(
+        &core,
+        broadcast.inner.as_ref(),
+        &inputs,
+        policy,
+        with_geodetic,
+    )
+    .map_err(|e| fallback_error(&e))?;
     Ok(SourcedSolution {
         solution: SppSolution::from_inner(sourced.solution),
         source: sourced.source,

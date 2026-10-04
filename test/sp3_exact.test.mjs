@@ -17,6 +17,15 @@ const terminalRecordCorpus = JSON.parse(
   readFileSync(new URL("./fixtures/sp3-terminal-record-v1.json", import.meta.url), "utf8"),
 );
 
+function captureThrow(fn, expected) {
+  let thrown;
+  assert.throws(fn, (error) => {
+    thrown = error;
+    return expected === undefined || expected.test(error.message);
+  });
+  return thrown;
+}
+
 function regularOffsets(count, cadenceSeconds = 300) {
   return Array.from({ length: count }, (_, index) => index * cadenceSeconds);
 }
@@ -140,10 +149,17 @@ test("exact SP3 accepts half-open and inclusive daily five-minute grids", () => 
 });
 
 test("exact SP3 rejects short, irregular, cadence-invalid, and unsupported requests", () => {
-  assert.throws(
+  const short = captureThrow(
     () => parseExactSp3(encoder.encode(exactSp3(regularOffsets(287))), request()),
     /span mismatch/,
   );
+  assert.equal(short.name, "ExactSp3ValidationError");
+  assert.deepEqual(short.detail, {
+    kind: "span_mismatch",
+    parsed: "287",
+    halfOpen: "288",
+    inclusive: "289",
+  });
   assert.throws(
     () => parseExactSp3(encoder.encode(exactSp3(regularOffsets(290))), request()),
     /span mismatch/,
@@ -192,5 +208,22 @@ test("historical GFZ identity applies its cataloged content start across a GPS w
   assert.equal(parseExactSp3(bytes, catalogRequest).coverage, ExactSp3Coverage.HalfOpen);
 
   const literalFilenameEpoch = new ExactSp3Request(2022, 9, 4, "02D", "05M", "0000");
-  assert.throws(() => parseExactSp3(bytes, literalFilenameEpoch), /start mismatch/);
+  const startMismatch = captureThrow(
+    () => parseExactSp3(bytes, literalFilenameEpoch),
+    /start mismatch/,
+  );
+  assert.equal(startMismatch.name, "ExactSp3ValidationError");
+  assert.equal(startMismatch.detail.kind, "declared_start_mismatch");
+  assert.equal(startMismatch.detail.requestedJ2000S - startMismatch.detail.declaredJ2000S, 86400);
+  assert.equal(
+    startMismatch.detail.requestedJ2000S,
+    Number(startMismatch.detail.requestedTick) / 1e8,
+  );
+  assert.equal(
+    startMismatch.detail.declaredJ2000S,
+    Number(startMismatch.detail.declaredTick) / 1e8,
+  );
+  assert.match(startMismatch.detail.requestedTick, /^-?\d+$/);
+  assert.match(startMismatch.detail.declaredTick, /^-?\d+$/);
+  assert.notEqual(startMismatch.detail.requestedTick, startMismatch.detail.declaredTick);
 });

@@ -140,12 +140,15 @@ test("gnss DOP series matches real SP3 fixture", () => {
   // few ULP on these transcendental-heavy (sqrt of LOS-matrix inverse trace)
   // outputs, so the series golden is matched within 1 ULP exactly as the Python
   // binding asserts it (test_events_bodies_dop.py::_assert_bits_within_one_ulp).
+  // Pinned bits are core's `dop_series_matches_pinned_first_sample_bits`
+  // (geometry.rs), re-frozen when the SP3 pivot at a node moved to the node
+  // before it, as RTKLIB pephpos takes it.
   const expectedFirst = {
-    gdop: "0x4000c042642e3cbc",
-    pdop: "0x3ffd34cde2c7e400",
+    gdop: "0x4000c042642e3cba",
+    pdop: "0x3ffd34cde2c7e3fd",
     hdop: "0x3ff257e7df379517",
-    vdop: "0x3ff6ba2ad4e284af",
-    tdop: "0x3ff069acbf06750f",
+    vdop: "0x3ff6ba2ad4e284ab",
+    tdop: "0x3ff069acbf06750c",
   };
   for (const [attr, bits] of Object.entries(expectedFirst)) {
     const diff = f64Bits(series[attr][0]) - BigInt(bits);

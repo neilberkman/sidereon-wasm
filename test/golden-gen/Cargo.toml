@@ -1,0 +1,26 @@
+# Golden generator for the WASM test suite. Not part of the binding build (own
+# empty [workspace] table), so `npm run build` and `cargo test` never pull it
+# in. It reproduces the test scenarios natively against the same sidereon core
+# the binding builds against and writes their expected values, so the tests
+# check the binding against the engine rather than against its own output:
+#
+#     SIDEREON_CORE_REV=<commit> cargo run --release \
+#         --manifest-path test/golden-gen/Cargo.toml > test/fixtures/core_goldens.json
+#
+# built against a checkout of that core commit; `src/main.rs` documents the
+# patch step. Rerun it after an engine change that moves these values; never
+# edit the output by hand.
+[package]
+name = "golden-gen"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+# The version the crates of the recorded core commit (`coreRev` in the
+# output) state; Cargo.lock was resolved against that checkout.
+sidereon = { version = "=3.0.0" }
+sidereon-core = { version = "=3.0.0" }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }

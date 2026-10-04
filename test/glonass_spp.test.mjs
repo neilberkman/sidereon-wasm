@@ -3,10 +3,12 @@
 // GLONASS is FDMA: its per-satellite carrier is resolved from the
 // `glonassChannels` map so the L1 Klobuchar ionosphere delay scales by
 // (f_L1/f_k)^2. These tests prove (a) GLONASS observations solve end-to-end,
-// (b) a GLONASS observation solved with the ionosphere correction on but no
-// channel is rejected with the engine's IonosphereUnsupported error, (c) supplying
-// the channel map lifts that gate and GLONASS solves with the ionosphere on, and
-// (d) the new field is a no-op for a GPS-only solve (backward compatible).
+// (b) with the ionosphere correction on, a GLONASS satellite with no channel,
+// or a channel outside the -7..=6 allocation, is left out of the solve and
+// reported in `rejectedSats` as "ionosphereCarrierUnresolved" while the rest of
+// the epoch solves, (c) supplying the channel map brings GLONASS back into the
+// solve with the ionosphere on, and (d) the field is a no-op for a GPS-only
+// solve.
 //
 // Pseudoranges are synthesized from the committed multi-GNSS SP3 product itself
 // (geometric range to each satellite plus its broadcast clock term), so the
@@ -20,7 +22,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import init, { loadSp3 } from "../pkg/sidereon.js";
-import { hexToF64 } from "./helpers.mjs";
+import { coreGoldens, hexToF64 } from "./helpers.mjs";
 
 const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 const wasmBytes = await readFile(here("../pkg/sidereon_bg.wasm"));
@@ -88,6 +90,65 @@ function glonassScenario(sp3) {
   };
 }
 
+// GPS pseudoranges plus GLONASS pseudoranges for the same receiver and epoch,
+// each synthesized from the SP3 product (geometric range less the satellite
+// clock term, light time and Earth rotation applied). GLONASS satellites are
+// kept only above 20 degrees, well clear of the 10-degree mask, so selection
+// at the truth seed reaches the carrier test for each of them.
+function mixedScenario(sp3) {
+  const OMEGA_E = 7.2921151467e-5;
+  const epochs = sp3.epochsJ2000Seconds();
+  const tRx = epochs[48];
+  const rx = geodeticToEcef(48.0, 11.0, 600.0);
+  const rxRadius = norm3(rx);
+  const up = rx.map((c) => c / rxRadius);
+  const observations = [];
+  const glonass = [];
+  for (const sat of sp3.satellites.filter((s) => s.startsWith("G") || s.startsWith("R"))) {
+    let dtFlight = 0.075;
+    let p = null;
+    let dtSat = NaN;
+    let range = 0;
+    for (let it = 0; it < 4; it++) {
+      const interp = sp3.interpolate(sat, Float64Array.of(tRx - dtFlight));
+      const raw = interp.positionM;
+      dtSat = interp.clockS[0];
+      if (!Number.isFinite(raw[0]) || !Number.isFinite(dtSat)) {
+        p = null;
+        break;
+      }
+      const theta = OMEGA_E * dtFlight;
+      p = [
+        raw[0] * Math.cos(theta) + raw[1] * Math.sin(theta),
+        -raw[0] * Math.sin(theta) + raw[1] * Math.cos(theta),
+        raw[2],
+      ];
+      range = norm3(sub3(p, rx));
+      dtFlight = range / C_M_S;
+    }
+    if (!p) continue;
+    const los = sub3(p, rx);
+    const elDeg =
+      (Math.asin((los[0] * up[0] + los[1] * up[1] + los[2] * up[2]) / range) * 180) / Math.PI;
+    const glonassSat = sat.startsWith("R");
+    if (elDeg < (glonassSat ? 20 : 10)) continue;
+    observations.push({ satelliteId: sat, pseudorangeM: range - C_M_S * dtSat });
+    if (glonassSat) glonass.push(sat);
+  }
+  return {
+    glonass,
+    request: {
+      observations,
+      tRxJ2000S: tRx,
+      tRxSecondOfDayS: 43200,
+      dayOfYear: 176,
+      corrections: { ionosphere: true, troposphere: false },
+      initialGuess: [...rx, 0],
+      withGeodetic: true,
+    },
+  };
+}
+
 async function loadFixtureSp3() {
   return loadSp3(await readFile(here("./fixtures/GRG0MGXFIN_20201760000_01D_15M_ORB.SP3")));
 }
@@ -107,15 +168,51 @@ test("GLONASS pseudoranges solve end-to-end (ionosphere off, no channels needed)
   assert.ok(Number.isFinite(err) && err < 2000, `recovered within ${err.toFixed(1)} m of truth`);
 });
 
-test("GLONASS with ionosphere on but no channel map is rejected", async () => {
+test("GLONASS with ionosphere on but no channel map leaves every GLONASS satellite out", async () => {
   const sp3 = await loadFixtureSp3();
   const { request } = glonassScenario(sp3);
 
+  // Every observation is GLONASS and none has a carrier, so no satellite is
+  // left to solve with: the epoch fails for too few satellites, not for the
+  // carrier.
   assert.throws(
     () => sp3.solveSpp({ ...request, corrections: { ionosphere: true, troposphere: false } }),
-    (e) => e instanceof Error && /no modeled carrier frequency for R\d\d/.test(e.message),
-    "surfaces IonosphereUnsupported naming a GLONASS satellite",
+    (e) => e instanceof Error && /only 0 usable satellites/.test(e.message),
   );
+});
+
+test("a GLONASS satellite with no channel is rejected and the rest of the epoch solves", async () => {
+  const sp3 = await loadFixtureSp3();
+  const { glonass, request } = mixedScenario(sp3);
+  assert.ok(glonass.length >= 2, "at least two GLONASS satellites above 20 degrees");
+
+  const sol = sp3.solveSpp(request);
+  for (const s of sol.usedSats) assert.ok(s.startsWith("G"), `${s} is a GPS satellite`);
+  const unresolved = sol.rejectedSats.filter((r) => r.reason === "ionosphereCarrierUnresolved");
+  assert.deepEqual(
+    unresolved.map((r) => r.satelliteId),
+    glonass,
+    "every GLONASS satellite, in observation order",
+  );
+  for (const row of sol.rejectedSats) {
+    assert.deepEqual(Object.keys(row).sort(), ["reason", "satelliteId"]);
+  }
+
+  // A channel for every GLONASS satellite but the first: only that one is
+  // left out for its carrier.
+  const [first, ...rest] = glonass;
+  const partial = sp3.solveSpp({
+    ...request,
+    glonassChannels: rest.map((sat) => [parseInt(sat.slice(1), 10), 0]),
+  });
+  assert.deepEqual(
+    partial.rejectedSats
+      .filter((r) => r.reason === "ionosphereCarrierUnresolved")
+      .map((r) => r.satelliteId),
+    [first],
+  );
+  assert.ok(!partial.usedSats.includes(first));
+  assert.ok(partial.usedSats.some((s) => s.startsWith("R")));
 });
 
 test("the GLONASS channel map lifts the ionosphere gate and GLONASS solves", async () => {
@@ -134,21 +231,24 @@ test("the GLONASS channel map lifts the ionosphere gate and GLONASS solves", asy
   assert.ok(Number.isFinite(err) && err < 2000, `recovered within ${err.toFixed(1)} m of truth`);
 });
 
-test("an out-of-range GLONASS channel is rejected like a missing one", async () => {
+test("an out-of-range GLONASS channel is left out like a missing one", async () => {
   const sp3 = await loadFixtureSp3();
-  const { request, channels } = glonassScenario(sp3);
+  const { glonass, request } = mixedScenario(sp3);
 
-  // Channel 9 is outside the valid FDMA range [-7, +6], so the carrier is
-  // unresolvable and the ionosphere gate fires exactly as if it were absent.
-  assert.throws(
-    () =>
-      sp3.solveSpp({
-        ...request,
-        corrections: { ionosphere: true, troposphere: false },
-        glonassChannels: channels.map(([slot]) => [slot, 9]),
-      }),
-    (e) => e instanceof Error && /no modeled carrier frequency for R\d\d/.test(e.message),
+  // Channel 7 is outside the FDMA allocation [-7, +6] (it is the channel real
+  // headers give R28), so the carrier is unresolvable and the satellite is
+  // reported exactly as if it had no channel.
+  const sol = sp3.solveSpp({
+    ...request,
+    glonassChannels: glonass.map((sat) => [parseInt(sat.slice(1), 10), 7]),
+  });
+  assert.deepEqual(
+    sol.rejectedSats
+      .filter((r) => r.reason === "ionosphereCarrierUnresolved")
+      .map((r) => r.satelliteId),
+    glonass,
   );
+  for (const s of sol.usedSats) assert.ok(s.startsWith("G"), `${s} is a GPS satellite`);
 });
 
 test("glonassChannels is a no-op for a GPS-only solve (backward compatible)", async () => {
@@ -195,7 +295,8 @@ test("glonassChannels is a no-op for a GPS-only solve (backward compatible)", as
   assert.deepEqual(Array.from(withChannels.positionM), Array.from(without.positionM));
   assert.equal(withChannels.rxClockS, without.rxClockS);
 
-  const expected = fx.final_solution.x.map(hexToF64);
-  const err = norm3(sub3(Array.from(without.positionM), expected));
-  assert.ok(err < 1.0e-6, `GPS golden still reproduced within ${err} m`);
+  // The engine's solve of the trace inputs with the precise-clock
+  // relativistic term, reproduced natively by test/golden-gen.
+  const expected = coreGoldens().sppTrace.positionM.map(hexToF64);
+  assert.deepEqual(Array.from(without.positionM), expected);
 });

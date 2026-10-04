@@ -1,7 +1,7 @@
 // Standalone force-model accelerations reproduce the core force-model bits.
 //
 // The two-body and J2 golden bit patterns are exactly the
-// `acceleration_matches_orbis_force_wrapper_bits` goldens in
+// `acceleration_matches_pinned_bits` goldens in
 // sidereon-core/src/astro/forces/{two_body,j2}.rs, so the WASM binding is held
 // to the same 0-ULP bar the core asserts (and the same bits the Elixir binding
 // pins in propagator_test.exs).

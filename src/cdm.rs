@@ -3,15 +3,122 @@
 //! `sidereon_core::astro::cdm`; this module marshals strings, optional fields,
 //! and flat `Float64Array` vectors.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::astro::cdm::{
-    encode_kvn, encode_xml, parse_kvn, parse_xml, CdmKvn, CdmObject as CoreCdmObject,
+    encode_kvn, encode_xml, parse_kvn, parse_xml, CdmAdditionalParameters, CdmKvn,
+    CdmObject as CoreCdmObject, CdmOdParameters,
 };
 
-use crate::error::{engine_error, type_error};
+use crate::error::{reject_unknown_keys, to_plain_js, type_error};
 use crate::marshal::vec3;
+use crate::ndm_error::cdm_error;
+
+fn fixed<const N: usize>(name: &str, values: &[f64]) -> Result<[f64; N], JsValue> {
+    values.try_into().map_err(|_| {
+        type_error(&format!(
+            "{name} must have length {N}, got {}",
+            values.len()
+        ))
+    })
+}
+
+/// CDM orbit-determination parameters (CCSDS 508.0-B-1 table 3-4).
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct CdmOdParametersJs {
+    comments: Vec<String>,
+    time_lastob_start: Option<String>,
+    time_lastob_end: Option<String>,
+    recommended_od_span_d: Option<f64>,
+    actual_od_span_d: Option<f64>,
+    obs_available: Option<u64>,
+    obs_used: Option<u64>,
+    tracks_available: Option<u64>,
+    tracks_used: Option<u64>,
+    residuals_accepted_pct: Option<f64>,
+    weighted_rms: Option<f64>,
+}
+
+impl CdmOdParametersJs {
+    fn from_core(v: &CdmOdParameters) -> Self {
+        Self {
+            comments: v.comments.clone(),
+            time_lastob_start: v.time_lastob_start.clone(),
+            time_lastob_end: v.time_lastob_end.clone(),
+            recommended_od_span_d: v.recommended_od_span_d,
+            actual_od_span_d: v.actual_od_span_d,
+            obs_available: v.obs_available,
+            obs_used: v.obs_used,
+            tracks_available: v.tracks_available,
+            tracks_used: v.tracks_used,
+            residuals_accepted_pct: v.residuals_accepted_pct,
+            weighted_rms: v.weighted_rms,
+        }
+    }
+
+    fn to_core(&self) -> CdmOdParameters {
+        CdmOdParameters {
+            comments: self.comments.clone(),
+            time_lastob_start: self.time_lastob_start.clone(),
+            time_lastob_end: self.time_lastob_end.clone(),
+            recommended_od_span_d: self.recommended_od_span_d,
+            actual_od_span_d: self.actual_od_span_d,
+            obs_available: self.obs_available,
+            obs_used: self.obs_used,
+            tracks_available: self.tracks_available,
+            tracks_used: self.tracks_used,
+            residuals_accepted_pct: self.residuals_accepted_pct,
+            weighted_rms: self.weighted_rms,
+        }
+    }
+}
+
+/// CDM additional parameters (CCSDS 508.0-B-1 table 3-4).
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct CdmAdditionalParametersJs {
+    comments: Vec<String>,
+    area_pc_m2: Option<f64>,
+    area_drg_m2: Option<f64>,
+    area_srp_m2: Option<f64>,
+    mass_kg: Option<f64>,
+    cd_area_over_mass_m2_kg: Option<f64>,
+    cr_area_over_mass_m2_kg: Option<f64>,
+    thrust_acceleration_m_s2: Option<f64>,
+    sedr_w_kg: Option<f64>,
+}
+
+impl CdmAdditionalParametersJs {
+    fn from_core(v: &CdmAdditionalParameters) -> Self {
+        Self {
+            comments: v.comments.clone(),
+            area_pc_m2: v.area_pc_m2,
+            area_drg_m2: v.area_drg_m2,
+            area_srp_m2: v.area_srp_m2,
+            mass_kg: v.mass_kg,
+            cd_area_over_mass_m2_kg: v.cd_area_over_mass_m2_kg,
+            cr_area_over_mass_m2_kg: v.cr_area_over_mass_m2_kg,
+            thrust_acceleration_m_s2: v.thrust_acceleration_m_s2,
+            sedr_w_kg: v.sedr_w_kg,
+        }
+    }
+
+    fn to_core(&self) -> CdmAdditionalParameters {
+        CdmAdditionalParameters {
+            comments: self.comments.clone(),
+            area_pc_m2: self.area_pc_m2,
+            area_drg_m2: self.area_drg_m2,
+            area_srp_m2: self.area_srp_m2,
+            mass_kg: self.mass_kg,
+            cd_area_over_mass_m2_kg: self.cd_area_over_mass_m2_kg,
+            cr_area_over_mass_m2_kg: self.cr_area_over_mass_m2_kg,
+            thrust_acceleration_m_s2: self.thrust_acceleration_m_s2,
+            sedr_w_kg: self.sedr_w_kg,
+        }
+    }
+}
 
 fn vec6(name: &str, values: &[f64]) -> Result<[f64; 6], JsValue> {
     if values.len() != 6 {
@@ -59,30 +166,112 @@ struct CdmObjectMeta {
     earth_tides: Option<String>,
     intrack_thrust: Option<String>,
     velocity_covariance_rtn: Option<Vec<f64>>,
+    drag_covariance_rtn: Option<Vec<f64>>,
+    srp_covariance_rtn: Option<Vec<f64>>,
+    thrust_covariance_rtn: Option<Vec<f64>>,
+    metadata_comments: Vec<String>,
+    od_parameters: CdmOdParametersJs,
+    additional_parameters: CdmAdditionalParametersJs,
+    state_comments: Vec<String>,
+    covariance_comments: Vec<String>,
 }
 
-/// Optional CDM message-level fields.
+const CDM_OBJECT_META_KEYS: &[&str] = &[
+    "objectDesignator",
+    "catalogName",
+    "objectName",
+    "internationalDesignator",
+    "objectType",
+    "operatorContactPosition",
+    "operatorOrganization",
+    "operatorPhone",
+    "operatorEmail",
+    "ephemerisName",
+    "covarianceMethod",
+    "maneuverable",
+    "orbitCenter",
+    "refFrame",
+    "gravityModel",
+    "atmosphericModel",
+    "nBodyPerturbations",
+    "solarRadPressure",
+    "earthTides",
+    "intrackThrust",
+    "velocityCovarianceRtn",
+    "dragCovarianceRtn",
+    "srpCovarianceRtn",
+    "thrustCovarianceRtn",
+    "metadataComments",
+    "odParameters",
+    "additionalParameters",
+    "stateComments",
+    "covarianceComments",
+];
+
+/// Optional CDM message-level fields: the header, the relative
+/// metadata/data block and the screening volume. Absent fields are absent
+/// from the message.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct CdmMeta {
+    ccsds_cdm_vers: Option<String>,
+    comments: Vec<String>,
     creation_date: Option<String>,
     originator: Option<String>,
+    message_for: Option<String>,
     message_id: Option<String>,
+    relative_comments: Vec<String>,
     tca: Option<String>,
     miss_distance_m: Option<f64>,
     relative_speed_m_s: Option<f64>,
+    relative_position_rtn_m: [Option<f64>; 3],
+    relative_velocity_rtn_m_s: [Option<f64>; 3],
+    start_screen_period: Option<String>,
+    stop_screen_period: Option<String>,
+    screen_volume_frame: Option<String>,
+    screen_volume_shape: Option<String>,
+    screen_volume_m: [Option<f64>; 3],
+    screen_entry_time: Option<String>,
+    screen_exit_time: Option<String>,
     collision_probability: Option<f64>,
     collision_probability_method: Option<String>,
     hard_body_radius_m: Option<f64>,
 }
 
+const CDM_META_KEYS: &[&str] = &[
+    "ccsdsCdmVers",
+    "comments",
+    "creationDate",
+    "originator",
+    "messageFor",
+    "messageId",
+    "relativeComments",
+    "tca",
+    "missDistanceM",
+    "relativeSpeedMS",
+    "relativePositionRtnM",
+    "relativeVelocityRtnMS",
+    "startScreenPeriod",
+    "stopScreenPeriod",
+    "screenVolumeFrame",
+    "screenVolumeShape",
+    "screenVolumeM",
+    "screenEntryTime",
+    "screenExitTime",
+    "collisionProbability",
+    "collisionProbabilityMethod",
+    "hardBodyRadiusM",
+];
+
 fn parse_meta<T: Default + for<'de> Deserialize<'de>>(
     value: JsValue,
     label: &str,
+    known: &[&str],
 ) -> Result<T, JsValue> {
     if value.is_undefined() || value.is_null() {
         Ok(T::default())
     } else {
+        reject_unknown_keys(&value, label, known)?;
         serde_wasm_bindgen::from_value(value)
             .map_err(|e| type_error(&format!("invalid {label}: {e}")))
     }
@@ -105,26 +294,49 @@ impl CdmObject {
     /// `operatorOrganization`, `operatorPhone`, `operatorEmail`, `ephemerisName`,
     /// `covarianceMethod`, `maneuverable`, `orbitCenter`, `refFrame`,
     /// `gravityModel`, `atmosphericModel`, `nBodyPerturbations`,
-    /// `solarRadPressure`, `earthTides`, `intrackThrust`) and the optional
-    /// `velocityCovarianceRtn`, a length-15 `Float64Array` of the RTN
-    /// velocity-covariance rows that complete the 6x6 matrix.
+    /// `solarRadPressure`, `earthTides`, `intrackThrust`), the block comments
+    /// (`metadataComments`, `stateComments`, `covarianceComments`), the
+    /// `odParameters` and `additionalParameters` blocks, and the optional
+    /// covariance rows 4 to 9: `velocityCovarianceRtn` (15 values, rows 4-6),
+    /// `dragCovarianceRtn` (7, row 7), `srpCovarianceRtn` (8, row 8) and
+    /// `thrustCovarianceRtn` (9, row 9).
     #[wasm_bindgen(constructor)]
     pub fn new(
         position_km: &[f64],
         velocity_km_s: &[f64],
         covariance_rtn: &[f64],
-        meta: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "CdmObjectMeta | undefined | null")] meta: JsValue,
     ) -> Result<CdmObject, JsValue> {
         let p = vec3("positionKm", position_km)?;
         let v = vec3("velocityKmS", velocity_km_s)?;
         let cov = vec6("covarianceRtn", covariance_rtn)?;
-        let m: CdmObjectMeta = parse_meta(meta, "CdmObject meta")?;
+        let m: CdmObjectMeta = parse_meta(meta, "CdmObject meta", CDM_OBJECT_META_KEYS)?;
         let velocity_covariance_rtn = match &m.velocity_covariance_rtn {
             Some(values) => Some(vec15("velocityCovarianceRtn", values)?),
             None => None,
         };
+        let drag_covariance_rtn = match &m.drag_covariance_rtn {
+            Some(values) => Some(fixed::<7>("dragCovarianceRtn", values)?),
+            None => None,
+        };
+        let srp_covariance_rtn = match &m.srp_covariance_rtn {
+            Some(values) => Some(fixed::<8>("srpCovarianceRtn", values)?),
+            None => None,
+        };
+        let thrust_covariance_rtn = match &m.thrust_covariance_rtn {
+            Some(values) => Some(fixed::<9>("thrustCovarianceRtn", values)?),
+            None => None,
+        };
         Ok(CdmObject {
             inner: CoreCdmObject {
+                metadata_comments: m.metadata_comments,
+                od_parameters: m.od_parameters.to_core(),
+                additional_parameters: m.additional_parameters.to_core(),
+                state_comments: m.state_comments,
+                covariance_comments: m.covariance_comments,
+                drag_covariance_rtn,
+                srp_covariance_rtn,
+                thrust_covariance_rtn,
                 object_designator: m.object_designator,
                 catalog_name: m.catalog_name,
                 object_name: m.object_name,
@@ -299,6 +511,74 @@ impl CdmObject {
     pub fn velocity_covariance_rtn(&self) -> Option<Vec<f64>> {
         self.inner.velocity_covariance_rtn.map(|v| v.to_vec())
     }
+
+    /// Covariance row 7 (`CDRG_R` .. `CDRG_DRG`), 7 values, or `undefined`.
+    #[wasm_bindgen(getter, js_name = dragCovarianceRtn)]
+    pub fn drag_covariance_rtn(&self) -> Option<Vec<f64>> {
+        self.inner.drag_covariance_rtn.map(|v| v.to_vec())
+    }
+
+    /// Covariance row 8 (`CSRP_R` .. `CSRP_SRP`), 8 values, or `undefined`.
+    #[wasm_bindgen(getter, js_name = srpCovarianceRtn)]
+    pub fn srp_covariance_rtn(&self) -> Option<Vec<f64>> {
+        self.inner.srp_covariance_rtn.map(|v| v.to_vec())
+    }
+
+    /// Covariance row 9 (`CTHR_R` .. `CTHR_THR`), 9 values, or `undefined`.
+    #[wasm_bindgen(getter, js_name = thrustCovarianceRtn)]
+    pub fn thrust_covariance_rtn(&self) -> Option<Vec<f64>> {
+        self.inner.thrust_covariance_rtn.map(|v| v.to_vec())
+    }
+
+    /// Comments of the metadata block, in source order.
+    #[wasm_bindgen(getter, js_name = metadataComments)]
+    pub fn metadata_comments(&self) -> Vec<String> {
+        self.inner.metadata_comments.clone()
+    }
+
+    /// Comments of the state vector block, in source order.
+    #[wasm_bindgen(getter, js_name = stateComments)]
+    pub fn state_comments(&self) -> Vec<String> {
+        self.inner.state_comments.clone()
+    }
+
+    /// Comments of the covariance block, in source order.
+    #[wasm_bindgen(getter, js_name = covarianceComments)]
+    pub fn covariance_comments(&self) -> Vec<String> {
+        self.inner.covariance_comments.clone()
+    }
+
+    /// The orbit-determination parameters block.
+    #[wasm_bindgen(getter, js_name = odParameters, unchecked_return_type = "CdmOdParameters")]
+    pub fn od_parameters(&self) -> Result<JsValue, JsValue> {
+        to_plain_js(
+            &CdmOdParametersJs::from_core(&self.inner.od_parameters),
+            "CDM OD parameters",
+        )
+    }
+
+    /// The additional parameters block.
+    #[wasm_bindgen(
+        getter,
+        js_name = additionalParameters,
+        unchecked_return_type = "CdmAdditionalParameters"
+    )]
+    pub fn additional_parameters(&self) -> Result<JsValue, JsValue> {
+        to_plain_js(
+            &CdmAdditionalParametersJs::from_core(&self.inner.additional_parameters),
+            "CDM additional parameters",
+        )
+    }
+
+    /// The symmetric RTN covariance of the rows the object holds, 3x3 to 9x9,
+    /// as an array of rows, validated positive semidefinite. Throws a
+    /// `CdmError` (`INVALID_FIELD` for `covariance_rtn`) when it is not, or
+    /// when a row is given while an earlier row is absent.
+    #[wasm_bindgen(js_name = toCovarianceRtn, unchecked_return_type = "number[][]")]
+    pub fn to_covariance_rtn(&self) -> Result<JsValue, JsValue> {
+        let rows = self.inner.to_covariance_rtn().map_err(cdm_error)?;
+        to_plain_js(&rows, "CDM RTN covariance")
+    }
 }
 
 /// A two-object CCSDS Conjunction Data Message parsed from KVN or XML.
@@ -311,12 +591,34 @@ pub struct Cdm {
 #[wasm_bindgen]
 impl Cdm {
     /// Build a CDM from two objects. `meta` carries the optional message-level
-    /// fields.
+    /// fields: the header (`ccsdsCdmVers`, `comments`, `creationDate`,
+    /// `originator`, `messageFor`, `messageId`), the relative metadata/data
+    /// (`relativeComments`, `tca`, `missDistanceM`, `relativeSpeedMS`,
+    /// `relativePositionRtnM`, `relativeVelocityRtnMS`, the screening period,
+    /// volume frame, shape, size `screenVolumeM` and entry and exit times) and
+    /// the collision probability and hard-body radius.
     #[wasm_bindgen(constructor)]
-    pub fn new(object1: &CdmObject, object2: &CdmObject, meta: JsValue) -> Result<Cdm, JsValue> {
-        let m: CdmMeta = parse_meta(meta, "Cdm meta")?;
+    pub fn new(
+        object1: &CdmObject,
+        object2: &CdmObject,
+        #[wasm_bindgen(unchecked_param_type = "CdmMeta | undefined | null")] meta: JsValue,
+    ) -> Result<Cdm, JsValue> {
+        let m: CdmMeta = parse_meta(meta, "Cdm meta", CDM_META_KEYS)?;
         Ok(Cdm {
             inner: CdmKvn {
+                ccsds_cdm_vers: m.ccsds_cdm_vers,
+                comments: m.comments,
+                message_for: m.message_for,
+                relative_comments: m.relative_comments,
+                relative_position_rtn_m: m.relative_position_rtn_m,
+                relative_velocity_rtn_m_s: m.relative_velocity_rtn_m_s,
+                start_screen_period: m.start_screen_period,
+                stop_screen_period: m.stop_screen_period,
+                screen_volume_frame: m.screen_volume_frame,
+                screen_volume_shape: m.screen_volume_shape,
+                screen_volume_m: m.screen_volume_m,
+                screen_entry_time: m.screen_entry_time,
+                screen_exit_time: m.screen_exit_time,
                 creation_date: m.creation_date,
                 originator: m.originator,
                 message_id: m.message_id,
@@ -330,6 +632,87 @@ impl Cdm {
                 object2: object2.inner.clone(),
             },
         })
+    }
+
+    /// `CCSDS_CDM_VERS` as the message states it, or `undefined`.
+    #[wasm_bindgen(getter, js_name = ccsdsCdmVers)]
+    pub fn ccsds_cdm_vers(&self) -> Option<String> {
+        self.inner.ccsds_cdm_vers.clone()
+    }
+
+    /// Header comments, in source order.
+    #[wasm_bindgen(getter)]
+    pub fn comments(&self) -> Vec<String> {
+        self.inner.comments.clone()
+    }
+
+    /// `MESSAGE_FOR`.
+    #[wasm_bindgen(getter, js_name = messageFor)]
+    pub fn message_for(&self) -> Option<String> {
+        self.inner.message_for.clone()
+    }
+
+    /// Comments of the relative metadata/data block, in source order.
+    #[wasm_bindgen(getter, js_name = relativeComments)]
+    pub fn relative_comments(&self) -> Vec<String> {
+        self.inner.relative_comments.clone()
+    }
+
+    /// Relative position `[R, T, N]`, metres, each `null` when absent.
+    #[wasm_bindgen(getter, js_name = relativePositionRtnM, unchecked_return_type = "Array<number | null>")]
+    pub fn relative_position_rtn_m(&self) -> Result<JsValue, JsValue> {
+        to_plain_js(&self.inner.relative_position_rtn_m, "CDM relative position")
+    }
+
+    /// Relative velocity `[R, T, N]`, m/s, each `null` when absent.
+    #[wasm_bindgen(getter, js_name = relativeVelocityRtnMS, unchecked_return_type = "Array<number | null>")]
+    pub fn relative_velocity_rtn_m_s(&self) -> Result<JsValue, JsValue> {
+        to_plain_js(
+            &self.inner.relative_velocity_rtn_m_s,
+            "CDM relative velocity",
+        )
+    }
+
+    /// `START_SCREEN_PERIOD`.
+    #[wasm_bindgen(getter, js_name = startScreenPeriod)]
+    pub fn start_screen_period(&self) -> Option<String> {
+        self.inner.start_screen_period.clone()
+    }
+
+    /// `STOP_SCREEN_PERIOD`.
+    #[wasm_bindgen(getter, js_name = stopScreenPeriod)]
+    pub fn stop_screen_period(&self) -> Option<String> {
+        self.inner.stop_screen_period.clone()
+    }
+
+    /// `SCREEN_VOLUME_FRAME`.
+    #[wasm_bindgen(getter, js_name = screenVolumeFrame)]
+    pub fn screen_volume_frame(&self) -> Option<String> {
+        self.inner.screen_volume_frame.clone()
+    }
+
+    /// `SCREEN_VOLUME_SHAPE`.
+    #[wasm_bindgen(getter, js_name = screenVolumeShape)]
+    pub fn screen_volume_shape(&self) -> Option<String> {
+        self.inner.screen_volume_shape.clone()
+    }
+
+    /// Screening volume size `[X, Y, Z]`, metres, each `null` when absent.
+    #[wasm_bindgen(getter, js_name = screenVolumeM, unchecked_return_type = "Array<number | null>")]
+    pub fn screen_volume_m(&self) -> Result<JsValue, JsValue> {
+        to_plain_js(&self.inner.screen_volume_m, "CDM screening volume")
+    }
+
+    /// `SCREEN_ENTRY_TIME`.
+    #[wasm_bindgen(getter, js_name = screenEntryTime)]
+    pub fn screen_entry_time(&self) -> Option<String> {
+        self.inner.screen_entry_time.clone()
+    }
+
+    /// `SCREEN_EXIT_TIME`.
+    #[wasm_bindgen(getter, js_name = screenExitTime)]
+    pub fn screen_exit_time(&self) -> Option<String> {
+        self.inner.screen_exit_time.clone()
     }
 
     /// Creation date.
@@ -402,31 +785,34 @@ impl Cdm {
         }
     }
 
-    /// Encode this message to CCSDS CDM KVN text.
+    /// Encode this message to CCSDS CDM KVN text. Throws a `CdmError` for what
+    /// the reader would not return unchanged (`UNWRITABLE_TEXT`,
+    /// `HARD_BODY_RADIUS_COMMENT`) and for a non-finite number.
     #[wasm_bindgen(js_name = toKvnString)]
     pub fn to_kvn_string(&self) -> Result<String, JsValue> {
-        encode_kvn(&self.inner).map_err(engine_error)
+        encode_kvn(&self.inner).map_err(cdm_error)
     }
 
-    /// Encode this message to CCSDS CDM XML text.
+    /// Encode this message to CCSDS CDM XML text. Throws a `CdmError` as
+    /// `toKvnString` does.
     #[wasm_bindgen(js_name = toXmlString)]
     pub fn to_xml_string(&self) -> Result<String, JsValue> {
-        encode_xml(&self.inner).map_err(engine_error)
+        encode_xml(&self.inner).map_err(cdm_error)
     }
 }
 
-/// Parse CCSDS CDM KVN text. Throws an `Error` on a parse failure.
+/// Parse CCSDS CDM KVN text. Throws a `CdmError` on a parse failure.
 #[wasm_bindgen(js_name = parseCdmKvn)]
 pub fn parse_cdm_kvn(text: &str) -> Result<Cdm, JsValue> {
     parse_kvn(text)
         .map(|inner| Cdm { inner })
-        .map_err(engine_error)
+        .map_err(cdm_error)
 }
 
-/// Parse CCSDS CDM XML text. Throws an `Error` on a parse failure.
+/// Parse CCSDS CDM XML text. Throws a `CdmError` on a parse failure.
 #[wasm_bindgen(js_name = parseCdmXml)]
 pub fn parse_cdm_xml(text: &str) -> Result<Cdm, JsValue> {
     parse_xml(text)
         .map(|inner| Cdm { inner })
-        .map_err(engine_error)
+        .map_err(cdm_error)
 }
