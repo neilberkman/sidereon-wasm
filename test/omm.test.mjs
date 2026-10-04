@@ -370,6 +370,76 @@ test("Sgp4Satellite.fromOmm preserves typed OMM bridge failures", () => {
   );
 });
 
+test("OMM KVN parser errors preserve literal variant payloads", () => {
+  const base = load("25544.kvn");
+  const replace = (keyword, value) => {
+    const lines = base.trimEnd().split(/\r?\n/);
+    const index = lines.findIndex(
+      (line) => line.trimStart().startsWith(keyword) && line.includes("="),
+    );
+    assert.ok(index >= 0, "fixture contains " + keyword);
+    lines[index] = keyword + " = " + value;
+    return lines.join("\n") + "\n";
+  };
+  const capture = (text) => {
+    let caught;
+    assert.throws(
+      () => parseOmmKvn(text),
+      (error) => {
+        caught = error;
+        return true;
+      },
+    );
+    assert.equal(caught.name, "OmmError");
+    assert.equal(caught.detail.message, caught.message);
+    return caught;
+  };
+  const cases = [
+    [
+      "MALFORMED_LINE",
+      base + "bad line\n",
+      { line: 29, value: "bad line" },
+      'OMM line 29 is not a comment or keyword assignment: "bad line"',
+    ],
+    [
+      "UNKNOWN_FIELD",
+      base + "ALIEN_FOO = X\n",
+      { field: "ALIEN_FOO" },
+      "OMM has no keyword ALIEN_FOO",
+    ],
+    [
+      "DUPLICATE_FIELD",
+      base + "OBJECT_NAME = DIFFERENT\n",
+      { field: "OBJECT_NAME", first: "ISS (ZARYA)", second: "DIFFERENT" },
+      'OMM keyword OBJECT_NAME occurs with different values "ISS (ZARYA)" and "DIFFERENT"',
+    ],
+    [
+      "INVALID_FIELD",
+      replace("MEAN_MOTION", "nope"),
+      { field: "MEAN_MOTION", issue: "invalid float" },
+      "invalid OMM field MEAN_MOTION: invalid float",
+    ],
+    [
+      "EPOCH",
+      replace("EPOCH", "nope"),
+      { value: 'invalid seconds in "nope"' },
+      'OMM epoch error: invalid seconds in "nope"',
+    ],
+    [
+      "UNIT_MISMATCH",
+      replace("MEAN_MOTION", "15 [km/s]"),
+      { field: "MEAN_MOTION", unit: "km/s", expectedUnit: "rev/day" },
+      "OMM keyword MEAN_MOTION states unit [km/s], expected [rev/day]",
+    ],
+  ];
+  for (const [kind, input, fields, message] of cases) {
+    const error = capture(input);
+    assert.equal(error.detail.kind, kind);
+    assert.equal(error.message, message);
+    for (const [key, value] of Object.entries(fields)) assert.deepEqual(error.detail[key], value);
+  }
+});
+
 test("OMM failures are typed OmmErrors whose detail names the engine variant", () => {
   assert.throws(
     () => parseOmmKvn("CCSDS_OMM_VERS = 2.0\n"),

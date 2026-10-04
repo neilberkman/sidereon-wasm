@@ -116,6 +116,20 @@ test("event finder and almanac refusals retain their exact current variants", ()
 });
 
 test("SPK construction and state failures preserve parser fields and exact epochs", async () => {
+  const unsupportedId = thrown(() => new Spk(new Uint8Array(1024)));
+  assert.equal(unsupportedId.message, 'unsupported DAF identification word ""');
+  assert.deepEqual(unsupportedId.detail.cause, { kind: "unsupportedDafId", idWord: "" });
+
+  const unsupportedFormatBytes = new Uint8Array(1024);
+  unsupportedFormatBytes.set(new TextEncoder().encode("DAF/SPK"), 0);
+  unsupportedFormatBytes.set(new TextEncoder().encode("BINARY??"), 88);
+  const unsupportedFormat = thrown(() => new Spk(unsupportedFormatBytes));
+  assert.equal(unsupportedFormat.message, 'unsupported DAF binary format "BINARY??"');
+  assert.deepEqual(unsupportedFormat.detail.cause, {
+    kind: "unsupportedBinaryFormat",
+    binaryFormat: "BINARY??",
+  });
+
   const truncated = thrown(() => new Spk(new Uint8Array([1, 2, 3])));
   assert.equal(truncated.name, "Error");
   assert.equal(truncated.detail.family, "spk");

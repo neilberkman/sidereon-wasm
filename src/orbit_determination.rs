@@ -304,7 +304,8 @@ pub fn fit_sp3_precise_orbit(
 ) -> Result<JsValue, JsValue> {
     let sat = parse_satellite(satellite)?;
     let options = orbit_options(options)?;
-    let report = core_fit_sp3_precise_orbit(&sp3.inner, sat, &options).map_err(engine_error)?;
+    let report = core_fit_sp3_precise_orbit(&sp3.inner, sat, &options)
+        .map_err(crate::orbit_fit_error::js)?;
     to_js(&OrbitFitReportJs::from(report))
 }
 
@@ -323,7 +324,7 @@ pub fn fit_sp3_ecef_precise_orbit(
     let options = orbit_options(options)?;
     let provider = TdbEarthOrientationProvider::new();
     let report = core_fit_sp3_ecef_precise_orbit(&sp3.inner, sat, &provider, &options)
-        .map_err(engine_error)?;
+        .map_err(crate::orbit_fit_error::js)?;
     to_js(&OrbitFitReportJs::from(report))
 }
 
@@ -341,7 +342,7 @@ pub fn fit_sp3_ecef_precise_orbits(
     let options = orbit_options(options)?;
     let provider = TdbEarthOrientationProvider::new();
     let report = core_fit_sp3_ecef_precise_orbits(&sp3.inner, &sats, &provider, &options)
-        .map_err(engine_error)?;
+        .map_err(crate::orbit_fit_error::js)?;
     to_js(&OrbitFitReportJs::from(report))
 }
 
@@ -354,7 +355,7 @@ pub fn fit_all_sp3_ecef_precise_orbits(sp3: &Sp3, options: JsValue) -> Result<Js
     let options = orbit_options(options)?;
     let provider = TdbEarthOrientationProvider::new();
     let report = core_fit_all_sp3_ecef_precise_orbits(&sp3.inner, &provider, &options)
-        .map_err(engine_error)?;
+        .map_err(crate::orbit_fit_error::js)?;
     to_js(&OrbitFitReportJs::from(report))
 }
 
@@ -372,7 +373,7 @@ pub fn fit_precise_ephemeris_sample_orbit(
     let samples = decode_core_samples(samples)?;
     let sat = parse_satellite(satellite)?;
     let options = orbit_options(options)?;
-    let report =
-        core_fit_precise_ephemeris_sample_orbit(&samples, sat, &options).map_err(engine_error)?;
+    let report = core_fit_precise_ephemeris_sample_orbit(&samples, sat, &options)
+        .map_err(crate::orbit_fit_error::js)?;
     to_js(&OrbitFitReportJs::from(report))
 }

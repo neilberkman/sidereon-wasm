@@ -76,6 +76,7 @@ mod oem;
 mod omm;
 mod opm;
 mod orbit_determination;
+mod orbit_fit_error;
 mod positioning_error;
 mod ppp;
 mod ppp_corrections;
