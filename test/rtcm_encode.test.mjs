@@ -7,7 +7,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { decodeRtcm, decodeRtcmFrame, encodeRtcm, encodeRtcmFrame } from "../pkg-node/sidereon.js";
+import {
+  decodeRtcm,
+  decodeRtcmFrame,
+  encodeRtcm,
+  encodeRtcmFrame,
+  rtcmEphemerisSatellite,
+  rtcmEphemerisToBroadcastRecord,
+  evaluateRtcmSsrVtec,
+} from "../pkg-node/sidereon.js";
 import { fixture, fixtureJson } from "./helpers.mjs";
 
 const hexToBytes = (hex) => Uint8Array.from(hex.match(/.{2}/g).map((b) => parseInt(b, 16)));
@@ -368,6 +376,251 @@ const fullEphemerisFixtures = [
     },
   },
 ];
+
+test("public RTCM ephemeris conversions return satellites and full broadcast records", () => {
+  for (const { messageNumber, message } of fullEphemerisFixtures) {
+    const satellite = rtcmEphemerisSatellite(message);
+    assert.match(satellite, /^[A-Z][0-9]{2}$/);
+    if (messageNumber === 1020) {
+      assert.throws(
+        () => rtcmEphemerisToBroadcastRecord(message),
+        (error) =>
+          error instanceof TypeError &&
+          error.message === "RTCM 1020 has no broadcast-record conversion",
+      );
+      continue;
+    }
+    const fullWeek = [1019, 1041, 1044].includes(messageNumber) ? message.weekNumber : undefined;
+    const record = rtcmEphemerisToBroadcastRecord(message, fullWeek);
+    assert.equal(record.satellite, satellite);
+    assert.equal(typeof record.message, "number");
+    assert.equal(typeof record.week, "number");
+    assert.ok(record.elements);
+    assert.ok(record.clock);
+    assert.ok(record.groupDelays);
+    if (messageNumber === 1019) {
+      assert.deepEqual(
+        {
+          satellite: record.satellite,
+          message: record.message,
+          issue: record.issue,
+          issueMessage: record.issueMessage,
+          week: record.week,
+          elements: {
+            sqrtA: record.elements.sqrtA,
+            e: record.elements.e,
+            m0: record.elements.m0,
+            deltaN: record.elements.deltaN,
+            omega0: record.elements.omega0,
+            i0: record.elements.i0,
+            omega: record.elements.omega,
+            omegaDot: record.elements.omegaDot,
+            idot: record.elements.idot,
+            cuc: record.elements.cuc,
+            cus: record.elements.cus,
+            crc: record.elements.crc,
+            crs: record.elements.crs,
+            cic: record.elements.cic,
+            cis: record.elements.cis,
+            toeSow: record.elements.toeSow,
+          },
+          clock: {
+            af0: record.clock.af0,
+            af1: record.clock.af1,
+            af2: record.clock.af2,
+            tocSow: record.clock.tocSow,
+          },
+          groupDelayS: record.groupDelayS,
+          svAccuracyM: record.svAccuracyM,
+          iodc: record.iodc,
+          fitIntervalS: record.fitIntervalS,
+          svHealth: record.svHealth,
+        },
+        {
+          satellite: "G08",
+          message: 0,
+          issue: 11,
+          issueMessage: 0,
+          week: 123,
+          elements: {
+            sqrtA: 5154.2977294921875,
+            e: 0.0005191615782678127,
+            m0: 1.4629180792671597,
+            deltaN: 3.571577341960839e-11,
+            omega0: 2.1943771189007393,
+            i0: 0.5851672317068638,
+            omega: -1.4629180792671597,
+            omegaDot: -3.571577341960839e-11,
+            idot: -1.4286309367843355e-9,
+            cuc: -9.313225746154785e-8,
+            cus: 9.499490261077881e-8,
+            crc: 3.125,
+            crs: -31.25,
+            cic: -9.313225746154785e-9,
+            cis: 1.1175870895385742e-8,
+            toeSow: 57600,
+          },
+          clock: {
+            af0: 0.000010922551155090332,
+            af1: -1.4034640116733499e-9,
+            af2: -8.326672684688674e-17,
+            tocSow: 115200,
+          },
+          groupDelayS: -2.3283064365386963e-9,
+          svAccuracyM: 3.4,
+          iodc: 57,
+          fitIntervalS: 21600,
+          svHealth: 7,
+        },
+      );
+    }
+  }
+});
+
+test("public SSR VTEC evaluation returns its complete physical result", () => {
+  const message = {
+    type: "ssrVtec",
+    messageNumber: 4076,
+    igsSsrVersion: 1,
+    epochTimeS: 50400,
+    updateInterval: 0,
+    multipleMessage: false,
+    iodSsr: 0,
+    providerId: 256,
+    solutionId: 0,
+    qualityIndicator: 1,
+    layers: [{ height: 45, degree: 1, order: 1, cosine: [100, 200, 0], sine: [0] }],
+    trailingBits: [],
+  };
+  const result = evaluateRtcmSsrVtec(message, [6378137, 0, 0], [20200000, 0, 0], 50400, 1575420000);
+  const [layer] = result.layers;
+  const close = (actual, expected, field) =>
+    assert.ok(Math.abs(actual - expected) < 1e-12, `${field}: ${actual}`);
+  close(layer.pierceLatitudeRad, 1.9492562664648927e-23, "pierceLatitudeRad");
+  close(layer.pierceLongitudeRad, -3.1833770648354667e-7, "pierceLongitudeRad");
+  close(layer.sunFixedLongitudeRad, 6.28318498884188, "sunFixedLongitudeRad");
+  close(layer.vtecTecu, 0.5, "vtecTecu");
+  close(layer.mappingFactor, 1.0000000000105576, "mappingFactor");
+  close(layer.stecTecu, 0.5000000000052788, "layer stecTecu");
+  close(result.stecTecu, 0.5000000000052788, "total stecTecu");
+  close(result.pseudorangeDelayM, 0.0811862237568545, "pseudorangeDelayM");
+  close(result.phaseRangeAdvanceM, -0.0811862237568545, "phaseRangeAdvanceM");
+});
+
+test("public SSR VTEC evaluation exposes typed conversion refusals", () => {
+  const message = {
+    type: "ssrVtec",
+    messageNumber: 1264,
+    igsSsrVersion: undefined,
+    epochTimeS: 1234,
+    updateInterval: 0,
+    multipleMessage: false,
+    iodSsr: 1,
+    providerId: 2,
+    solutionId: 0,
+    qualityIndicator: 10,
+    layers: [],
+    trailingBits: [],
+  };
+  const receiver = [6378137, 0, 0];
+  const satellite = [20200000, 0, 0];
+  assert.throws(
+    () => evaluateRtcmSsrVtec(message, receiver, satellite, 1000, 1.57542e9),
+    (error) =>
+      error instanceof Error &&
+      error.name === "RtcmConversionError" &&
+      error.detail.core.kind === "vtecEvaluation" &&
+      error.detail.core.problem.kind === "layerCount" &&
+      error.detail.core.problem.layers === 0 &&
+      error.message ===
+        "invalid input: RTCM SSR VTEC evaluation cannot proceed: layer count 0 is outside 1..=4",
+  );
+  assert.throws(
+    () => evaluateRtcmSsrVtec(message, receiver, satellite, 86400, 1.57542e9),
+    (error) =>
+      error instanceof Error &&
+      error.name === "RtcmConversionError" &&
+      error.detail.core.problem.kind === "computationTime" &&
+      error.message ===
+        "invalid input: RTCM SSR VTEC evaluation cannot proceed: computation time is not finite GPS seconds in [0, 86400)",
+  );
+  assert.throws(
+    () => evaluateRtcmSsrVtec(message, receiver, satellite, 1000, 0),
+    (error) =>
+      error instanceof Error &&
+      error.name === "RtcmConversionError" &&
+      error.detail.core.problem.kind === "frequency" &&
+      error.message ===
+        "invalid input: RTCM SSR VTEC evaluation cannot proceed: frequency is not finite and positive",
+  );
+});
+
+test("public RTCM conversion errors keep their typed core fields", () => {
+  const gps = fullEphemerisFixtures.find(({ messageNumber }) => messageNumber === 1019).message;
+  assert.throws(
+    () => rtcmEphemerisSatellite({ ...gps, satelliteId: 0 }),
+    (error) =>
+      error instanceof Error &&
+      error.name === "RtcmConversionError" &&
+      error.detail.kind === "RTCM_CONVERSION" &&
+      error.detail.core.kind === "invalidSatellite" &&
+      error.detail.core.messageNumber === 1019 &&
+      error.detail.core.field === "GPS PRN" &&
+      error.detail.core.value === 0 &&
+      error.detail.core.error.kind === "invalidInput" &&
+      error.detail.core.error.field === "prn" &&
+      error.detail.core.error.reason === "outside the 1..=99 satellite-token range" &&
+      error.message ===
+        "invalid input: invalid GPS PRN in 1019: invalid GNSS satellite prn: outside the 1..=99 satellite-token range",
+  );
+  assert.throws(
+    () => rtcmEphemerisSatellite({ ...gps, satelliteId: 64 }),
+    (error) =>
+      error instanceof Error &&
+      error.name === "RtcmConversionError" &&
+      error.detail.core.kind === "satelliteIdOutOfRange" &&
+      error.detail.core.messageNumber === 1019 &&
+      error.detail.core.field === "GPS PRN" &&
+      error.detail.core.value === 64 &&
+      error.detail.core.width === 6 &&
+      error.message ===
+        "invalid input: GPS PRN 64 in 1019 does not fit the 6-bit raw satellite field (0..=63)",
+  );
+  assert.throws(
+    () => rtcmEphemerisToBroadcastRecord(gps),
+    (error) => error instanceof TypeError && /fullWeek is required/.test(error.message),
+  );
+  for (const invalidWeek of [123.5, Number.NaN, Number.POSITIVE_INFINITY, -1, 4294967296]) {
+    assert.throws(
+      () => rtcmEphemerisToBroadcastRecord(gps, invalidWeek),
+      (error) =>
+        error instanceof RangeError &&
+        error.message === "fullWeek must be an integer between 0 and 4294967295",
+    );
+  }
+  assert.throws(
+    () => rtcmEphemerisToBroadcastRecord(gps, 124),
+    (error) =>
+      error instanceof Error &&
+      error.name === "RtcmConversionError" &&
+      error.detail.core.kind === "weekMismatch" &&
+      error.detail.core.messageNumber === 1019 &&
+      error.detail.core.fullWeek === 124 &&
+      error.detail.core.week === 123 &&
+      error.message === "invalid input: GPS full week 124 disagrees with 10-bit RTCM week 123",
+  );
+  const galileo = fullEphemerisFixtures.find(({ messageNumber }) => messageNumber === 1045).message;
+  assert.throws(
+    () => rtcmEphemerisToBroadcastRecord({ ...galileo, sisa: 126 }),
+    (error) =>
+      error instanceof Error &&
+      error.name === "RtcmConversionError" &&
+      error.detail.core.kind === "sisaSpare" &&
+      error.detail.core.index === 126 &&
+      error.message ===
+        "invalid input: RTCM Galileo ephemeris SISA index 126 is spare with no defined accuracy",
+  );
+});
 
 for (const { messageNumber, message } of fullEphemerisFixtures) {
   test(`lenient ${message.type} round-trip preserves every returned field`, () => {

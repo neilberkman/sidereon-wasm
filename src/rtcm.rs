@@ -31,8 +31,9 @@ use sidereon_core::rtcm::{
 };
 use sidereon_core::GnssSystem;
 
-use crate::error::{engine_error, error_with_detail, type_error};
+use crate::error::{engine_error, error_with_detail, range_error, type_error};
 use crate::label::{lower_camel_variant, Label};
+use crate::rinex_nav::BroadcastRecordJs;
 
 /// Read an RTCM policy: `"strict"` (the default) refuses a departure from RTCM
 /// 3 by name; `"lenient"` reads or writes it and reports it.
@@ -3712,6 +3713,158 @@ fn rtcm_encode_error(err: sidereon_core::Error) -> JsValue {
     error_with_detail("RtcmEncodeError", &message, &detail)
 }
 
+fn rtcm_conversion_error(error: sidereon_core::Error) -> JsValue {
+    let message = error.to_string();
+    match error {
+        sidereon_core::Error::RtcmConversion(error) => {
+            #[derive(Serialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Detail {
+                kind: &'static str,
+                core: serde_json::Value,
+                message: String,
+            }
+            error_with_detail(
+                "RtcmConversionError",
+                &message,
+                &Detail {
+                    kind: "RTCM_CONVERSION",
+                    core: rtcm_conversion_error_payload(&error),
+                    message: message.clone(),
+                },
+            )
+        }
+        other => engine_error(other),
+    }
+}
+
+fn required_ephemeris_week(
+    full_week: Option<JsValue>,
+    message_number: u16,
+) -> Result<u32, JsValue> {
+    let value = full_week.ok_or_else(|| {
+        type_error(&format!(
+            "fullWeek is required to convert RTCM {message_number} to a broadcast record"
+        ))
+    })?;
+    let Some(week) = value.as_f64() else {
+        return Err(type_error("fullWeek must be a number"));
+    };
+    if !week.is_finite() || week.fract() != 0.0 || !(0.0..=u32::MAX as f64).contains(&week) {
+        return Err(range_error(
+            "fullWeek must be an integer between 0 and 4294967295",
+        ));
+    }
+    Ok(week as u32)
+}
+
+/// Return a validated satellite identifier from a decoded broadcast ephemeris.
+/// Invalid raw satellite fields throw RtcmConversionError with the core refusal.
+#[wasm_bindgen(js_name = rtcmEphemerisSatellite)]
+pub fn rtcm_ephemeris_satellite(
+    #[wasm_bindgen(unchecked_param_type = "RtcmMessage")] message: JsValue,
+) -> Result<String, JsValue> {
+    let satellite = match message_from_value(message)? {
+        Message::GpsEphemeris(value) => value.satellite(),
+        Message::GlonassEphemeris(value) => value.satellite(),
+        Message::BeidouEphemeris(value) => value.satellite(),
+        Message::NavicEphemeris(value) => value.satellite(),
+        Message::QzssEphemeris(value) => value.satellite(),
+        Message::GalileoFnavEphemeris(value) => value.satellite(),
+        Message::GalileoInavEphemeris(value) => value.satellite(),
+        _ => return Err(type_error("message must be a decoded broadcast ephemeris")),
+    }
+    .map_err(rtcm_conversion_error)?;
+    Ok(satellite.to_string())
+}
+
+/// Convert a decoded RTCM broadcast ephemeris into a full RINEX NAV record.
+/// fullWeek is required for GPS 1019, QZSS 1044, and NavIC 1041 only. GLONASS
+/// 1020 has a validated satellite identifier but no core broadcast-record conversion.
+#[wasm_bindgen(js_name = rtcmEphemerisToBroadcastRecord)]
+pub fn rtcm_ephemeris_to_broadcast_record(
+    #[wasm_bindgen(unchecked_param_type = "RtcmMessage")] message: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "number | undefined")] full_week: Option<JsValue>,
+) -> Result<BroadcastRecordJs, JsValue> {
+    let record = match message_from_value(message)? {
+        Message::GpsEphemeris(value) => {
+            value.to_broadcast_record(required_ephemeris_week(full_week, 1019)?)
+        }
+        Message::BeidouEphemeris(value) => value.to_broadcast_record(),
+        Message::NavicEphemeris(value) => {
+            value.to_broadcast_record(required_ephemeris_week(full_week, 1041)?)
+        }
+        Message::QzssEphemeris(value) => {
+            value.to_broadcast_record(required_ephemeris_week(full_week, 1044)?)
+        }
+        Message::GlonassEphemeris(_) => {
+            return Err(type_error("RTCM 1020 has no broadcast-record conversion"));
+        }
+        Message::GalileoFnavEphemeris(value) => value.to_broadcast_record(),
+        Message::GalileoInavEphemeris(value) => value.to_broadcast_record(),
+        _ => return Err(type_error("message must be a decoded broadcast ephemeris")),
+    }
+    .map_err(rtcm_conversion_error)?;
+    Ok(BroadcastRecordJs::from_core(record))
+}
+
+fn ecef_triplet(value: JsValue, field: &str) -> Result<[f64; 3], JsValue> {
+    let coordinates: Vec<f64> = serde_wasm_bindgen::from_value(value).map_err(|error| {
+        type_error(&format!(
+            "{field} must be an array of three numbers: {error}"
+        ))
+    })?;
+    coordinates.try_into().map_err(|coordinates: Vec<f64>| {
+        type_error(&format!(
+            "{field} must contain exactly three numbers, found {}",
+            coordinates.len()
+        ))
+    })
+}
+
+/// Evaluate a decoded RTCM SSR VTEC model at an explicit receiver/satellite
+/// geometry. Core VTEC refusals throw RtcmConversionError with the typed cause.
+#[wasm_bindgen(js_name = evaluateRtcmSsrVtec, unchecked_return_type = "RtcmSsrVtecEvaluation")]
+pub fn evaluate_rtcm_ssr_vtec(
+    #[wasm_bindgen(unchecked_param_type = "RtcmMessage")] message: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "number[]")] receiver_ecef_m: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "number[]")] satellite_transmit_ecef_m: JsValue,
+    gps_seconds_of_day: f64,
+    frequency_hz: f64,
+) -> Result<JsValue, JsValue> {
+    let receiver = ecef_triplet(receiver_ecef_m, "receiverEcefM")?;
+    let satellite = ecef_triplet(satellite_transmit_ecef_m, "satelliteTransmitEcefM")?;
+    let message = match message_from_value(message)? {
+        Message::SsrVtec(value) => value,
+        _ => return Err(type_error("message must be an ssrVtec message")),
+    };
+    let result = message
+        .evaluate(receiver, satellite, gps_seconds_of_day, frequency_hz)
+        .map_err(rtcm_conversion_error)?;
+    let layers: Vec<serde_json::Value> = result
+        .layers
+        .iter()
+        .map(|layer| {
+            serde_json::json!({
+                "pierceLatitudeRad": layer.pierce_latitude_rad,
+                "pierceLongitudeRad": layer.pierce_longitude_rad,
+                "sunFixedLongitudeRad": layer.sun_fixed_longitude_rad,
+                "vtecTecu": layer.vtec_tecu,
+                "mappingFactor": layer.mapping_factor,
+                "stecTecu": layer.stec_tecu
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "layers": layers,
+        "stecTecu": result.stec_tecu,
+        "pseudorangeDelayM": result.pseudorange_delay_m,
+        "phaseRangeAdvanceM": result.phase_range_advance_m
+    })
+    .serialize(&serializer())
+    .map_err(|error| engine_error(format!("failed to serialize SSR VTEC evaluation: {error}")))
+}
+
 fn record_kind_value(record: sidereon_core::rtcm::RtcmRecordKind) -> serde_json::Value {
     use sidereon_core::rtcm::RtcmRecordKind as Record;
     match record {
@@ -4151,6 +4304,28 @@ pub fn encode_rtcm_frame(
 // `sidereon.d.ts` targets; `types/sidereon-extra.d.ts` re-exports it.
 #[wasm_bindgen(typescript_custom_section)]
 const TS_RTCM_DEFINITIONS: &str = r#"
+export interface RtcmConversionErrorDetail {
+  kind: "RTCM_CONVERSION";
+  core: RtcmConversionCoreDetail;
+  message: string;
+}
+
+export interface RtcmSsrVtecLayerEvaluation {
+  pierceLatitudeRad: number;
+  pierceLongitudeRad: number;
+  sunFixedLongitudeRad: number;
+  vtecTecu: number;
+  mappingFactor: number;
+  stecTecu: number;
+}
+
+export interface RtcmSsrVtecEvaluation {
+  layers: RtcmSsrVtecLayerEvaluation[];
+  stecTecu: number;
+  pseudorangeDelayM: number;
+  phaseRangeAdvanceM: number;
+}
+
 export type RtcmEncodeErrorDetail =
   | { kind: "INVALID_INPUT"; reason: string; message: string }
   | { kind: "RTCM_ENCODE"; core: RtcmEncodeCoreDetail; message: string }

@@ -2719,6 +2719,25 @@ type _WebGpsEphRawBits = Assert<Equal<GpsEph["sqrtA"], bigint>>;
 type _WebEncodeRtcmInput = Assert<
   Equal<Parameters<typeof WebBindings.encodeRtcm>[0], WebBindings.RtcmMessageInput>
 >;
+type _WebRtcmSatelliteInput = Assert<
+  Equal<Parameters<typeof WebBindings.rtcmEphemerisSatellite>[0], WebBindings.RtcmMessage>
+>;
+type _WebRtcmSatelliteResult = Assert<
+  Equal<ReturnType<typeof WebBindings.rtcmEphemerisSatellite>, string>
+>;
+type _WebRtcmBroadcastRecord = Assert<
+  Equal<
+    ReturnType<typeof WebBindings.rtcmEphemerisToBroadcastRecord>,
+    WebBindings.BroadcastRecordJs
+  >
+>;
+type _WebRtcmVtecEvaluation = Assert<
+  Equal<ReturnType<typeof WebBindings.evaluateRtcmSsrVtec>, WebBindings.RtcmSsrVtecEvaluation>
+>;
+type _WebRtcmConversionError = Assert<
+  Equal<WebBindings.RtcmConversionErrorDetail["core"], WebBindings.RtcmConversionCoreDetail>
+>;
+
 // Every decoded message is an acceptable encoder input.
 type _WebDecodedIsInput = Assert<
   WebBindings.RtcmMessage extends WebBindings.RtcmMessageInput ? true : false
