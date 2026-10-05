@@ -173,6 +173,7 @@ fn epochs_to_core(epochs: &[EpochInput]) -> Result<Vec<FloatEpoch>, JsValue> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StateInput {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     position_m: [f64; 3],
     clocks_m: Vec<f64>,
     ambiguities_m: BTreeMap<String, f64>,
@@ -432,6 +433,7 @@ impl FixedConfigInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InitialGuessInput {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     position_m: [f64; 3],
     clock_m: f64,
 }

@@ -590,6 +590,10 @@ test("solveRtkArc rejects an empty arc", () => {
   assert.throws(() => solveRtkArc([], config));
 });
 
+test("solveRtkArc rejects a base vector with trailing components", () => {
+  assert.throws(() => solveRtkArc([], { ...config, baseM: [...config.baseM, 1] }), TypeError);
+});
+
 // WTZR and WTZZ both give R01 channel 1. Restated as channel 7, outside the
 // -7..=6 FDMA allocation (the channel real IGS headers give R28), R01's L1C has
 // no carrier frequency, so R01 is left out of each epoch and reported, and the

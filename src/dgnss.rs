@@ -48,6 +48,7 @@ pub struct CorrectionEntry {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CorrectionsRequest {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     base_position_m: [f64; 3],
     base_observations: Vec<CodeObsInput>,
     t_rx_j2000_s: f64,
@@ -60,6 +61,7 @@ struct CorrectionsRequest {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SolveRequest {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     base_position_m: [f64; 3],
     base_observations: Vec<CodeObsInput>,
     rover_observations: Vec<CodeObsInput>,

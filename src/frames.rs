@@ -44,7 +44,7 @@ use crate::domain_error::{frame_error, nutation_error, precession_error};
 use crate::error::{
     engine_error, error_with_detail, range_error, type_error, ut1_validity, validated_object,
 };
-use crate::marshal::{flat3, mat3_flat, rows3, same_len};
+use crate::marshal::{flat3, mat3_flat, rows3, same_len, utc_time_scales};
 
 const SECONDS_PER_DAY: f64 = 86_400.0;
 const MICROSECONDS_PER_SECOND: f64 = 1_000_000.0;
@@ -620,8 +620,8 @@ pub struct Instant {
 }
 
 impl Instant {
-    fn time_scales(&self) -> TimeScales {
-        UtcInstant::from_unix_microseconds(self.unix_micros).time_scales()
+    fn time_scales(&self) -> Result<TimeScales, JsValue> {
+        utc_time_scales("unixMicros", self.unix_micros)
     }
 }
 
@@ -669,97 +669,98 @@ impl Instant {
 
     /// The shared integer Julian-day boundary (TAI-aligned).
     #[wasm_bindgen(getter, js_name = jdWhole)]
-    pub fn jd_whole(&self) -> f64 {
-        self.time_scales().jd_whole
+    pub fn jd_whole(&self) -> Result<f64, JsValue> {
+        Ok(self.time_scales()?.jd_whole)
     }
 
     /// Full Terrestrial Time (TT) Julian date.
     #[wasm_bindgen(getter, js_name = ttJd)]
-    pub fn tt_jd(&self) -> f64 {
-        self.time_scales().jd_tt
+    pub fn tt_jd(&self) -> Result<f64, JsValue> {
+        Ok(self.time_scales()?.jd_tt)
     }
 
     /// Full UT1 Julian date.
     #[wasm_bindgen(getter, js_name = ut1Jd)]
-    pub fn ut1_jd(&self) -> f64 {
-        self.time_scales().jd_ut1
+    pub fn ut1_jd(&self) -> Result<f64, JsValue> {
+        Ok(self.time_scales()?.jd_ut1)
     }
 
     /// Full Barycentric Dynamical Time (TDB) Julian date.
     #[wasm_bindgen(getter, js_name = tdbJd)]
-    pub fn tdb_jd(&self) -> f64 {
-        self.time_scales().jd_tdb
+    pub fn tdb_jd(&self) -> Result<f64, JsValue> {
+        Ok(self.time_scales()?.jd_tdb)
     }
 
     /// TT day fraction relative to `jdWhole`.
     #[wasm_bindgen(getter, js_name = ttFraction)]
-    pub fn tt_fraction(&self) -> f64 {
-        self.time_scales().tt_fraction
+    pub fn tt_fraction(&self) -> Result<f64, JsValue> {
+        Ok(self.time_scales()?.tt_fraction)
     }
 
     /// UT1 day fraction relative to `jdWhole`.
     #[wasm_bindgen(getter, js_name = ut1Fraction)]
-    pub fn ut1_fraction(&self) -> f64 {
-        self.time_scales().ut1_fraction
+    pub fn ut1_fraction(&self) -> Result<f64, JsValue> {
+        Ok(self.time_scales()?.ut1_fraction)
     }
 
     /// TDB day fraction relative to `jdWhole`.
     #[wasm_bindgen(getter, js_name = tdbFraction)]
-    pub fn tdb_fraction(&self) -> f64 {
-        self.time_scales().tdb_fraction
+    pub fn tdb_fraction(&self) -> Result<f64, JsValue> {
+        Ok(self.time_scales()?.tdb_fraction)
     }
 
     /// The two-part TT Julian date (`jdWhole`, `ttFraction`).
     #[wasm_bindgen(getter, js_name = ttJdSplit)]
-    pub fn tt_jd_split(&self) -> JulianDate {
-        let ts = self.time_scales();
-        JulianDate {
+    pub fn tt_jd_split(&self) -> Result<JulianDate, JsValue> {
+        let ts = self.time_scales()?;
+        Ok(JulianDate {
             whole: ts.jd_whole,
             fraction: ts.tt_fraction,
-        }
+        })
     }
 
     /// The two-part UT1 Julian date (`jdWhole`, `ut1Fraction`).
     #[wasm_bindgen(getter, js_name = ut1JdSplit)]
-    pub fn ut1_jd_split(&self) -> JulianDate {
-        let ts = self.time_scales();
-        JulianDate {
+    pub fn ut1_jd_split(&self) -> Result<JulianDate, JsValue> {
+        let ts = self.time_scales()?;
+        Ok(JulianDate {
             whole: ts.jd_whole,
             fraction: ts.ut1_fraction,
-        }
+        })
     }
 
     /// The two-part TDB Julian date (`jdWhole`, `tdbFraction`).
     #[wasm_bindgen(getter, js_name = tdbJdSplit)]
-    pub fn tdb_jd_split(&self) -> JulianDate {
-        let ts = self.time_scales();
-        JulianDate {
+    pub fn tdb_jd_split(&self) -> Result<JulianDate, JsValue> {
+        let ts = self.time_scales()?;
+        Ok(JulianDate {
             whole: ts.jd_whole,
             fraction: ts.tdb_fraction,
-        }
+        })
     }
 
     /// Delta-T (TT minus UT1), seconds.
     #[wasm_bindgen(getter, js_name = deltaTSeconds)]
-    pub fn delta_t_seconds(&self) -> f64 {
-        let ts = self.time_scales();
-        (ts.tt_fraction - ts.ut1_fraction) * SECONDS_PER_DAY
+    pub fn delta_t_seconds(&self) -> Result<f64, JsValue> {
+        let ts = self.time_scales()?;
+        Ok((ts.tt_fraction - ts.ut1_fraction) * SECONDS_PER_DAY)
     }
 
     /// IAU mean obliquity of the ecliptic, radians.
     #[wasm_bindgen(getter, js_name = meanObliquityRadians)]
     pub fn mean_obliquity_radians(&self) -> Result<f64, JsValue> {
-        skyfield_mean_obliquity_radians(self.time_scales().jd_tdb).map_err(nutation_error)
+        skyfield_mean_obliquity_radians(self.time_scales()?.jd_tdb).map_err(nutation_error)
     }
 
     /// The UT1 departure of this instant's time scales: `"beforeCoverage"` or
     /// `"afterCoverage"` when the instant lies outside the UT1 table and UT1
     /// comes from the long-term delta-T curve, `undefined` inside the table.
     #[wasm_bindgen(getter, js_name = ut1Degraded, unchecked_return_type = "Ut1DegradeReason | undefined")]
-    pub fn ut1_degraded(&self) -> Option<String> {
-        self.time_scales()
+    pub fn ut1_degraded(&self) -> Result<Option<String>, JsValue> {
+        Ok(self
+            .time_scales()?
             .ut1_degraded
-            .map(|reason| crate::spp::degrade_reason_label(reason).to_owned())
+            .map(|reason| crate::spp::degrade_reason_label(reason).to_owned()))
     }
 
     /// [`gmstRadians`] under a UT1 validity policy: `"strict"` (the default)
@@ -768,7 +769,7 @@ impl Instant {
     #[wasm_bindgen(js_name = gmstRadiansWithValidity, unchecked_return_type = "Ut1Validated<number>")]
     pub fn gmst_radians_with_validity(&self, ut1: Option<String>) -> Result<JsValue, JsValue> {
         let validated = with_ut1_validity(
-            &self.time_scales(),
+            &self.time_scales()?,
             ut1_validity(ut1)?,
             greenwich_mean_sidereal_time_radians,
         )
@@ -781,7 +782,7 @@ impl Instant {
     #[wasm_bindgen(js_name = gastRadiansWithValidity, unchecked_return_type = "Ut1Validated<number>")]
     pub fn gast_radians_with_validity(&self, ut1: Option<String>) -> Result<JsValue, JsValue> {
         let validated = with_ut1_validity(
-            &self.time_scales(),
+            &self.time_scales()?,
             ut1_validity(ut1)?,
             greenwich_apparent_sidereal_time_radians,
         )
@@ -792,13 +793,13 @@ impl Instant {
     /// Greenwich Mean Sidereal Time, radians in `[0, 2pi)`.
     #[wasm_bindgen(js_name = gmstRadians)]
     pub fn gmst_radians(&self) -> Result<f64, JsValue> {
-        greenwich_mean_sidereal_time_radians(&self.time_scales()).map_err(frame_error)
+        greenwich_mean_sidereal_time_radians(&self.time_scales()?).map_err(frame_error)
     }
 
     /// Greenwich Apparent Sidereal Time, radians in `[0, 2pi)`.
     #[wasm_bindgen(js_name = gastRadians)]
     pub fn gast_radians(&self) -> Result<f64, JsValue> {
-        greenwich_apparent_sidereal_time_radians(&self.time_scales()).map_err(frame_error)
+        greenwich_apparent_sidereal_time_radians(&self.time_scales()?).map_err(frame_error)
     }
 
     /// IAU 2000A nutation in longitude and obliquity `[dpsi, deps]`, radians,
@@ -806,7 +807,7 @@ impl Instant {
     #[wasm_bindgen(js_name = nutationAngles)]
     pub fn nutation_angles(&self) -> Result<Vec<f64>, JsValue> {
         let (dpsi, deps) =
-            skyfield_iau2000a_radians(self.time_scales().jd_tt).map_err(nutation_error)?;
+            skyfield_iau2000a_radians(self.time_scales()?.jd_tt).map_err(nutation_error)?;
         Ok(vec![dpsi, deps])
     }
 
@@ -814,7 +815,7 @@ impl Instant {
     /// length 9 (3-by-3).
     #[wasm_bindgen(js_name = precessionMatrix)]
     pub fn precession_matrix(&self) -> Result<Vec<f64>, JsValue> {
-        let m = compute_skyfield_precession_matrix(self.time_scales().jd_tdb)
+        let m = compute_skyfield_precession_matrix(self.time_scales()?.jd_tdb)
             .map_err(precession_error)?;
         Ok(mat3_flat(&m))
     }
@@ -823,7 +824,7 @@ impl Instant {
     /// length 9 (3-by-3).
     #[wasm_bindgen(js_name = nutationMatrix)]
     pub fn nutation_matrix(&self) -> Result<Vec<f64>, JsValue> {
-        let ts = self.time_scales();
+        let ts = self.time_scales()?;
         let (dpsi, deps) = skyfield_iau2000a_radians(ts.jd_tt).map_err(nutation_error)?;
         let mean_ob = skyfield_mean_obliquity_radians(ts.jd_tdb).map_err(nutation_error)?;
         let m = build_skyfield_nutation_matrix(mean_ob, mean_ob + deps, dpsi)
@@ -1062,10 +1063,11 @@ fn scales_from_epochs(epochs_unix_us: &[i64]) -> Result<Vec<TimeScales>, JsValue
     if epochs_unix_us.is_empty() {
         return Err(type_error("epochsUnixUs must not be empty"));
     }
-    Ok(epochs_unix_us
+    epochs_unix_us
         .iter()
-        .map(|&us| UtcInstant::from_unix_microseconds(us).time_scales())
-        .collect())
+        .enumerate()
+        .map(|(index, &us)| utc_time_scales(&format!("epochsUnixUs[{index}]"), us))
+        .collect()
 }
 
 /// Transform a batch of TEME states to GCRS, each at its own epoch.

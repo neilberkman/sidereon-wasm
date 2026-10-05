@@ -7,11 +7,10 @@
 
 use wasm_bindgen::prelude::*;
 
-use sidereon::passes::UtcInstant;
 use sidereon_core::astro::bodies::{sun_moon_ecef, sun_moon_eci_at};
 
 use crate::error::{engine_error, type_error};
-use crate::marshal::flat3;
+use crate::marshal::{flat3, utc_time_scales};
 
 /// A batch of Sun and Moon positions, one per epoch: flat row-major `sun` and
 /// `moon` `Float64Array`s of length `3 * epochCount`, in **metres**.
@@ -67,7 +66,7 @@ where
     let mut sun = Vec::with_capacity(epochs_unix_us.len());
     let mut moon = Vec::with_capacity(epochs_unix_us.len());
     for &us in epochs_unix_us {
-        let ts = UtcInstant::from_unix_microseconds(us).time_scales();
+        let ts = utc_time_scales("epochsUnixUs", us)?;
         let sm = f(&ts).map_err(engine_error)?;
         sun.push(sm.sun);
         moon.push(sm.moon);

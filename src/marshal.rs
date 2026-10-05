@@ -11,6 +11,7 @@ use wasm_bindgen::prelude::*;
 
 use sidereon::passes::UtcInstant;
 use sidereon_core::astro::covariance::{Covariance6, Covariance6Error};
+use sidereon_core::astro::time::TimeScales;
 
 use crate::error::{range_error, type_error};
 
@@ -20,6 +21,36 @@ pub fn instants(epochs_unix_us: &[i64]) -> Vec<UtcInstant> {
         .iter()
         .map(|&us| UtcInstant::from_unix_microseconds(us))
         .collect()
+}
+
+const MIN_CIVIL_UTC_UNIX_US: i64 = -62_167_219_200_000_000;
+const MAX_CIVIL_UTC_UNIX_US: i64 = 253_402_300_799_999_999;
+
+/// Build an instant that is safe to pass to the civil-UTC time-scale pipeline.
+///
+/// `UtcInstant` itself deliberately accepts every `i64`; the civil conversion
+/// used by astronomy routines is defined only for years 0 through 9999.
+pub fn utc_instant(name: &str, unix_us: i64) -> Result<UtcInstant, JsValue> {
+    if !(MIN_CIVIL_UTC_UNIX_US..=MAX_CIVIL_UTC_UNIX_US).contains(&unix_us) {
+        return Err(range_error(&format!(
+            "{name} must represent a UTC civil year from 0 through 9999"
+        )));
+    }
+    Ok(UtcInstant::from_unix_microseconds(unix_us))
+}
+
+/// Build checked instants for a batch that enters the civil-UTC pipeline.
+pub fn utc_instants(name: &str, epochs_unix_us: &[i64]) -> Result<Vec<UtcInstant>, JsValue> {
+    epochs_unix_us
+        .iter()
+        .enumerate()
+        .map(|(index, &us)| utc_instant(&format!("{name}[{index}]"), us))
+        .collect()
+}
+
+/// Resolve civil time scales only after validating the supported UTC range.
+pub fn utc_time_scales(name: &str, unix_us: i64) -> Result<TimeScales, JsValue> {
+    Ok(utc_instant(name, unix_us)?.time_scales())
 }
 
 /// Read a length-3 vector, rejecting a wrong length (`TypeError`).

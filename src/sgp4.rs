@@ -10,7 +10,7 @@ use sidereon::passes::{
     find_passes_for_satellite, ground_track, look_angle_arc, look_angle_batch_serial,
     propagate_teme_arc, propagate_teme_batch_serial, visible_from_satellites,
     GroundStation as CoreGroundStation, PassFinderOptions, SatellitePass as CoreSatellitePass,
-    UtcInstant, VisibleSatellite as CoreVisibleSatellite,
+    VisibleSatellite as CoreVisibleSatellite,
 };
 use sidereon::sgp4::{
     fit_tle as core_fit_tle, parse_tle_file_with_policy, DecayLatch as CoreDecayLatch, FitConfig,
@@ -29,7 +29,7 @@ use sidereon_core::frame::Wgs84Geodetic;
 use sidereon_core::geometry::visible_at_elevation_mask;
 
 use crate::error::{range_error, type_error, ut1_validity, validated_object};
-use crate::marshal::{instants, vec3_finite};
+use crate::marshal::{instants, utc_instant, utc_instants, vec3_finite};
 use crate::ndm_error::omm_error;
 use crate::omm::Omm;
 use crate::sgp4_error::{
@@ -727,8 +727,9 @@ impl Tle {
         station: &GroundStation,
         epochs_unix_us: &[i64],
     ) -> Result<LookAngles, JsValue> {
-        let looks = look_angle_arc(&self.satellite, station.inner, &instants(epochs_unix_us))
-            .map_err(look_angle_error)?;
+        let datetimes = utc_instants("epochsUnixUs", epochs_unix_us)?;
+        let looks =
+            look_angle_arc(&self.satellite, station.inner, &datetimes).map_err(look_angle_error)?;
         Ok(look_angles_js(&looks))
     }
 
@@ -745,7 +746,7 @@ impl Tle {
         let validated = look_angle_arc_with_validity(
             &self.satellite,
             station.inner,
-            &instants(epochs_unix_us),
+            &utc_instants("epochsUnixUs", epochs_unix_us)?,
             ut1_validity(ut1)?,
         )
         .map_err(look_angle_error)?;
@@ -776,8 +777,8 @@ impl Tle {
         let passes = find_passes_for_satellite(
             &self.satellite,
             station.inner,
-            UtcInstant::from_unix_microseconds(start_unix_us),
-            UtcInstant::from_unix_microseconds(end_unix_us),
+            utc_instant("startUnixUs", start_unix_us)?,
+            utc_instant("endUnixUs", end_unix_us)?,
             options,
         )
         .map_err(pass_error)?;
@@ -807,8 +808,8 @@ impl Tle {
         let validated = find_passes_for_satellite_with_validity(
             &self.satellite,
             station.inner,
-            UtcInstant::from_unix_microseconds(start_unix_us),
-            UtcInstant::from_unix_microseconds(end_unix_us),
+            utc_instant("startUnixUs", start_unix_us)?,
+            utc_instant("endUnixUs", end_unix_us)?,
             options,
             ut1_validity(ut1)?,
         )
@@ -835,7 +836,7 @@ impl Tle {
     ) -> Result<VisibilitySeries, JsValue> {
         let mask = elevation_mask_deg.unwrap_or(PassFinderOptions::default().elevation_mask_deg);
         let options = pass_options(elevation_mask_deg, step_seconds, time_tolerance_s)?;
-        let inst = instants(epochs_unix_us);
+        let inst = utc_instants("epochsUnixUs", epochs_unix_us)?;
         if inst.len() < 2 {
             return Err(type_error("epochsUnixUs must contain at least two samples"));
         }
@@ -872,8 +873,8 @@ impl Tle {
     /// failure.
     #[wasm_bindgen(js_name = groundTrack)]
     pub fn ground_track(&self, epochs_unix_us: &[i64]) -> Result<GroundTrack, JsValue> {
-        let points =
-            ground_track(&self.satellite, &instants(epochs_unix_us)).map_err(look_angle_error)?;
+        let datetimes = utc_instants("epochsUnixUs", epochs_unix_us)?;
+        let points = ground_track(&self.satellite, &datetimes).map_err(look_angle_error)?;
         Ok(ground_track_js(&points))
     }
 
@@ -888,7 +889,7 @@ impl Tle {
     ) -> Result<JsValue, JsValue> {
         let validated = ground_track_with_validity(
             &self.satellite,
-            &instants(epochs_unix_us),
+            &utc_instants("epochsUnixUs", epochs_unix_us)?,
             ut1_validity(ut1)?,
         )
         .map_err(look_angle_error)?;
@@ -1428,7 +1429,7 @@ pub fn visible_from_satellites_js(
         &sats,
         &ids,
         station.inner,
-        UtcInstant::from_unix_microseconds(epoch_unix_us),
+        utc_instant("epochUnixUs", epoch_unix_us)?,
         min_elevation_deg,
     )
     .map_err(pass_error)?;
@@ -1455,7 +1456,7 @@ pub fn visible_from_satellites_with_validity_js(
         &sats,
         &ids,
         station.inner,
-        UtcInstant::from_unix_microseconds(epoch_unix_us),
+        utc_instant("epochUnixUs", epoch_unix_us)?,
         min_elevation_deg,
         ut1_validity(ut1)?,
     )
@@ -1670,7 +1671,7 @@ impl Constellation {
             &self.satellites,
             &self.ids,
             station.inner,
-            UtcInstant::from_unix_microseconds(epoch_unix_us),
+            utc_instant("epochUnixUs", epoch_unix_us)?,
             min_elevation_deg,
         )
         .map_err(pass_error)?;
@@ -1686,10 +1687,10 @@ impl Constellation {
         &self,
         station: &GroundStation,
         epochs_unix_us: &[i64],
-    ) -> Vec<LookAngles> {
-        let datetimes = instants(epochs_unix_us);
+    ) -> Result<Vec<LookAngles>, JsValue> {
+        let datetimes = utc_instants("epochsUnixUs", epochs_unix_us)?;
         let results = look_angle_batch_serial(&self.satellites, station.inner, &datetimes);
-        results
+        Ok(results
             .into_iter()
             .map(|arc| match arc {
                 Ok(looks) => LookAngles {
@@ -1703,7 +1704,7 @@ impl Constellation {
                     range_km: Vec::new(),
                 },
             })
-            .collect()
+            .collect())
     }
 
     /// Per-satellite detailed outcomes for `lookAngleArcs`. Each result has
@@ -1716,7 +1717,7 @@ impl Constellation {
         station: &GroundStation,
         epochs_unix_us: &[i64],
     ) -> Result<js_sys::Array, JsValue> {
-        let datetimes = instants(epochs_unix_us);
+        let datetimes = utc_instants("epochsUnixUs", epochs_unix_us)?;
         let outcomes = js_sys::Array::new();
         for (satellite_index, result) in
             look_angle_batch_serial(&self.satellites, station.inner, &datetimes)
@@ -1787,9 +1788,10 @@ impl Constellation {
     /// that fails yields an empty track, keeping the result index-aligned. The
     /// batched form of [`Tle.groundTrack`].
     #[wasm_bindgen(js_name = groundTracks)]
-    pub fn ground_tracks(&self, epochs_unix_us: &[i64]) -> Vec<GroundTrack> {
-        let datetimes = instants(epochs_unix_us);
-        self.satellites
+    pub fn ground_tracks(&self, epochs_unix_us: &[i64]) -> Result<Vec<GroundTrack>, JsValue> {
+        let datetimes = utc_instants("epochsUnixUs", epochs_unix_us)?;
+        Ok(self
+            .satellites
             .iter()
             .map(|satellite| match ground_track(satellite, &datetimes) {
                 Ok(points) => GroundTrack {
@@ -1803,7 +1805,7 @@ impl Constellation {
                     altitude_km: Vec::new(),
                 },
             })
-            .collect()
+            .collect())
     }
 
     /// Per-satellite detailed outcomes for `groundTracks`, retaining every
@@ -1811,7 +1813,7 @@ impl Constellation {
     /// track rows.
     #[wasm_bindgen(js_name = groundTrackOutcomes, unchecked_return_type = "FleetGroundTrackOutcome[]")]
     pub fn ground_track_outcomes(&self, epochs_unix_us: &[i64]) -> Result<js_sys::Array, JsValue> {
-        let datetimes = instants(epochs_unix_us);
+        let datetimes = utc_instants("epochsUnixUs", epochs_unix_us)?;
         let outcomes = js_sys::Array::new();
         for (satellite_index, satellite) in self.satellites.iter().enumerate() {
             let outcome = js_sys::Object::new();
@@ -1896,8 +1898,8 @@ impl Constellation {
         if end_unix_us <= start_unix_us {
             return Err(range_error("endUnixUs must be after startUnixUs"));
         }
-        let start = UtcInstant::from_unix_microseconds(start_unix_us);
-        let end = UtcInstant::from_unix_microseconds(end_unix_us);
+        let start = utc_instant("startUnixUs", start_unix_us)?;
+        let end = utc_instant("endUnixUs", end_unix_us)?;
 
         let mut out = Vec::new();
         for (index, satellite) in self.satellites.iter().enumerate() {
@@ -1933,8 +1935,8 @@ impl Constellation {
         if end_unix_us <= start_unix_us {
             return Err(range_error("endUnixUs must be after startUnixUs"));
         }
-        let start = UtcInstant::from_unix_microseconds(start_unix_us);
-        let end = UtcInstant::from_unix_microseconds(end_unix_us);
+        let start = utc_instant("startUnixUs", start_unix_us)?;
+        let end = utc_instant("endUnixUs", end_unix_us)?;
         let outcomes = js_sys::Array::new();
         for (satellite_index, satellite) in self.satellites.iter().enumerate() {
             let outcome = js_sys::Object::new();

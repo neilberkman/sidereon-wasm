@@ -11,11 +11,11 @@ use wasm_bindgen::prelude::*;
 use sidereon_core::astro::coverage::{
     access_counts, look_angles_batch_with_validity, max_elevation, visible_mask, LookAngleGrid,
 };
-use sidereon_core::astro::passes::UtcInstant;
 use sidereon_core::astro::sgp4::Satellite;
 use sidereon_core::astro::time::DegradeReason;
 
 use crate::error::{type_error, ut1_validity};
+use crate::marshal::utc_instant;
 use crate::sgp4::{GroundStation, Tle};
 
 /// A computed look-angle grid for a set of satellites and ground stations at one
@@ -133,7 +133,7 @@ pub fn coverage_look_angles(
         .map(|tle| tle.core_satellite().clone())
         .collect();
     let core_stations: Vec<_> = stations.iter().map(GroundStation::core).collect();
-    let datetime = UtcInstant::from_unix_microseconds(epoch_unix_us);
+    let datetime = utc_instant("epochUnixUs", epoch_unix_us)?;
     let validated = look_angles_batch_with_validity(&sats, &core_stations, datetime, mode);
     Ok(CoverageGrid {
         grid: validated.value,

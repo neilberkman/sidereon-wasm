@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 3.0.2 - 2026-10-05
+
+### Fixed
+
+- Rejects unix-microsecond epochs outside UTC civil years 0 through 9999 before astronomy, frame, observation, almanac, or pass calculations enter the core time-scale conversion. `Instant.fromUnixMicros` remains unrestricted, while properties and methods that require civil UTC throw `RangeError` for unsupported epochs.
+- Rejects trailing components in public fixed three-vector and 3-by-3 matrix inputs instead of silently ignoring them.
+- Updates sidereon and sidereon-core to 3.0.2, including the corrected ULP comparison for NaN values. Existing finite and infinite comparisons retain their prior behavior.
+
 ## 3.0.1 - 2026-10-04
 
 ### Changed

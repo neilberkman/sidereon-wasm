@@ -155,6 +155,49 @@ test("attitude, stand-alone mechanization, and configuration routes delegate to 
   );
 });
 
+test("fixed three-vector and 3-by-3 matrix inputs reject trailing components", () => {
+  assert.throws(
+    () =>
+      dcmToQuaternion([
+        [1, 0, 0, 9],
+        [0, 1, 0],
+        [0, 0, 1],
+      ]),
+    TypeError,
+  );
+  assert.throws(
+    () =>
+      dcmToQuaternion([
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [9, 9, 9],
+      ]),
+    TypeError,
+  );
+  assert.throws(
+    () =>
+      validateImuCalibration({
+        accelScaleMisalignment: [
+          [1, 0, 0],
+          [0, 1, 0],
+          [0, 0, 1],
+          [9, 9, 9],
+        ],
+        gyroScaleMisalignment: [
+          [1, 0, 0],
+          [0, 1, 0],
+          [0, 0, 1],
+        ],
+      }),
+    TypeError,
+  );
+  assert.throws(
+    () => new StrapdownMechanizer({ ...initialState, positionEcefM: [6_378_137, 0, 0, 9] }),
+    TypeError,
+  );
+});
+
 test("IMU correction returns core values and typed refusals", () => {
   const model = {
     bias: { accelMps2: [0, 0, 0], gyroRps: [0, 0, 0] },

@@ -210,6 +210,7 @@ fn rinex_dual_arc_options_from_js(value: JsValue) -> Result<RtkRinexDualArcOptio
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RinexStaticBaselineConfigInput {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     base_m: [f64; 3],
     #[serde(default)]
     arc_options: RinexArcOptionsInput,
@@ -217,7 +218,10 @@ struct RinexStaticBaselineConfigInput {
     reference: ReferenceSelectionInput,
     #[serde(default)]
     model: Option<MeasModelInput>,
-    #[serde(default = "default_initial_baseline_m")]
+    #[serde(
+        default = "default_initial_baseline_m",
+        deserialize_with = "crate::exact::vec3"
+    )]
     initial_baseline_m: [f64; 3],
     #[serde(default = "default_rinex_prior_sigma_m")]
     baseline_prior_sigma_m: f64,
@@ -265,6 +269,7 @@ impl RinexStaticBaselineConfigInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StaticReferenceStationConfigInput {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     reference_position_m: [f64; 3],
     #[serde(default)]
     enable_code_dgnss: Option<bool>,
@@ -297,6 +302,7 @@ struct StaticReferenceCarrierConfigInput {
     arc_options: RinexArcOptionsInput,
     reference: ReferenceSelectionInput,
     model: Option<MeasModelInput>,
+    #[serde(deserialize_with = "crate::exact::vec3")]
     initial_baseline_m: [f64; 3],
     baseline_prior_sigma_m: f64,
     ambiguity_prior_sigma_m: f64,
@@ -354,6 +360,7 @@ impl StaticReferenceCarrierConfigInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RinexWideLaneFixedBaselineConfigInput {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     base_m: [f64; 3],
     #[serde(default)]
     arc_options: RinexDualArcOptionsInput,
@@ -361,7 +368,10 @@ struct RinexWideLaneFixedBaselineConfigInput {
     reference: ReferenceSelectionInput,
     #[serde(default)]
     model: Option<MeasModelInput>,
-    #[serde(default = "default_initial_baseline_m")]
+    #[serde(
+        default = "default_initial_baseline_m",
+        deserialize_with = "crate::exact::vec3"
+    )]
     initial_baseline_m: [f64; 3],
     #[serde(default = "default_rinex_prior_sigma_m")]
     baseline_prior_sigma_m: f64,
@@ -502,12 +512,13 @@ impl ArcPreprocessingInput {
 struct ArcEpochInput {
     base: Vec<ArcObservationInput>,
     rover: Vec<ArcObservationInput>,
+    #[serde(deserialize_with = "crate::exact::map_vec3")]
     satellite_positions_m: BTreeMap<String, [f64; 3]>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::map_vec3")]
     base_satellite_positions_m: BTreeMap<String, [f64; 3]>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::map_vec3")]
     rover_satellite_positions_m: BTreeMap<String, [f64; 3]>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::option_vec3")]
     velocity_mps: Option<[f64; 3]>,
     #[serde(default)]
     prediction_time_s: Option<f64>,
@@ -645,13 +656,14 @@ impl UpdateOptsInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ArcConfigInput {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     base_m: [f64; 3],
     #[serde(default)]
     reference: ReferenceSelectionInput,
     model: MeasModelInput,
     baseline_prior_sigma_m: f64,
     ambiguity_prior_sigma_m: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::vec3")]
     initial_baseline_m: [f64; 3],
     #[serde(default)]
     wavelengths_m: BTreeMap<String, f64>,
@@ -783,12 +795,13 @@ struct DualFrequencyArcEpochInput {
     #[serde(skip)]
     gap_epoch: Option<CoreExactEpoch>,
     observations: Vec<DualFrequencySatelliteObservationInput>,
+    #[serde(deserialize_with = "crate::exact::map_vec3")]
     satellite_positions_m: BTreeMap<String, [f64; 3]>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::map_vec3")]
     base_satellite_positions_m: BTreeMap<String, [f64; 3]>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::map_vec3")]
     rover_satellite_positions_m: BTreeMap<String, [f64; 3]>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::option_vec3")]
     velocity_mps: Option<[f64; 3]>,
     #[serde(default)]
     prediction_time_s: Option<f64>,
@@ -924,6 +937,7 @@ impl WideLaneOptionsInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WideLaneArcConfigInput {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     base_m: [f64; 3],
     #[serde(default)]
     reference: ReferenceSelectionInput,
@@ -949,8 +963,9 @@ impl WideLaneArcConfigInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct IonosphereFreeArcConfigInput {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     base_m: [f64; 3],
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::vec3")]
     initial_baseline_m: [f64; 3],
     #[serde(default)]
     reference: ReferenceSelectionInput,

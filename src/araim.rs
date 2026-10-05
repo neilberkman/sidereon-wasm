@@ -31,6 +31,7 @@ struct AraimGeometryInput {
 #[serde(rename_all = "camelCase")]
 struct AraimRowInput {
     id: String,
+    #[serde(deserialize_with = "crate::exact::vec3")]
     line_of_sight: [f64; 3],
     #[serde(default)]
     system: Option<String>,

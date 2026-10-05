@@ -8,7 +8,6 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-use sidereon::passes::UtcInstant;
 use sidereon_core::astro::bodies::{
     observe as core_observe, observe_spk_body as core_observe_spk_body,
     observe_spk_body_with_validity as core_observe_spk_body_with_validity,
@@ -24,7 +23,7 @@ use sidereon_core::astro::observation::{
 };
 
 use crate::error::{engine_error, type_error, ut1_validity, validated_object};
-use crate::marshal::vec3_finite;
+use crate::marshal::{utc_instant, vec3_finite};
 use crate::spk::Spk;
 
 #[derive(Serialize)]
@@ -303,7 +302,7 @@ pub fn observe_with_validity(
     let station = parse_station(station)?;
     let validated = core_observe_with_validity(
         &station,
-        UtcInstant::from_unix_microseconds(epoch_unix_us),
+        utc_instant("epochUnixUs", epoch_unix_us)?,
         sun_or_moon(target)?,
         parse_options(options)?,
         ut1_validity(ut1)?,
@@ -324,7 +323,7 @@ pub fn observe_spk_body_with_validity(
     let station = parse_station(station)?;
     let validated = core_observe_spk_body_with_validity(
         &station,
-        UtcInstant::from_unix_microseconds(epoch_unix_us),
+        utc_instant("epochUnixUs", epoch_unix_us)?,
         spk.core(),
         naif_id,
         ut1_validity(ut1)?,
@@ -345,7 +344,7 @@ pub fn observe(
     let target = sun_or_moon(target)?;
     let observation = core_observe(
         &station,
-        UtcInstant::from_unix_microseconds(epoch_unix_us),
+        utc_instant("epochUnixUs", epoch_unix_us)?,
         target,
         parse_options(options)?,
     )
@@ -364,7 +363,7 @@ pub fn observe_spk_body(
     let station = parse_station(station)?;
     let observation = core_observe_spk_body(
         &station,
-        UtcInstant::from_unix_microseconds(epoch_unix_us),
+        utc_instant("epochUnixUs", epoch_unix_us)?,
         spk.core(),
         naif_id,
     )
@@ -387,7 +386,7 @@ pub fn observe_barycentric_state(
     let velocity_km_s = vec3_finite("velocityKmS", velocity_km_s)?;
     let observation = core_observe(
         &station,
-        UtcInstant::from_unix_microseconds(epoch_unix_us),
+        utc_instant("epochUnixUs", epoch_unix_us)?,
         Target::BarycentricState {
             kernel: spk.core(),
             position_km,

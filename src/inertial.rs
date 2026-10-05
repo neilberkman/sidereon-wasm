@@ -163,19 +163,24 @@ fn inertial_error(error: core_inertial::InertialError) -> JsValue {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct NavStateInput {
     t_j2000_s: f64,
+    #[serde(deserialize_with = "crate::exact::vec3")]
     position_ecef_m: [f64; 3],
+    #[serde(deserialize_with = "crate::exact::vec3")]
     velocity_ecef_mps: [f64; 3],
+    #[serde(deserialize_with = "crate::exact::mat3")]
     attitude_body_to_ecef: Mat3,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::option_vec3")]
     accel_bias_mps2: Option<[f64; 3]>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::option_vec3")]
     gyro_bias_rps: Option<[f64; 3]>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CalibrationInput {
+    #[serde(deserialize_with = "crate::exact::mat3")]
     accel_scale_misalignment: Mat3,
+    #[serde(deserialize_with = "crate::exact::mat3")]
     gyro_scale_misalignment: Mat3,
 }
 
@@ -256,13 +261,13 @@ fn nav_state(value: JsValue) -> Result<core_inertial::NavState, JsValue> {
 struct ImuSampleInput {
     kind: String,
     t_j2000_s: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::option_vec3")]
     specific_force_mps2: Option<[f64; 3]>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::option_vec3")]
     angular_rate_rps: Option<[f64; 3]>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::option_vec3")]
     delta_velocity_mps: Option<[f64; 3]>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::option_vec3")]
     delta_theta_rad: Option<[f64; 3]>,
     #[serde(default)]
     dt_s: Option<f64>,
@@ -486,7 +491,9 @@ impl From<core_inertial::ImuSpec> for ImuSpecOutput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BiasInput {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     accel_mps2: [f64; 3],
+    #[serde(deserialize_with = "crate::exact::vec3")]
     gyro_rps: [f64; 3],
 }
 
@@ -617,7 +624,9 @@ impl ImuSimulator {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CorrectedIncrementInput {
     t_j2000_s: f64,
+    #[serde(deserialize_with = "crate::exact::vec3")]
     delta_velocity_mps: [f64; 3],
+    #[serde(deserialize_with = "crate::exact::vec3")]
     delta_theta_rad: [f64; 3],
     dt_s: f64,
 }
@@ -776,8 +785,7 @@ impl From<core_inertial::AttitudeQuaternion> for QuaternionOutput {
 pub fn dcm_to_quaternion_js(
     #[wasm_bindgen(unchecked_param_type = "InertialDcm")] dcm: JsValue,
 ) -> Result<JsValue, JsValue> {
-    let dcm: Mat3 = serde_wasm_bindgen::from_value(dcm)
-        .map_err(|error| type_error(&format!("invalid direction-cosine matrix: {error}")))?;
+    let dcm = crate::exact::mat3_from_js(dcm)?;
     let quaternion = core_inertial::dcm_to_quaternion(&dcm).map_err(inertial_error)?;
     to_plain_js(&QuaternionOutput::from(quaternion), "attitude quaternion")
 }
@@ -801,8 +809,7 @@ pub fn quaternion_to_dcm_js(
 pub fn attitude_yaw_pitch_roll_rad_js(
     #[wasm_bindgen(unchecked_param_type = "InertialDcm")] dcm: JsValue,
 ) -> Result<js_sys::Array, JsValue> {
-    let dcm: Mat3 = serde_wasm_bindgen::from_value(dcm)
-        .map_err(|error| type_error(&format!("invalid direction-cosine matrix: {error}")))?;
+    let dcm = crate::exact::mat3_from_js(dcm)?;
     // A plain `[yaw, pitch, roll]` array, as the declaration states.
     Ok(core_inertial::attitude_yaw_pitch_roll_rad(&dcm)
         .into_iter()
@@ -814,8 +821,7 @@ pub fn attitude_yaw_pitch_roll_rad_js(
 pub fn reorthonormalize_dcm_js(
     #[wasm_bindgen(unchecked_param_type = "InertialDcm")] dcm: JsValue,
 ) -> Result<JsValue, JsValue> {
-    let dcm: Mat3 = serde_wasm_bindgen::from_value(dcm)
-        .map_err(|error| type_error(&format!("invalid direction-cosine matrix: {error}")))?;
+    let dcm = crate::exact::mat3_from_js(dcm)?;
     let result = core_inertial::reorthonormalize_dcm(&dcm).map_err(inertial_error)?;
     to_plain_js(&result, "re-orthonormalized attitude matrix")
 }

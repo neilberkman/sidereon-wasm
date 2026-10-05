@@ -190,6 +190,7 @@ where
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct StaticSolveOptionsInput {
+    #[serde(deserialize_with = "crate::exact::option_vec3")]
     initial_position_m: Option<[f64; 3]>,
     with_geodetic: Option<bool>,
     robust: Option<RobustInput>,

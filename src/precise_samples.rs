@@ -182,6 +182,7 @@ struct SampleJs {
     epoch: Option<f64>,
     #[serde(default)]
     instant: Option<InstantJs>,
+    #[serde(deserialize_with = "crate::exact::vec3")]
     position_ecef_m: [f64; 3],
     #[serde(default)]
     clock_s: Option<f64>,
@@ -863,6 +864,7 @@ pub fn sp3_precise_ephemeris_accuracy_samples(sp3: &Sp3) -> Result<JsValue, JsVa
 #[serde(rename_all = "camelCase")]
 struct RangeRequestJs {
     sat: String,
+    #[serde(deserialize_with = "crate::exact::vec3")]
     receiver_ecef_m: [f64; 3],
     t_rx_j2000_s: f64,
 }
