@@ -23,7 +23,7 @@ impl<'de> Deserialize<'de> for ExactVec3 {
             type Value = ExactVec3;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("an array of exactly 3 numbers")
+                formatter.write_str("an array of length 3")
             }
 
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
