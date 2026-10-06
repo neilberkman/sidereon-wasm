@@ -1,0 +1,103 @@
+name: Prepare registry release lock
+
+on:
+  push:
+    branches: [release/3.0.2-20261005]
+    paths:
+      - .github/release-registry.patch
+      - .github/workflows/release-registry-prepare.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-registry-prepare-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    name: Resolve and verify registry lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_NET_RETRY: 3
+      CARGO_HTTP_TIMEOUT: 30
+      EXPECTED_CORE_REVISION: 8694648892d8ab065d94014e2e21d6cd5054818e
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.98.1
+
+      - name: Apply reviewed registry metadata
+        run: |
+          git apply --check .github/release-registry.patch
+          git apply .github/release-registry.patch
+          git diff -- Cargo.toml THIRD-PARTY-NOTICES.md > "${RUNNER_TEMP}/applied.patch"
+          cmp .github/release-registry.patch "${RUNNER_TEMP}/applied.patch"
+
+      - name: Resolve registry dependencies
+        run: cargo update --workspace
+
+      - name: Load locked package metadata
+        run: cargo metadata --locked --format-version 1 > "${RUNNER_TEMP}/cargo-metadata.json"
+
+      - name: Verify registry identities and checksums
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          expected_revision = os.environ["EXPECTED_CORE_REVISION"]
+          lock = tomllib.loads(Path("Cargo.lock").read_text())
+          packages = lock["package"]
+          expected = {
+              "sidereon": "3.0.2",
+              "sidereon-core": "3.0.2",
+              "trust-region-least-squares": "0.11.0",
+          }
+
+          for name, version in expected.items():
+              matches = [package for package in packages if package["name"] == name]
+              assert len(matches) == 1, (name, matches)
+              package = matches[0]
+              assert package["version"] == version, package
+              assert package.get("source", "").startswith("registry+"), package
+              assert re.fullmatch(r"[0-9a-f]{64}", package.get("checksum", "")), package
+              print(f'{name} {version} checksum {package["checksum"]}')
+
+          stale = [
+              package
+              for package in packages
+              if "github.com/neilberkman/sidereon" in package.get("source", "")
+          ]
+          assert not stale, stale
+
+          metadata = json.loads(
+              Path(os.environ["RUNNER_TEMP"], "cargo-metadata.json").read_text()
+          )
+          for name in ("sidereon", "sidereon-core"):
+              matches = [
+                  package
+                  for package in metadata["packages"]
+                  if package["name"] == name and package["version"] == "3.0.2"
+              ]
+              assert len(matches) == 1, (name, matches)
+              package = matches[0]
+              assert package.get("source", "").startswith("registry+"), package
+              vcs_path = Path(package["manifest_path"]).parent / ".cargo_vcs_info.json"
+              vcs = json.loads(vcs_path.read_text())
+              assert vcs["git"]["sha1"] == expected_revision, (name, vcs)
+              assert not vcs["git"].get("dirty", False), (name, vcs)
+              print(f"{name} 3.0.2 VCS revision {vcs['git']['sha1']}")
+          PY
+
+      - name: Upload resolved Cargo.lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidereon-wasm-3.0.2-registry-lock-${{ github.sha }}
+          path: Cargo.lock
+          if-no-files-found: error
+          retention-days: 3
