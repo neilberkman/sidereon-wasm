@@ -36,8 +36,11 @@ pub(crate) struct SatMeasInput {
     base_phase_m: f64,
     rover_code_m: f64,
     rover_phase_m: f64,
+    #[serde(deserialize_with = "crate::exact::vec3")]
     base_tx_pos: [f64; 3],
+    #[serde(deserialize_with = "crate::exact::vec3")]
     rover_tx_pos: [f64; 3],
+    #[serde(deserialize_with = "crate::exact::vec3")]
     pos: [f64; 3],
 }
 
@@ -64,7 +67,7 @@ pub(crate) struct EpochInput {
     references: Vec<SatMeasInput>,
     nonref: Vec<SatMeasInput>,
     dt_s: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::option_vec3")]
     velocity_mps: Option<[f64; 3]>,
 }
 
@@ -211,10 +214,11 @@ impl ResidualOptionsInput {
 #[serde(rename_all = "camelCase")]
 struct FloatConfigInput {
     epochs: Vec<EpochInput>,
+    #[serde(deserialize_with = "crate::exact::vec3")]
     base: [f64; 3],
     ambiguity_ids: Vec<String>,
     model: MeasModelInput,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::vec3")]
     initial_baseline_m: [f64; 3],
     #[serde(default)]
     options: FloatOptionsInput,
@@ -225,6 +229,7 @@ struct FloatConfigInput {
 #[serde(rename_all = "camelCase")]
 struct FixedConfigInput {
     epochs: Vec<EpochInput>,
+    #[serde(deserialize_with = "crate::exact::vec3")]
     base: [f64; 3],
     ambiguity_ids: Vec<String>,
     ambiguity_satellites: BTreeMap<String, String>,
@@ -239,7 +244,7 @@ struct FixedConfigInput {
     residual_options: ResidualOptionsInput,
     #[serde(default)]
     float_only_systems: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::vec3")]
     initial_baseline_m: [f64; 3],
 }
 

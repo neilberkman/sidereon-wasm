@@ -27,6 +27,7 @@ use crate::rtk::{EpochInput, FixedOptionsInput, FloatOptionsInput, MeasModelInpu
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MovingEpochInput {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     base_position_m: [f64; 3],
     #[serde(flatten)]
     epoch: EpochInput,
@@ -49,7 +50,7 @@ struct MovingBaselineConfigInput {
     float_options: FloatOptionsInput,
     #[serde(default)]
     fixed_options: FixedOptionsInput,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::vec3")]
     initial_baseline_m: [f64; 3],
     #[serde(default = "default_true")]
     warm_start: bool,

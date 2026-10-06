@@ -241,7 +241,7 @@ impl From<StationTideConstants> for CoreStationTideConstants {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StationDisplacementRequest {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::option_vec3")]
     station_ecef_m: Option<[f64; 3]>,
     #[serde(default)]
     station_geodetic: Option<StationGeodeticInput>,
@@ -423,7 +423,7 @@ pub fn station_displacement_js(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StationDisplacementBatchRequest {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::option_vec3")]
     station_ecef_m: Option<[f64; 3]>,
     #[serde(default)]
     station_geodetic: Option<StationGeodeticInput>,

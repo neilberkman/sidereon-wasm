@@ -10,7 +10,6 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-use sidereon::passes::UtcInstant;
 use sidereon_core::astro::bodies::{
     find_moon_elevation_crossings as core_find_moon_elevation_crossings,
     find_moon_elevation_crossings_with_validity as core_find_moon_elevation_crossings_with_validity,
@@ -27,6 +26,7 @@ use sidereon_core::astro::frames::transforms::GeodeticStationKm;
 
 use crate::astro_error::{body_observation_error, event_finder_error};
 use crate::error::{range_error, type_error, ut1_validity, validated_object};
+use crate::marshal::utc_instant;
 
 /// Build a geodetic station from degrees / kilometres, rejecting non-finite
 /// fields (`RangeError`).
@@ -103,7 +103,7 @@ pub fn sun_az_el(
     epoch_unix_us: i64,
 ) -> Result<JsValue, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
-    let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
+    let time = utc_instant("epochUnixUs", epoch_unix_us)?;
     let az_el = core_sun_az_el(&station, time).map_err(body_observation_error)?;
     to_object(&BodyAzElObject::from(az_el))
 }
@@ -119,7 +119,7 @@ pub fn moon_az_el(
     epoch_unix_us: i64,
 ) -> Result<JsValue, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
-    let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
+    let time = utc_instant("epochUnixUs", epoch_unix_us)?;
     let az_el = core_moon_az_el(&station, time).map_err(body_observation_error)?;
     to_object(&BodyAzElObject::from(az_el))
 }
@@ -136,7 +136,7 @@ pub fn sun_az_el_with_validity(
     ut1: Option<String>,
 ) -> Result<JsValue, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
-    let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
+    let time = utc_instant("epochUnixUs", epoch_unix_us)?;
     let validated = core_sun_az_el_with_validity(&station, time, ut1_validity(ut1)?)
         .map_err(body_observation_error)?;
     validated_object(
@@ -155,7 +155,7 @@ pub fn moon_az_el_with_validity(
     ut1: Option<String>,
 ) -> Result<JsValue, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
-    let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
+    let time = utc_instant("epochUnixUs", epoch_unix_us)?;
     let validated = core_moon_az_el_with_validity(&station, time, ut1_validity(ut1)?)
         .map_err(body_observation_error)?;
     validated_object(
@@ -178,7 +178,7 @@ pub fn moon_illumination_with_validity(
     ut1: Option<String>,
 ) -> Result<JsValue, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
-    let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
+    let time = utc_instant("epochUnixUs", epoch_unix_us)?;
     let validated = core_moon_illumination_with_validity(&station, time, ut1_validity(ut1)?)
         .map_err(body_observation_error)?;
     validated_object(
@@ -199,7 +199,7 @@ pub fn moon_illumination(
     epoch_unix_us: i64,
 ) -> Result<JsValue, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
-    let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
+    let time = utc_instant("epochUnixUs", epoch_unix_us)?;
     let illum = core_moon_illumination(&station, time).map_err(body_observation_error)?;
     to_object(&MoonIlluminationObject::from(illum))
 }
@@ -218,7 +218,7 @@ pub fn moon_elevation_deg(
     epoch_unix_us: i64,
 ) -> Result<f64, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
-    let time = UtcInstant::from_unix_microseconds(epoch_unix_us);
+    let time = utc_instant("epochUnixUs", epoch_unix_us)?;
     Ok(core_moon_az_el(&station, time)
         .map_err(body_observation_error)?
         .elevation_deg)
@@ -297,8 +297,8 @@ pub fn find_moon_elevation_crossings(
 ) -> Result<Vec<MoonElevationCrossing>, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
     let opts = moon_elevation_options(options)?;
-    let start = UtcInstant::from_unix_microseconds(start_unix_us);
-    let end = UtcInstant::from_unix_microseconds(end_unix_us);
+    let start = utc_instant("startUnixUs", start_unix_us)?;
+    let end = utc_instant("endUnixUs", end_unix_us)?;
     let crossings = core_find_moon_elevation_crossings(&station, start, end, opts.to_core())
         .map_err(event_finder_error)?;
     Ok(crossings.into_iter().map(crossing_js).collect())
@@ -346,8 +346,8 @@ pub fn find_moon_elevation_crossings_with_validity(
     let opts = moon_elevation_options(options)?;
     let validated = core_find_moon_elevation_crossings_with_validity(
         &station,
-        UtcInstant::from_unix_microseconds(start_unix_us),
-        UtcInstant::from_unix_microseconds(end_unix_us),
+        utc_instant("startUnixUs", start_unix_us)?,
+        utc_instant("endUnixUs", end_unix_us)?,
         opts.to_core(),
         ut1_validity(ut1)?,
     )
@@ -407,8 +407,8 @@ pub fn find_moon_transits(
     time_tolerance_seconds: f64,
 ) -> Result<Vec<MoonTransit>, JsValue> {
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
-    let start = UtcInstant::from_unix_microseconds(start_unix_us);
-    let end = UtcInstant::from_unix_microseconds(end_unix_us);
+    let start = utc_instant("startUnixUs", start_unix_us)?;
+    let end = utc_instant("endUnixUs", end_unix_us)?;
     let transits =
         core_find_moon_transits(&station, start, end, step_seconds, time_tolerance_seconds)
             .map_err(event_finder_error)?;
@@ -446,8 +446,8 @@ pub fn find_moon_transits_with_validity(
     let station = station(latitude_deg, longitude_deg, altitude_km)?;
     let validated = core_find_moon_transits_with_validity(
         &station,
-        UtcInstant::from_unix_microseconds(start_unix_us),
-        UtcInstant::from_unix_microseconds(end_unix_us),
+        utc_instant("startUnixUs", start_unix_us)?,
+        utc_instant("endUnixUs", end_unix_us)?,
         step_seconds,
         time_tolerance_seconds,
         ut1_validity(ut1)?,

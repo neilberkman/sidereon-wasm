@@ -69,9 +69,9 @@ try {
     "licenses/IERS-Conventions-Software-License.txt",
     "licenses/SciPy-BSD-3-Clause.txt",
     "licenses/libloading-ISC.txt",
-    "third_party_source/sidereon-core-3.0.1/tides/mod.rs",
-    "third_party_source/sidereon-core-3.0.1/tides/ocean.rs",
-    "third_party_source/sidereon-core-3.0.1/tides/pole.rs",
+    "third_party_source/sidereon-core-3.0.2/tides/mod.rs",
+    "third_party_source/sidereon-core-3.0.2/tides/ocean.rs",
+    "third_party_source/sidereon-core-3.0.2/tides/pole.rs",
     "pkg/sidereon.js",
     "pkg/sidereon.d.ts",
     "pkg/sidereon_bg.wasm",
@@ -94,11 +94,11 @@ try {
   }
 
   const coreSourceDigests = {
-    "third_party_source/sidereon-core-3.0.1/tides/mod.rs":
+    "third_party_source/sidereon-core-3.0.2/tides/mod.rs":
       "0703d1b3470f59528880ae34990f064897d34876d5ff30b4fc860afdcadf7433",
-    "third_party_source/sidereon-core-3.0.1/tides/ocean.rs":
+    "third_party_source/sidereon-core-3.0.2/tides/ocean.rs":
       "25946677944425671a92717860ac2d70f255de5403eeb1fbf98b361716821d5c",
-    "third_party_source/sidereon-core-3.0.1/tides/pole.rs":
+    "third_party_source/sidereon-core-3.0.2/tides/pole.rs":
       "b4cc4c16bdd8ce1d8f04073602ab47dfb85a002b946ab192e8d4d2d600f0a1f8",
   };
   const exactThirdPartyDigests = {

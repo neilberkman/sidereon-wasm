@@ -57,7 +57,9 @@ impl ReceiverInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct KinematicSolutionInput {
+    #[serde(deserialize_with = "crate::exact::vec3")]
     position_m: [f64; 3],
+    #[serde(deserialize_with = "crate::exact::mat3")]
     position_covariance_m2: [[f64; 3]; 3],
     #[serde(default)]
     clock_m: Option<f64>,
@@ -89,7 +91,9 @@ impl KinematicSolutionInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PositionCovarianceInput {
+    #[serde(deserialize_with = "crate::exact::mat3")]
     ecef_m2: [[f64; 3]; 3],
+    #[serde(deserialize_with = "crate::exact::mat3")]
     enu_m2: [[f64; 3]; 3],
 }
 
@@ -258,8 +262,7 @@ impl PositionErrorMetrics {
 pub fn metrics_from_enu_covariance_m2(
     covariance_enu_m2: JsValue,
 ) -> Result<PositionErrorMetrics, JsValue> {
-    let covariance: [[f64; 3]; 3] = serde_wasm_bindgen::from_value(covariance_enu_m2)
-        .map_err(|e| type_error(&format!("invalid ENU covariance: {e}")))?;
+    let covariance = crate::exact::mat3_from_js(covariance_enu_m2)?;
     Ok(PositionErrorMetrics {
         inner: core_metrics_from_enu_covariance_m2(covariance).map_err(metrics_error)?,
     })
@@ -273,8 +276,7 @@ pub fn metrics_from_ecef_covariance_m2(
     covariance_ecef_m2: JsValue,
     receiver: JsValue,
 ) -> Result<PositionErrorMetrics, JsValue> {
-    let covariance: [[f64; 3]; 3] = serde_wasm_bindgen::from_value(covariance_ecef_m2)
-        .map_err(|e| type_error(&format!("invalid ECEF covariance: {e}")))?;
+    let covariance = crate::exact::mat3_from_js(covariance_ecef_m2)?;
     let receiver: ReceiverInput = serde_wasm_bindgen::from_value(receiver)
         .map_err(|e| type_error(&format!("invalid receiver: {e}")))?;
     Ok(PositionErrorMetrics {
@@ -315,8 +317,7 @@ pub fn metrics_from_kinematic_solution(solution: JsValue) -> Result<PositionErro
 /// Horizontal one-sigma ellipse from an ENU covariance in square metres.
 #[wasm_bindgen(js_name = errorEllipseFromEnuM2)]
 pub fn error_ellipse_from_enu_m2(covariance_enu_m2: JsValue) -> Result<ErrorEllipse, JsValue> {
-    let covariance: [[f64; 3]; 3] = serde_wasm_bindgen::from_value(covariance_enu_m2)
-        .map_err(|e| type_error(&format!("invalid ENU covariance: {e}")))?;
+    let covariance = crate::exact::mat3_from_js(covariance_enu_m2)?;
     Ok(ErrorEllipse {
         inner: core_error_ellipse_from_enu_m2(covariance).map_err(metrics_error)?,
     })
@@ -328,8 +329,7 @@ pub fn horizontal_radius_at(
     covariance_enu_m2: JsValue,
     probability: f64,
 ) -> Result<PercentileRadius, JsValue> {
-    let covariance: [[f64; 3]; 3] = serde_wasm_bindgen::from_value(covariance_enu_m2)
-        .map_err(|e| type_error(&format!("invalid ENU covariance: {e}")))?;
+    let covariance = crate::exact::mat3_from_js(covariance_enu_m2)?;
     Ok(PercentileRadius {
         inner: core_horizontal_radius_at(covariance, probability).map_err(metrics_error)?,
     })
@@ -341,8 +341,7 @@ pub fn spherical_radius_at(
     covariance_enu_m2: JsValue,
     probability: f64,
 ) -> Result<PercentileRadius, JsValue> {
-    let covariance: [[f64; 3]; 3] = serde_wasm_bindgen::from_value(covariance_enu_m2)
-        .map_err(|e| type_error(&format!("invalid ENU covariance: {e}")))?;
+    let covariance = crate::exact::mat3_from_js(covariance_enu_m2)?;
     Ok(PercentileRadius {
         inner: core_spherical_radius_at(covariance, probability).map_err(metrics_error)?,
     })

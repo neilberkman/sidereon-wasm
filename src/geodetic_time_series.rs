@@ -45,8 +45,9 @@ impl GeodeticInput {
 #[serde(rename_all = "camelCase")]
 struct PositionSampleInput {
     epoch_year: f64,
+    #[serde(deserialize_with = "crate::exact::vec3")]
     position_m: [f64; 3],
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::exact::option_mat3")]
     covariance_m2: Option<[[f64; 3]; 3]>,
 }
 

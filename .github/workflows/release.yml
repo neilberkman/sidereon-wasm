@@ -71,3 +71,144 @@ jobs:
 
       - name: Publish (keyless OIDC + provenance)
         run: npm publish --access public --provenance
+
+  public-consumer:
+    name: Verify public npm consumer
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install and verify the exact published version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          if [ -z "$version" ] || [ "v$version" != "$RELEASE_TAG" ]; then
+            echo "invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          scratch="$(mktemp -d)"
+          trap 'rm -rf "$scratch"' EXIT
+          cd "$scratch"
+          npm init -y >/dev/null
+
+          installed=false
+          for attempt in 1 2 3 4 5 6; do
+            if npm install --save-exact --ignore-scripts --no-audit --no-fund \
+              "@neilberkman/sidereon@$version"; then
+              installed=true
+              break
+            fi
+            if [ "$attempt" -lt 6 ]; then
+              sleep 10
+            fi
+          done
+          if [ "$installed" != true ]; then
+            echo "npm registry did not serve @neilberkman/sidereon@$version" >&2
+            exit 1
+          fi
+
+          export EXPECTED_VERSION="$version"
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          import { join } from "node:path";
+          import {
+            Instant,
+            dcmToQuaternion,
+            gravityEcefMps2,
+            sunMoonEci,
+            temeToGcrs,
+          } from "@neilberkman/sidereon";
+
+          const packageJson = JSON.parse(
+            readFileSync(
+              join(process.cwd(), "node_modules", "@neilberkman", "sidereon", "package.json"),
+              "utf8",
+            ),
+          );
+          assert.equal(packageJson.version, process.env.EXPECTED_VERSION);
+
+          const bitsBuffer = new ArrayBuffer(8);
+          const bitsView = new DataView(bitsBuffer);
+          const fromBits = (hex) => {
+            bitsView.setBigUint64(0, BigInt(hex), false);
+            return bitsView.getFloat64(0, false);
+          };
+          const toBits = (value) => {
+            bitsView.setFloat64(0, value, false);
+            return `0x${bitsView.getBigUint64(0, false).toString(16).padStart(16, "0")}`;
+          };
+
+          // Independent Skyfield 1.49 oracle used by the stable public frame test.
+          const temePosition = [
+            "0x40ace86c23dffb6b",
+            "0x409f7fa61c81cb47",
+            "0x40b4bd8359159cde",
+          ];
+          const temeVelocity = [
+            "0xc00b2ffb7cf9ad7d",
+            "0x401b7a8751f7fc4a",
+            "0xbfceb36925f07cb4",
+          ];
+          const expectedPosition = [
+            "0x40ad0bd9193713e1",
+            "0x409f41a3b2073733",
+            "0x40b4b6ffad1289d1",
+          ];
+          const expectedVelocity = [
+            "0xc00af690723d6cb1",
+            "0x401b88e06212f969",
+            "0xbfcde8575471eaf0",
+          ];
+          const epoch = Instant.fromUtc(2018, 7, 4, 0, 0, 0).unixMicros;
+          assert.equal(epoch, 1_530_662_400_000_000n);
+          const transformed = temeToGcrs(
+            Float64Array.from(temePosition.map(fromBits)),
+            Float64Array.from(temeVelocity.map(fromBits)),
+            BigInt64Array.from([epoch]),
+            true,
+          );
+          assert.deepEqual(Array.from(transformed.positionKm, toBits), expectedPosition);
+          assert.deepEqual(Array.from(transformed.velocityKmS, toBits), expectedVelocity);
+
+          const firstCivilUtc = -62_167_219_200_000_000n;
+          const lastCivilUtc = 253_402_300_799_999_999n;
+          const outsideCivilUtc = [firstCivilUtc - 1n, lastCivilUtc + 1n];
+          assert.doesNotThrow(() => Instant.fromUnixMicros(firstCivilUtc).ttJd);
+          assert.doesNotThrow(() => Instant.fromUnixMicros(lastCivilUtc).ttJd);
+          const civilRangeError = (error) =>
+            error instanceof RangeError && /UTC civil year from 0 through 9999/.test(error.message);
+          for (const outside of outsideCivilUtc) {
+            const instant = Instant.fromUnixMicros(outside);
+            assert.equal(instant.unixMicros, outside);
+            assert.throws(() => instant.ttJd, civilRangeError);
+            assert.throws(() => sunMoonEci(new BigInt64Array([outside])), civilRangeError);
+          }
+
+          assert.deepEqual(
+            dcmToQuaternion([
+              [1, 0, 0],
+              [0, 1, 0],
+              [0, 0, 1],
+            ]),
+            { w: 1, x: 0, y: 0, z: 0 },
+          );
+          assert.throws(() => gravityEcefMps2([6_378_137, 0, 0, 9]), TypeError);
+          assert.throws(
+            () =>
+              dcmToQuaternion([
+                [1, 0, 0, 9],
+                [0, 1, 0],
+                [0, 0, 1],
+              ]),
+            TypeError,
+          );
+          NODE

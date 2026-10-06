@@ -222,6 +222,7 @@ impl EpochInput {
 #[serde(rename_all = "camelCase")]
 struct SatelliteAntennaFrequencyInput {
     label: String,
+    #[serde(deserialize_with = "crate::exact::vec3")]
     pco_m: [f64; 3],
     /// `[nadirDeg, pcvM]` pairs.
     noazi_pcv_m: Vec<(f64, f64)>,

@@ -43,6 +43,7 @@ mod error;
 mod error_metrics;
 mod estimation;
 mod events;
+mod exact;
 mod exact_cache;
 mod force_model_input;
 mod forces;

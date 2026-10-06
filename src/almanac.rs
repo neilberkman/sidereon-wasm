@@ -8,12 +8,12 @@ use sidereon::almanac::{
     seasons as core_seasons, CulminationKind, EclipseKind, EphemerisSource, MoonPhaseKind, Planet,
     PlanetaryEventKind, SeasonKind, TransitBody,
 };
-use sidereon::passes::UtcInstant;
 use sidereon_core::astro::frames::transforms::GeodeticStationKm;
 
 use crate::astro_error::almanac_error;
 use crate::error::{type_error, ut1_validity, validated_object};
 use crate::label::{lower_camel_variant, Label};
+use crate::marshal::utc_instant;
 use crate::spk::Spk;
 
 #[derive(Deserialize)]
@@ -70,8 +70,8 @@ struct EclipseEventJs {
     uncertain: bool,
 }
 
-fn instant(us: i64) -> UtcInstant {
-    UtcInstant::from_unix_microseconds(us)
+fn instant(name: &str, us: i64) -> Result<sidereon::passes::UtcInstant, JsValue> {
+    utc_instant(name, us)
 }
 
 fn season_label(kind: SeasonKind) -> Label {
@@ -172,8 +172,8 @@ fn seasons_with_source(
 ) -> Result<JsValue, JsValue> {
     let events = core_seasons(
         source,
-        instant(start_unix_us),
-        instant(end_unix_us),
+        instant("startUnixUs", start_unix_us)?,
+        instant("endUnixUs", end_unix_us)?,
         step_s,
         tolerance_s,
     )
@@ -230,8 +230,8 @@ fn moon_phases_with_source(
 ) -> Result<JsValue, JsValue> {
     let events = core_moon_phases(
         source,
-        instant(start_unix_us),
-        instant(end_unix_us),
+        instant("startUnixUs", start_unix_us)?,
+        instant("endUnixUs", end_unix_us)?,
         step_s,
         tolerance_s,
     )
@@ -295,8 +295,8 @@ pub fn planetary_events(
         source_spk(spk),
         planet,
         kind,
-        instant(start_unix_us),
-        instant(end_unix_us),
+        instant("startUnixUs", start_unix_us)?,
+        instant("endUnixUs", end_unix_us)?,
         step_s,
         tolerance_s,
     )
@@ -336,8 +336,8 @@ fn transits_with_source(
         source,
         parse_transit_body(body)?,
         &station.to_core(),
-        instant(start_unix_us),
-        instant(end_unix_us),
+        instant("startUnixUs", start_unix_us)?,
+        instant("endUnixUs", end_unix_us)?,
         step_s,
         tolerance_s,
     )
@@ -370,8 +370,8 @@ fn transits_with_source_validity(
         source,
         parse_transit_body(body)?,
         &station.to_core(),
-        instant(start_unix_us),
-        instant(end_unix_us),
+        instant("startUnixUs", start_unix_us)?,
+        instant("endUnixUs", end_unix_us)?,
         step_s,
         tolerance_s,
         ut1_validity(ut1)?,
@@ -498,8 +498,8 @@ fn eclipses_with_source(
 ) -> Result<JsValue, JsValue> {
     let events = core_lunar_solar_eclipses(
         source,
-        instant(start_unix_us),
-        instant(end_unix_us),
+        instant("startUnixUs", start_unix_us)?,
+        instant("endUnixUs", end_unix_us)?,
         step_s,
         tolerance_s,
     )
