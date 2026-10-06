@@ -17,11 +17,11 @@ crate-type = ["cdylib", "rlib"]
 # logic lives here: every call delegates to a `sidereon` entry point, and the
 # binding only ever calls the serial paths (solve_spp, propagate_teme_arc,
 # look_angle_arc), never the rayon `*_parallel` variants, so no thread pool is
-# spawned under wasm32. The release candidate is pinned to the reviewed engine
-# commit; the publish preparation replaces these with exact registry versions.
-sidereon = { git = "https://github.com/neilberkman/sidereon", rev = "47eaf24e39afa71168670664e88361ed41011bc2" }
-sidereon-core = { git = "https://github.com/neilberkman/sidereon", rev = "47eaf24e39afa71168670664e88361ed41011bc2" }
-trust-region-least-squares = { git = "https://github.com/neilberkman/sidereon", rev = "47eaf24e39afa71168670664e88361ed41011bc2", version = "=0.11.0" }
+# spawned under wasm32. Exact registry versions keep the binding aligned with
+# the reviewed engine and its trust-region dependency.
+sidereon = { version = "=3.0.2" }
+sidereon-core = { version = "=3.0.2" }
+trust-region-least-squares = { version = "=0.11.0" }
 wasm-bindgen = "0.2"
 # Typed access to the JS Error / TypeError / RangeError constructors so failures
 # surface as the exception class a JS developer expects.
