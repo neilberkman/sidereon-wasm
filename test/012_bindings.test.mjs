@@ -39,7 +39,7 @@ import {
   terrainStoreChecksum64,
   timeDeviation,
 } from "../pkg-node/sidereon.js";
-import { fixture, fixtureJson, hexToF64 } from "./helpers.mjs";
+import { fixture, hexToF64 } from "./helpers.mjs";
 
 const CORE_FIXTURES = fileURLToPath(new URL("./fixtures", import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
