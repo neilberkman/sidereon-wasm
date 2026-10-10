@@ -234,7 +234,7 @@ fn missing_egm96_dac_error(path: String) -> JsValue {
     value
 }
 
-fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
+fn terrain_store_error_detail(error: CoreTerrainStoreError) -> TerrainStoreErrorDetail {
     let message = error.to_string();
     let mut detail = match error {
         CoreTerrainStoreError::Io { path, message: _ } => {
@@ -342,7 +342,12 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
         }
     };
     detail.message = message.clone();
-    typed_error(detail.name, message, &detail)
+    detail
+}
+
+fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
+    let detail = terrain_store_error_detail(error);
+    typed_error(detail.name, detail.message.clone(), &detail)
 }
 
 fn terrain_datum_error(error: CoreTerrainDatumError) -> JsValue {
@@ -1024,5 +1029,56 @@ impl MmapTerrain {
     #[wasm_bindgen(js_name = toBytes)]
     pub fn to_bytes(&self) -> Vec<u8> {
         self.inner.to_bytes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sidereon_core::terrain::DtedTileError;
+    use sidereon_core::terrain_store::TerrainTileId;
+
+    #[test]
+    fn terrain_store_tile_error_preserves_path_and_typed_cause() {
+        let detail = terrain_store_error_detail(CoreTerrainStoreError::Tile {
+            path: "w123/n45.dt2".into(),
+            error: Box::new(DtedTileError::TooShort {
+                path: "w123/n45.dt2".into(),
+            }),
+        });
+        assert_eq!(detail.name, "Tile");
+        assert_eq!(detail.path.as_deref(), Some("w123/n45.dt2"));
+        assert_eq!(
+            detail.error,
+            Some(serde_json::json!({
+                "kind": "tooShort",
+                "path": "w123/n45.dt2",
+            }))
+        );
+    }
+
+    #[test]
+    fn terrain_store_tile_id_mismatch_preserves_both_ids() {
+        let detail = terrain_store_error_detail(CoreTerrainStoreError::TileIdMismatch {
+            path: "w123/n45.dt2".into(),
+            expected: TerrainTileId {
+                lat_index: 45,
+                lon_index: -123,
+            },
+            found: TerrainTileId {
+                lat_index: 46,
+                lon_index: -122,
+            },
+        });
+        assert_eq!(detail.name, "TileIdMismatch");
+        assert_eq!(detail.path.as_deref(), Some("w123/n45.dt2"));
+        assert_eq!(
+            detail.expected,
+            Some(serde_json::json!({"latIndex": 45, "lonIndex": -123}))
+        );
+        assert_eq!(
+            detail.found,
+            Some(serde_json::json!({"latIndex": 46, "lonIndex": -122}))
+        );
     }
 }

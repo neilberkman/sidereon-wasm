@@ -415,8 +415,8 @@ fn build_solve_inputs(req: &SppRequest) -> Result<(SolveInputs, bool), JsValue> 
         day_of_year: req.day_of_year,
         initial_guess: req.initial_guess,
         corrections: Corrections {
-            ionosphere: req.corrections.ionosphere,
-            troposphere: req.corrections.troposphere,
+            ionosphere: req.corrections.ionosphere.unwrap_or(false),
+            troposphere: req.corrections.troposphere.unwrap_or(false),
         },
         klobuchar: KlobucharCoeffs {
             alpha: req.klobuchar.alpha,
@@ -533,10 +533,8 @@ pub fn solve_spp_with_ssr_exact_epoch_js(
     allow_regional_provider: JsValue,
     validity: Option<String>,
 ) -> Result<SppSolution, JsValue> {
-    let allow_regional_provider = crate::ssr::optional_regional_provider(
-        allow_regional_provider,
-        "allowRegionalProvider",
-    )?;
+    let allow_regional_provider =
+        crate::ssr::optional_regional_provider(allow_regional_provider, "allowRegionalProvider")?;
     let req: SppRequest = serde_wasm_bindgen::from_value(request)
         .map_err(|error| type_error(&format!("invalid SPP request: {error}")))?;
     let (inputs, with_geodetic) = build_solve_inputs(&req)?;
