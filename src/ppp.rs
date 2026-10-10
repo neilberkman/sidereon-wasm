@@ -622,9 +622,14 @@ pub fn solve_ppp_float_with_ssr(
     initial_state: JsValue,
     config: JsValue,
     fallback_to_broadcast: Option<bool>,
-    allow_regional_provider: Option<u16>,
+    #[wasm_bindgen(unchecked_param_type = "number | null | undefined")]
+    allow_regional_provider: JsValue,
     validity: Option<String>,
 ) -> Result<PppFloatSolution, JsValue> {
+    let allow_regional_provider = crate::ssr::optional_regional_provider(
+        allow_regional_provider,
+        "allowRegionalProvider",
+    )?;
     let epochs: Vec<EpochInput> = serde_wasm_bindgen::from_value(epochs)
         .map_err(|error| type_error(&format!("invalid PPP epochs: {error}")))?;
     let state: StateInput = serde_wasm_bindgen::from_value(initial_state)
@@ -705,9 +710,14 @@ pub fn solve_ppp_fixed_with_ssr(
     float_solution: &PppFloatSolution,
     config: JsValue,
     fallback_to_broadcast: Option<bool>,
-    allow_regional_provider: Option<u16>,
+    #[wasm_bindgen(unchecked_param_type = "number | null | undefined")]
+    allow_regional_provider: JsValue,
     validity: Option<String>,
 ) -> Result<PppFixedSolution, JsValue> {
+    let allow_regional_provider = crate::ssr::optional_regional_provider(
+        allow_regional_provider,
+        "allowRegionalProvider",
+    )?;
     let epochs: Vec<EpochInput> = serde_wasm_bindgen::from_value(epochs)
         .map_err(|error| type_error(&format!("invalid PPP epochs: {error}")))?;
     let config: FixedConfigInput = serde_wasm_bindgen::from_value(config)

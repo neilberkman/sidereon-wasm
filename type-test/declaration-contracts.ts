@@ -2427,6 +2427,24 @@ type _NodeRinexBatchErrorDetail = Assert<
     NodeBindings.PositioningErrorDetail | undefined
   >
 >;
+type _WebSsrSelectedPositionClock = Assert<
+  Equal<
+    ReturnType<WebBindings.SsrCorrectedEphemeris["selectedPositionClockAtQueries"]>,
+    WebBindings.Ut1Validated<WebBindings.SelectedPositionClock> | null
+  >
+>;
+type _NodeSsrTransmitEpochClock = Assert<
+  Equal<
+    ReturnType<NodeBindings.SsrCorrectedEphemeris["transmitEpochClockAtQueries"]>,
+    NodeBindings.Ut1Validated<number> | null
+  >
+>;
+type _WebSsrClockRelativity = Assert<
+  Equal<
+    ReturnType<WebBindings.SsrCorrectedEphemeris["clockRelativityAtQuery"]>,
+    WebBindings.ClockRelativity
+  >
+>;
 type _WebPositioningErrorKinds = Assert<
   Equal<
     WebBindings.PositioningErrorDetail["kind"],

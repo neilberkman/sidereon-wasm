@@ -116,12 +116,13 @@ struct DopplerObservationInput {
     sat_clock_drift_s_s: f64,
 }
 
-/// Boolean correction switches. Both default off.
+/// Boolean correction switches. Omitted switches retain the core RINEX SPP
+/// defaults; an explicitly supplied `false` disables that correction.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct CorrectionsInput {
-    ionosphere: bool,
-    troposphere: bool,
+    ionosphere: Option<bool>,
+    troposphere: Option<bool>,
 }
 
 /// GPS Klobuchar ionosphere coefficients.
@@ -528,9 +529,14 @@ pub fn solve_spp_with_ssr_exact_epoch_js(
     request: JsValue,
     receive_epoch: &ExactEpochValue,
     fallback_to_broadcast: Option<bool>,
-    allow_regional_provider: Option<u16>,
+    #[wasm_bindgen(unchecked_param_type = "number | null | undefined")]
+    allow_regional_provider: JsValue,
     validity: Option<String>,
 ) -> Result<SppSolution, JsValue> {
+    let allow_regional_provider = crate::ssr::optional_regional_provider(
+        allow_regional_provider,
+        "allowRegionalProvider",
+    )?;
     let req: SppRequest = serde_wasm_bindgen::from_value(request)
         .map_err(|error| type_error(&format!("invalid SPP request: {error}")))?;
     let (inputs, with_geodetic) = build_solve_inputs(&req)?;
@@ -617,7 +623,7 @@ struct SppBatchOptions {
 #[serde(rename_all = "camelCase", default)]
 struct RinexSppOptionsInput {
     signal_policy: Option<BTreeMap<String, Vec<String>>>,
-    corrections: CorrectionsInput,
+    corrections: Option<CorrectionsInput>,
     initial_guess: Option<[f64; 4]>,
     satellites: Option<Vec<String>>,
     met: SurfaceMetInput,
@@ -655,11 +661,14 @@ impl RinexSppOptionsInput {
     }
 
     fn to_core(&self, obs: &RinexObs) -> Result<CoreRinexSppOptions, JsValue> {
-        let mut options =
-            CoreRinexSppOptions::new(self.signal_policy(obs)?).with_corrections(Corrections {
-                ionosphere: self.corrections.ionosphere,
-                troposphere: self.corrections.troposphere,
+        let mut options = CoreRinexSppOptions::new(self.signal_policy(obs)?);
+        if let Some(corrections) = &self.corrections {
+            let defaults = options.corrections;
+            options = options.with_corrections(Corrections {
+                ionosphere: corrections.ionosphere.unwrap_or(defaults.ionosphere),
+                troposphere: corrections.troposphere.unwrap_or(defaults.troposphere),
             });
+        }
         if let Some(initial_guess) = self.initial_guess {
             options = options.with_initial_guess(initial_guess);
         }
