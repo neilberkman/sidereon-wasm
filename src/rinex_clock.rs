@@ -1753,9 +1753,10 @@ export type RinexClockRecordReading =
   | "edited"
   | (string & {});
 
-export type RinexClockRecordReadingDetail =
-  | { kind: "columnsTrailingText"; layout: "v300" | "v304" }
-  | { kind: string };
+export type RinexClockRecordReadingDetail = {
+  kind: "columnsTrailingText";
+  layout: "v300" | "v304";
+};
 
 /**
  * One data record. `values` are the declared values, bias first;
