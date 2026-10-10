@@ -106,31 +106,31 @@ fn record_type_code(record_type: ClockRecordType) -> &'static str {
 }
 
 #[derive(Serialize)]
-#[serde(untagged)]
-enum RecordReadingJs {
-    Label(Label),
-    TrailingText {
-        kind: &'static str,
-        layout: &'static str,
-    },
+#[serde(tag = "kind")]
+enum RecordReadingDetailJs {
+    #[serde(rename = "columnsTrailingText")]
+    ColumnsTrailingText { layout: &'static str },
 }
 
-fn record_reading_js(reading: ClockRecordReading) -> RecordReadingJs {
-    match reading {
-        ClockRecordReading::Columns(ClockLayout::V300) => {
-            RecordReadingJs::Label(Label::Borrowed("columnsV300"))
-        }
-        ClockRecordReading::Columns(ClockLayout::V304) => {
-            RecordReadingJs::Label(Label::Borrowed("columnsV304"))
-        }
-        ClockRecordReading::Whitespace => RecordReadingJs::Label(Label::Borrowed("whitespace")),
-        ClockRecordReading::ColumnsTrailingText(layout) => RecordReadingJs::TrailingText {
-            kind: "columnsTrailingText",
-            layout: layout_label(layout),
-        },
-        ClockRecordReading::Edited => RecordReadingJs::Label(Label::Borrowed("edited")),
+fn record_reading_label(reading: ClockRecordReading) -> Label {
+    Label::Borrowed(match reading {
+        ClockRecordReading::Columns(ClockLayout::V300) => "columnsV300",
+        ClockRecordReading::Columns(ClockLayout::V304) => "columnsV304",
+        ClockRecordReading::Whitespace => "whitespace",
+        ClockRecordReading::Edited => "edited",
         // `ClockRecordReading` is `#[non_exhaustive]`.
-        other => RecordReadingJs::Label(lower_camel_variant(&other)),
+        other => return lower_camel_variant(&other),
+    })
+}
+
+fn record_reading_detail(reading: ClockRecordReading) -> Option<RecordReadingDetailJs> {
+    match reading {
+        ClockRecordReading::ColumnsTrailingText(layout) => {
+            Some(RecordReadingDetailJs::ColumnsTrailingText {
+                layout: layout_label(layout),
+            })
+        }
+        _ => None,
     }
 }
 
@@ -535,8 +535,10 @@ struct RecordJs {
     surplus_values: Vec<SurplusValueJs>,
     line: Option<usize>,
     line_count: usize,
-    reading: RecordReadingJs,
-    continuation_reading: Option<RecordReadingJs>,
+    reading: Label,
+    reading_detail: Option<RecordReadingDetailJs>,
+    continuation_reading: Option<Label>,
+    continuation_reading_detail: Option<RecordReadingDetailJs>,
     source_lines: Vec<String>,
 }
 
@@ -566,8 +568,12 @@ fn record_js(clock: &CoreRinexClock, index: usize, record: &CoreClockRecord) -> 
             .collect(),
         line: record.line(),
         line_count: record.line_count(),
-        reading: record_reading_js(record.reading()),
-        continuation_reading: record.continuation_reading().map(record_reading_js),
+        reading: record_reading_label(record.reading()),
+        reading_detail: record_reading_detail(record.reading()),
+        continuation_reading: record.continuation_reading().map(record_reading_label),
+        continuation_reading_detail: record
+            .continuation_reading()
+            .and_then(record_reading_detail),
         source_lines,
     }
 }
@@ -1745,8 +1751,11 @@ export type RinexClockRecordReading =
   | "columnsV304"
   | "whitespace"
   | "edited"
-  | { kind: "columnsTrailingText"; layout: "v300" | "v304" }
   | (string & {});
+
+export type RinexClockRecordReadingDetail =
+  | { kind: "columnsTrailingText"; layout: "v300" | "v304" }
+  | { kind: string };
 
 /**
  * One data record. `values` are the declared values, bias first;
@@ -1768,7 +1777,9 @@ export interface RinexClockRecord {
   line: number | null;
   lineCount: number;
   reading: RinexClockRecordReading;
+  readingDetail: RinexClockRecordReadingDetail | null;
   continuationReading: RinexClockRecordReading | null;
+  continuationReadingDetail: RinexClockRecordReadingDetail | null;
   sourceLines: string[];
 }
 

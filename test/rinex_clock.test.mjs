@@ -131,7 +131,9 @@ test("trailing-text records preserve their notice counts and column layout", () 
   assert.equal(notice.records, 1);
   assert.equal(notice.firstLine, index + 1);
   assert.match(notice.message, /text after their last column/i);
-  assert.deepEqual(clock.records().find((record) => record.line === index + 1).reading, {
+  const record = clock.records().find((entry) => entry.line === index + 1);
+  assert.equal(record.reading, "columnsTrailingText");
+  assert.deepEqual(record.readingDetail, {
     kind: "columnsTrailingText",
     layout: "v300",
   });
