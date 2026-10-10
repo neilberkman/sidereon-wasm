@@ -19,8 +19,8 @@ crate-type = ["cdylib", "rlib"]
 # look_angle_arc), never the rayon `*_parallel` variants, so no thread pool is
 # spawned under wasm32. The engine facade and core share one reviewed Git
 # revision; the standalone trust-region binding retains its exact registry pin.
-sidereon = { git = "https://github.com/neilberkman/sidereon", rev = "2025d853d9cb08cb1367166fa09e594bec6aa7f6" }
-sidereon-core = { git = "https://github.com/neilberkman/sidereon", rev = "2025d853d9cb08cb1367166fa09e594bec6aa7f6" }
+sidereon = { version = "=3.0.2", git = "https://github.com/neilberkman/sidereon", rev = "2025d853d9cb08cb1367166fa09e594bec6aa7f6" }
+sidereon-core = { version = "=3.0.2", git = "https://github.com/neilberkman/sidereon", rev = "2025d853d9cb08cb1367166fa09e594bec6aa7f6" }
 trust-region-least-squares = { version = "=0.11.0" }
 wasm-bindgen = "0.2"
 # Typed access to the JS Error / TypeError / RangeError constructors so failures
