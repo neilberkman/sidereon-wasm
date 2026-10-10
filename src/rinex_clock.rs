@@ -105,15 +105,33 @@ fn record_type_code(record_type: ClockRecordType) -> &'static str {
     record_type.code()
 }
 
-fn record_reading_label(reading: ClockRecordReading) -> Label {
-    Label::Borrowed(match reading {
-        ClockRecordReading::Columns(ClockLayout::V300) => "columnsV300",
-        ClockRecordReading::Columns(ClockLayout::V304) => "columnsV304",
-        ClockRecordReading::Whitespace => "whitespace",
-        ClockRecordReading::Edited => "edited",
+#[derive(Serialize)]
+#[serde(untagged)]
+enum RecordReadingJs {
+    Label(Label),
+    TrailingText {
+        kind: &'static str,
+        layout: &'static str,
+    },
+}
+
+fn record_reading_js(reading: ClockRecordReading) -> RecordReadingJs {
+    match reading {
+        ClockRecordReading::Columns(ClockLayout::V300) => {
+            RecordReadingJs::Label(Label::Borrowed("columnsV300"))
+        }
+        ClockRecordReading::Columns(ClockLayout::V304) => {
+            RecordReadingJs::Label(Label::Borrowed("columnsV304"))
+        }
+        ClockRecordReading::Whitespace => RecordReadingJs::Label(Label::Borrowed("whitespace")),
+        ClockRecordReading::ColumnsTrailingText(layout) => RecordReadingJs::TrailingText {
+            kind: "columnsTrailingText",
+            layout: layout_label(layout),
+        },
+        ClockRecordReading::Edited => RecordReadingJs::Label(Label::Borrowed("edited")),
         // `ClockRecordReading` is `#[non_exhaustive]`.
-        other => return lower_camel_variant(&other),
-    })
+        other => RecordReadingJs::Label(lower_camel_variant(&other)),
+    }
 }
 
 fn header_reading_label(reading: ClockHeaderReading) -> Label {
@@ -517,8 +535,8 @@ struct RecordJs {
     surplus_values: Vec<SurplusValueJs>,
     line: Option<usize>,
     line_count: usize,
-    reading: Label,
-    continuation_reading: Option<Label>,
+    reading: RecordReadingJs,
+    continuation_reading: Option<RecordReadingJs>,
     source_lines: Vec<String>,
 }
 
@@ -548,8 +566,8 @@ fn record_js(clock: &CoreRinexClock, index: usize, record: &CoreClockRecord) -> 
             .collect(),
         line: record.line(),
         line_count: record.line_count(),
-        reading: record_reading_label(record.reading()),
-        continuation_reading: record.continuation_reading().map(record_reading_label),
+        reading: record_reading_js(record.reading()),
+        continuation_reading: record.continuation_reading().map(record_reading_js),
         source_lines,
     }
 }
@@ -624,6 +642,12 @@ enum NoticeJs {
         first_line: usize,
         message: String,
     },
+    #[serde(rename = "TRAILING_TEXT_RECORDS", rename_all = "camelCase")]
+    TrailingTextRecords {
+        records: usize,
+        first_line: usize,
+        message: String,
+    },
     #[serde(rename = "UNKNOWN", rename_all = "camelCase")]
     Unknown { message: String },
 }
@@ -677,6 +701,14 @@ impl From<&RinexClockNotice> for NoticeJs {
                 records,
                 first_line,
             } => Self::WhitespaceRecords {
+                records: *records,
+                first_line: *first_line,
+                message,
+            },
+            RinexClockNotice::TrailingTextRecords {
+                records,
+                first_line,
+            } => Self::TrailingTextRecords {
                 records: *records,
                 first_line: *first_line,
                 message,
@@ -1713,6 +1745,7 @@ export type RinexClockRecordReading =
   | "columnsV304"
   | "whitespace"
   | "edited"
+  | { kind: "columnsTrailingText"; layout: "v300" | "v304" }
   | (string & {});
 
 /**
@@ -1781,6 +1814,7 @@ export type RinexClockNotice =
   | { kind: "SURPLUS_VALUES"; records: number; firstLine: number; message: string }
   | { kind: "OTHER_LAYOUT_RECORDS"; records: number; firstLine: number; message: string }
   | { kind: "WHITESPACE_RECORDS"; records: number; firstLine: number; message: string }
+  | { kind: "TRAILING_TEXT_RECORDS"; records: number; firstLine: number; message: string }
   | { kind: "UNKNOWN"; message: string };
 
 /** A departure the writer emitted under a write policy. */

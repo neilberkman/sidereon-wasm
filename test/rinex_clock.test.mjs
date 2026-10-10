@@ -119,6 +119,24 @@ test("the receiver record is kept, reported as skipped and read", () => {
   assert.equal(clock.sourceLine(100), undefined);
 });
 
+test("trailing-text records preserve their notice counts and column layout", () => {
+  const source = fixture(CLK).toString("utf8");
+  const lines = source.split("\n");
+  const index = lines.findIndex((line) => line.startsWith("AS "));
+  assert.notEqual(index, -1);
+  lines[index] = lines[index].padEnd(80) + " trailing";
+
+  const clock = parseRinexClock(bytes(lines.join("\n")));
+  const notice = clock.notices.find((entry) => entry.kind === "TRAILING_TEXT_RECORDS");
+  assert.equal(notice.records, 1);
+  assert.equal(notice.firstLine, index + 1);
+  assert.match(notice.message, /text after their last column/i);
+  assert.deepEqual(clock.records().find((record) => record.line === index + 1).reading, {
+    kind: "columnsTrailingText",
+    layout: "v300",
+  });
+});
+
 test("load accepts bytes", () => {
   assert.equal(loadRinexClock(fixture(CLK)).sampleCount, 5);
   assert.deepEqual(loadRinexClock(fixture(CLK)).satellites, ["G05", "G24"]);
