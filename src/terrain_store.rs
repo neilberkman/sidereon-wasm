@@ -106,9 +106,9 @@ struct TerrainStoreErrorDetail {
     #[serde(skip_serializing_if = "Option::is_none")]
     lon_index: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    expected: Option<String>,
+    expected: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    found: Option<String>,
+    found: Option<serde_json::Value>,
     /// Index field whose value disagrees with the tile id, for
     /// `TileBoundsMismatch`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -259,8 +259,14 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
         } => {
             let mut detail = TerrainStoreErrorDetail::new("TileIdMismatch", message.clone());
             detail.path = Some(path.display().to_string());
-            detail.expected = Some(format!("{},{}", expected.lat_index, expected.lon_index));
-            detail.found = Some(format!("{},{}", found.lat_index, found.lon_index));
+            detail.expected = Some(serde_json::json!({
+                "latIndex": expected.lat_index,
+                "lonIndex": expected.lon_index,
+            }));
+            detail.found = Some(serde_json::json!({
+                "latIndex": found.lat_index,
+                "lonIndex": found.lon_index,
+            }));
             detail
         }
         CoreTerrainStoreError::UnsupportedDatum { tag } => {
@@ -286,15 +292,15 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
             let mut detail = TerrainStoreErrorDetail::new("Checksum", message.clone());
             detail.lat_index = Some(lat_index);
             detail.lon_index = Some(lon_index);
-            detail.expected = Some(format!("{expected:#x}"));
-            detail.found = Some(format!("{found:#x}"));
+            detail.expected = Some(serde_json::Value::String(format!("{expected:#x}")));
+            detail.found = Some(serde_json::Value::String(format!("{found:#x}")));
             detail
         }
         CoreTerrainStoreError::AttestedChecksumMismatch { expected, found } => {
             let mut detail =
                 TerrainStoreErrorDetail::new("AttestedChecksumMismatch", message.clone());
-            detail.expected = Some(format!("{expected:#x}"));
-            detail.found = Some(format!("{found:#x}"));
+            detail.expected = Some(serde_json::Value::String(format!("{expected:#x}")));
+            detail.found = Some(serde_json::Value::String(format!("{found:#x}")));
             detail
         }
         CoreTerrainStoreError::TileIdOutOfRange {
