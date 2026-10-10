@@ -101,9 +101,11 @@ test("lnavDecode round-trips the encoded parameters", () => {
 
 test("lnavTow and lnavSubframeId read the HOW of each subframe", () => {
   const sf = lnavEncode(PARAMS, OPTIONS);
+  // `options.tow` is the exact HOW count encoded into each independently
+  // returned subframe; callers advance it when constructing a time sequence.
   assert.equal(lnavTow(sf.subframe1), 100n);
-  assert.equal(lnavTow(sf.subframe2), 101n);
-  assert.equal(lnavTow(sf.subframe3), 102n);
+  assert.equal(lnavTow(sf.subframe2), 100n);
+  assert.equal(lnavTow(sf.subframe3), 100n);
   assert.equal(lnavSubframeId(sf.subframe1), 1n);
   assert.equal(lnavSubframeId(sf.subframe2), 2n);
   assert.equal(lnavSubframeId(sf.subframe3), 3n);
