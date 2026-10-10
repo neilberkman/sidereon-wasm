@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 
-import { initSync, productIdentity } from "../pkg/sidereon.js";
+import { DtedTerrain, initSync, productIdentity } from "../pkg/sidereon.js";
 import {
   BrowserExactProductCache,
   ExactCacheSingleFlightOptionsError,
@@ -84,6 +84,16 @@ function exactCacheFixture() {
     provenance: new TextEncoder().encode('{"source":"direct"}'),
   };
 }
+
+test("browser DTED filesystem roots report the supported byte-backed route", () => {
+  assert.throws(
+    () => new DtedTerrain("/tiles"),
+    (error) =>
+      error.name === "TypeError" &&
+      /filesystem roots are unsupported in WebAssembly/.test(error.message) &&
+      /MmapTerrain\.fromBytes/.test(error.message),
+  );
+});
 
 test("browser cache coordinates one acquisition and rejects stored-byte corruption", async () => {
   const name = `sidereon-exact-cache-test-${process.pid}-${Date.now()}`;

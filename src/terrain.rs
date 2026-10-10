@@ -194,7 +194,9 @@ fn interpolation(value: Option<&str>) -> Result<DtedInterpolation, JsValue> {
 /// A DTED terrain tile cache rooted at a directory of DTED Level 2 files.
 ///
 /// Heights are ORTHOMETRIC terrain elevations in meters. Point order is always
-/// longitude first, then latitude, both in degrees.
+/// longitude first, then latitude, both in degrees. WebAssembly has no host
+/// filesystem, so construction is rejected explicitly; use
+/// `MmapTerrain.fromBytes` with fetched or Node-read terrain-store bytes.
 pub struct DtedTerrain {
     inner: CoreDtedTerrain,
 }
@@ -203,13 +205,14 @@ pub struct DtedTerrain {
 impl DtedTerrain {
     /// Create a DTED terrain reader rooted at `root`.
     ///
-    /// The root may contain tile files directly or the nested block layout the
-    /// core reader recognizes. Height results are ORTHOMETRIC meters.
+    /// WebAssembly cannot access a host filesystem root. This constructor
+    /// throws a `TypeError` instead of silently treating every tile as missing.
+    /// Load a canonical terrain store with `MmapTerrain.fromBytes` instead.
     #[wasm_bindgen(constructor)]
-    pub fn new(root: &str) -> DtedTerrain {
-        DtedTerrain {
-            inner: CoreDtedTerrain::new(root),
-        }
+    pub fn new(_root: &str) -> Result<DtedTerrain, JsValue> {
+        Err(type_error(
+            "DtedTerrain filesystem roots are unsupported in WebAssembly; read terrain-store bytes in the host and use MmapTerrain.fromBytes",
+        ))
     }
 
     /// Terrain height in ORTHOMETRIC meters at `(longitudeDeg, latitudeDeg)`.

@@ -120,6 +120,26 @@ test("solvePppAutoInitFloat honours an explicit initial guess", () => {
   assertVecClose(sol.positionM, fx.expected.position_m, POS_TOL, "guess float position");
 });
 
+test("PPP auto-init honors enabled SPP meteorology validation", () => {
+  assert.throws(
+    () =>
+      solvePppAutoInitFloat(
+        sp3,
+        epochs,
+        {
+          sppTroposphere: true,
+          sppMet: {
+            pressureHpa: -1,
+            temperatureK: 288.15,
+            relativeHumidity: 0.5,
+          },
+        },
+        floatConfig,
+      ),
+    /pressure|meteorology/i,
+  );
+});
+
 test("solvePppAutoInitFixed (SPP seed) matches the engine fixed reference", () => {
   const sol = solvePppAutoInitFixed(sp3, epochs, undefined, floatConfig, fixedConfig);
   assertVecClose(sol.positionM, fx.expected.fixed_position_m, POS_TOL, "auto fixed position");

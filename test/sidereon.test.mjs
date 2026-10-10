@@ -187,6 +187,11 @@ test("solveSpp reproduces the engine reference solution", async () => {
   };
 
   const sol = sp3.solveSpp(request);
+  const requestWithOmittedCorrections = { ...request };
+  delete requestWithOmittedCorrections.corrections;
+  const omittedCorrections = sp3.solveSpp(requestWithOmittedCorrections);
+  assert.deepEqual(omittedCorrections.positionM, sol.positionM);
+  assert.equal(omittedCorrections.clockBiasM, sol.clockBiasM);
 
   // The trace's independent solve leaves out the precise-clock relativistic
   // term -2 r.v / c^2 that positioning applies (RTKLIB peph2pos), so its

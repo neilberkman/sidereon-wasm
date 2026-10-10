@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- Preserves the core RINEX SPP ionosphere and troposphere defaults when `corrections` or either switch is omitted, while explicit `false` still disables that correction. Generic SPP requests retain their default-off behavior.
+- Rejects non-finite, fractional, negative, and overflowing SSR regional-provider identifiers instead of narrowing them to another `u16` value. Corrected-ephemeris methods now retain their existing structural TypeScript result types.
+- Preserves RINEX clock trailing-text notice counts and first-line numbers. Record readings keep their published string labels and add `readingDetail` and `continuationReadingDetail` for the trailing-text column layout.
+- Preserves `TerrainStoreError` tile parsing causes and both tile identifiers for mismatches. The appended `Tile` enum member leaves existing numeric discriminants unchanged.
+- Makes `DtedTerrain` construction fail explicitly because WebAssembly cannot read a filesystem root, instead of reporting valid tiles as missing terrain. Load host-read terrain-store bytes with `MmapTerrain.fromBytes`.
+
 ## 3.0.2 - 2026-10-05
 
 ### Fixed

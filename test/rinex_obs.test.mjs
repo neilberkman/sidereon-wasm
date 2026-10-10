@@ -330,6 +330,18 @@ test("RINEX OBS convenience assembles and solves SPP through broadcast NAV", () 
   assert.equal(inputs[0].qzssClock, "separate");
   assert.equal(inputs[0].troposphereModel, "saastamoinenNiell");
 
+  for (const options of [undefined, null, {}, { corrections: null }, { corrections: {} }]) {
+    const defaults = sppInputsFromRinexObs(nav, obs, options);
+    assert.deepEqual(defaults[0].corrections, { ionosphere: true, troposphere: true });
+  }
+  const partiallyDisabled = sppInputsFromRinexObs(nav, obs, {
+    corrections: { ionosphere: false },
+  });
+  assert.deepEqual(partiallyDisabled[0].corrections, {
+    ionosphere: false,
+    troposphere: true,
+  });
+
   const batch = solveSppFromRinexObs(nav, obs, rinexOptions, { withGeodetic: true });
   assert.equal(batch.count, 2);
   assert.equal(batch.epochIndex(0), 0);

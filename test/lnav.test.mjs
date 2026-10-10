@@ -101,12 +101,28 @@ test("lnavDecode round-trips the encoded parameters", () => {
 
 test("lnavTow and lnavSubframeId read the HOW of each subframe", () => {
   const sf = lnavEncode(PARAMS, OPTIONS);
+  // `options.tow` is the exact HOW count encoded into each independently
+  // returned subframe; callers advance it when constructing a time sequence.
   assert.equal(lnavTow(sf.subframe1), 100n);
+  assert.equal(lnavTow(sf.subframe2), 100n);
+  assert.equal(lnavTow(sf.subframe3), 100n);
   assert.equal(lnavSubframeId(sf.subframe1), 1n);
   assert.equal(lnavSubframeId(sf.subframe2), 2n);
   assert.equal(lnavSubframeId(sf.subframe3), 3n);
   // A buffer of an unsupported length yields undefined.
   assert.equal(lnavTow(Uint8Array.from([0, 1, 0])), undefined);
+});
+
+test("full-subframe HOW helpers remove the preceding TLM parity complement", () => {
+  const tow = 54_321;
+  const sf = lnavEncode(PARAMS, { ...OPTIONS, tow, integrity: 1 });
+  const transmittedHow = sf.subframe1.slice(30, 60);
+
+  assert.equal(sf.subframe1[29], 1);
+  assert.equal(lnavTow(sf.subframe1), BigInt(tow));
+  assert.equal(lnavSubframeId(sf.subframe1), 1n);
+  assert.equal(lnavTow(transmittedHow), BigInt(0x1ffff ^ tow));
+  assert.equal(lnavSubframeId(transmittedHow), BigInt(0b111 ^ 1));
 });
 
 test("the encoded HOW word passes the parity check", () => {

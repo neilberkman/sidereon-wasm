@@ -82,6 +82,7 @@ jobs:
       - name: Run structured core-error mapper tests
         run: |
           cargo test --locked --lib core_error::tests
+          cargo test --locked --lib terrain_store::tests
           test_log="$(mktemp)"
           trap 'rm -f "$test_log"' EXIT
           cargo test --locked --lib positioning_error::rinex_spp_detail_tests::observation_parse_error_keeps_complete_nested_detail_and_messages -- --exact | tee "$test_log"
