@@ -231,6 +231,7 @@ export type {
   RinexClockRecord,
   RinexClockRecordInput,
   RinexClockRecordReading,
+  RinexClockRecordReadingDetail,
   RinexClockSeriesRowInput,
   RinexClockSkip,
   RinexClockTimeSystemStatus,
