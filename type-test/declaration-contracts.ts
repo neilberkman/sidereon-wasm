@@ -1710,6 +1710,8 @@ type RinexClockHeaderRecord = import("../types/sidereon-extra.js").RinexClockHea
 type RinexClockInstant = import("../types/sidereon-extra.js").RinexClockInstant;
 type RinexClockNotice = import("../types/sidereon-extra.js").RinexClockNotice;
 type RinexClockRecord = import("../types/sidereon-extra.js").RinexClockRecord;
+type RinexClockRecordReadingDetail =
+  import("../types/sidereon-extra.js").RinexClockRecordReadingDetail;
 type RinexClockSkip = import("../types/sidereon-extra.js").RinexClockSkip;
 type RinexClockTimeSystemStatus = import("../types/sidereon-extra.js").RinexClockTimeSystemStatus;
 type RinexClockWriteDeparture = import("../types/sidereon-extra.js").RinexClockWriteDeparture;
@@ -1798,6 +1800,9 @@ function compileOnlyRinexClockContracts(
   const lines: string[] = record.sourceLines;
   const surplus: { position: number; value: number }[] = record.surplusValues;
   const line: number | null = record.line;
+  const readingDetail: RinexClockRecordReadingDetail | null = record.readingDetail;
+  const continuationReadingDetail: RinexClockRecordReadingDetail | null =
+    record.continuationReadingDetail;
 
   if (status.kind === "CONFLICTING") {
     const labels: string[] = status.labels;
@@ -1854,6 +1859,8 @@ function compileOnlyRinexClockContracts(
   void lines;
   void surplus;
   void line;
+  void readingDetail;
+  void continuationReadingDetail;
 }
 
 function compileOnlyAntexContracts(antex: WebBindings.Antex, detail: AntexErrorDetail) {
