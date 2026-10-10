@@ -105,6 +105,13 @@ fn record_type_code(record_type: ClockRecordType) -> &'static str {
     record_type.code()
 }
 
+#[derive(Serialize)]
+#[serde(tag = "kind")]
+enum RecordReadingDetailJs {
+    #[serde(rename = "columnsTrailingText")]
+    ColumnsTrailingText { layout: &'static str },
+}
+
 fn record_reading_label(reading: ClockRecordReading) -> Label {
     Label::Borrowed(match reading {
         ClockRecordReading::Columns(ClockLayout::V300) => "columnsV300",
@@ -114,6 +121,17 @@ fn record_reading_label(reading: ClockRecordReading) -> Label {
         // `ClockRecordReading` is `#[non_exhaustive]`.
         other => return lower_camel_variant(&other),
     })
+}
+
+fn record_reading_detail(reading: ClockRecordReading) -> Option<RecordReadingDetailJs> {
+    match reading {
+        ClockRecordReading::ColumnsTrailingText(layout) => {
+            Some(RecordReadingDetailJs::ColumnsTrailingText {
+                layout: layout_label(layout),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn header_reading_label(reading: ClockHeaderReading) -> Label {
@@ -518,7 +536,9 @@ struct RecordJs {
     line: Option<usize>,
     line_count: usize,
     reading: Label,
+    reading_detail: Option<RecordReadingDetailJs>,
     continuation_reading: Option<Label>,
+    continuation_reading_detail: Option<RecordReadingDetailJs>,
     source_lines: Vec<String>,
 }
 
@@ -549,7 +569,11 @@ fn record_js(clock: &CoreRinexClock, index: usize, record: &CoreClockRecord) -> 
         line: record.line(),
         line_count: record.line_count(),
         reading: record_reading_label(record.reading()),
+        reading_detail: record_reading_detail(record.reading()),
         continuation_reading: record.continuation_reading().map(record_reading_label),
+        continuation_reading_detail: record
+            .continuation_reading()
+            .and_then(record_reading_detail),
         source_lines,
     }
 }
@@ -624,6 +648,12 @@ enum NoticeJs {
         first_line: usize,
         message: String,
     },
+    #[serde(rename = "TRAILING_TEXT_RECORDS", rename_all = "camelCase")]
+    TrailingTextRecords {
+        records: usize,
+        first_line: usize,
+        message: String,
+    },
     #[serde(rename = "UNKNOWN", rename_all = "camelCase")]
     Unknown { message: String },
 }
@@ -677,6 +707,14 @@ impl From<&RinexClockNotice> for NoticeJs {
                 records,
                 first_line,
             } => Self::WhitespaceRecords {
+                records: *records,
+                first_line: *first_line,
+                message,
+            },
+            RinexClockNotice::TrailingTextRecords {
+                records,
+                first_line,
+            } => Self::TrailingTextRecords {
                 records: *records,
                 first_line: *first_line,
                 message,
@@ -1715,6 +1753,11 @@ export type RinexClockRecordReading =
   | "edited"
   | (string & {});
 
+export type RinexClockRecordReadingDetail = {
+  kind: "columnsTrailingText";
+  layout: "v300" | "v304";
+};
+
 /**
  * One data record. `values` are the declared values, bias first;
  * `surplusValues` are values beyond the declared count, each at its position
@@ -1735,7 +1778,9 @@ export interface RinexClockRecord {
   line: number | null;
   lineCount: number;
   reading: RinexClockRecordReading;
+  readingDetail: RinexClockRecordReadingDetail | null;
   continuationReading: RinexClockRecordReading | null;
+  continuationReadingDetail: RinexClockRecordReadingDetail | null;
   sourceLines: string[];
 }
 
@@ -1781,6 +1826,7 @@ export type RinexClockNotice =
   | { kind: "SURPLUS_VALUES"; records: number; firstLine: number; message: string }
   | { kind: "OTHER_LAYOUT_RECORDS"; records: number; firstLine: number; message: string }
   | { kind: "WHITESPACE_RECORDS"; records: number; firstLine: number; message: string }
+  | { kind: "TRAILING_TEXT_RECORDS"; records: number; firstLine: number; message: string }
   | { kind: "UNKNOWN"; message: string };
 
 /** A departure the writer emitted under a write policy. */

@@ -1010,9 +1010,12 @@ pub fn ssr_corrected_state(
     sat: &str,
     t_j2000_s: f64,
     fallback_to_broadcast: Option<bool>,
-    allow_regional_provider: Option<u16>,
+    #[wasm_bindgen(unchecked_param_type = "number | null | undefined")]
+    allow_regional_provider: JsValue,
     ut1_validity: Option<String>,
 ) -> Result<JsValue, JsValue> {
+    let allow_regional_provider =
+        optional_regional_provider(allow_regional_provider, "allowRegionalProvider")?;
     let sat = parse_sat(sat)?;
     let validity = match ut1_validity.as_deref() {
         None | Some("strict") => ValidityMode::Strict,
@@ -1073,9 +1076,12 @@ pub fn ssr_corrected_state_exact(
     epoch: &ExactEpochQueryValue,
     selection_epoch: &ExactEpochQueryValue,
     fallback_to_broadcast: Option<bool>,
-    allow_regional_provider: Option<u16>,
+    #[wasm_bindgen(unchecked_param_type = "number | null | undefined")]
+    allow_regional_provider: JsValue,
     ut1_validity: Option<String>,
 ) -> Result<JsValue, JsValue> {
+    let allow_regional_provider =
+        optional_regional_provider(allow_regional_provider, "allowRegionalProvider")?;
     let sat = parse_sat(sat)?;
     let validity = match ut1_validity.as_deref() {
         None | Some("strict") => ValidityMode::Strict,
@@ -1134,9 +1140,11 @@ fn exact_ssr_source<'a>(
     broadcast: &'a BroadcastEphemeris,
     store: &'a SsrCorrectionStore,
     fallback_to_broadcast: Option<bool>,
-    allow_regional_provider: Option<u16>,
+    allow_regional_provider: JsValue,
     validity: Option<String>,
 ) -> Result<CoreSsrCorrectedEphemeris<'a>, JsValue> {
+    let allow_regional_provider =
+        optional_regional_provider(allow_regional_provider, "allowRegionalProvider")?;
     let fallback = SsrFallbackPolicy {
         on_missing_correction: if fallback_to_broadcast.unwrap_or(false) {
             MissingCorrectionAction::FallBackToBroadcast
@@ -1168,7 +1176,8 @@ impl BroadcastEphemeris {
         state_epoch: &ExactEpochQueryValue,
         selection_epoch: &ExactEpochQueryValue,
         fallback_to_broadcast: Option<bool>,
-        allow_regional_provider: Option<u16>,
+        #[wasm_bindgen(unchecked_param_type = "number | null | undefined")]
+        allow_regional_provider: JsValue,
         validity: Option<String>,
     ) -> Result<f64, JsValue> {
         let satellite = parse_sat(satellite)?;
@@ -1198,7 +1207,8 @@ impl BroadcastEphemeris {
         state_epoch: &ExactEpochQueryValue,
         position_ecef_m: Vec<f64>,
         fallback_to_broadcast: Option<bool>,
-        allow_regional_provider: Option<u16>,
+        #[wasm_bindgen(unchecked_param_type = "number | null | undefined")]
+        allow_regional_provider: JsValue,
         validity: Option<String>,
     ) -> Result<JsValue, JsValue> {
         let satellite = parse_sat(satellite)?;
@@ -1259,6 +1269,29 @@ fn regional_providers(options: &JsValue) -> Result<Vec<u16>, JsValue> {
         Ok(provider as u16)
     }).collect()
 }
+
+/// Parse a single optional regional-provider id without wasm-bindgen's lossy
+/// JavaScript-number to `u16` coercion.
+pub(crate) fn optional_regional_provider(
+    value: JsValue,
+    argument: &str,
+) -> Result<Option<u16>, JsValue> {
+    if value.is_undefined() || value.is_null() {
+        return Ok(None);
+    }
+    let Some(provider) = value.as_f64() else {
+        return Err(type_error(&format!("{argument} must be a number")));
+    };
+    if !provider.is_finite()
+        || provider.fract() != 0.0
+        || !(0.0..=f64::from(u16::MAX)).contains(&provider)
+    {
+        return Err(type_error(&format!(
+            "{argument} must be an integer from 0 through 65535"
+        )));
+    }
+    Ok(Some(provider as u16))
+}
 fn optional_staleness(options: &JsValue) -> Result<Option<StalenessPolicy>, JsValue> {
     let value = source_option(options, "maxStalenessS")?;
     if value.is_undefined() || value.is_null() {
@@ -1290,6 +1323,7 @@ impl SsrCorrectedEphemeris {
     pub fn new(
         broadcast: &BroadcastEphemeris,
         store: &SsrCorrectionStore,
+        #[wasm_bindgen(unchecked_param_type = "SsrCorrectedEphemerisOptions | null | undefined")]
         options: Option<JsValue>,
     ) -> Result<SsrCorrectedEphemeris, JsValue> {
         let options = options.unwrap_or(JsValue::UNDEFINED);
@@ -1572,7 +1606,10 @@ impl SsrCorrectedEphemeris {
         )
     }
 
-    #[wasm_bindgen(js_name = selectedPositionClockAtQueries)]
+    #[wasm_bindgen(
+        js_name = selectedPositionClockAtQueries,
+        unchecked_return_type = "Ut1Validated<SelectedPositionClock> | null"
+    )]
     pub fn selected_position_clock_at_queries(
         &self,
         satellite: &str,
@@ -1586,7 +1623,10 @@ impl SsrCorrectedEphemeris {
             selection_epoch,
         )
     }
-    #[wasm_bindgen(js_name = transmitEpochClockAtQueries)]
+    #[wasm_bindgen(
+        js_name = transmitEpochClockAtQueries,
+        unchecked_return_type = "Ut1Validated<number> | null"
+    )]
     pub fn transmit_epoch_clock_at_queries(
         &self,
         satellite: &str,
@@ -1614,7 +1654,7 @@ impl SsrCorrectedEphemeris {
             selection_epoch,
         ))
     }
-    #[wasm_bindgen(js_name = clockRelativityAtQuery)]
+    #[wasm_bindgen(js_name = clockRelativityAtQuery, unchecked_return_type = "ClockRelativity")]
     pub fn clock_relativity_at_query(
         &self,
         satellite: &str,

@@ -173,25 +173,16 @@ test("clock stability estimators match the public reference table", () => {
   assert.equal(gapped.overlappingAdev.deviation[0], 2.0);
 });
 
-test("DTED heightBatch matches scalar ORTHOMETRIC terrain lookups", () => {
-  const terrain = new DtedTerrain(`${CORE_FIXTURES}/dted/tiles`);
-  const points = fixtureJson("dted/dted_points.json");
-  const cases = points.bilinear_cases.map((p) => [
-    hexToF64(p.longitude_bits),
-    hexToF64(p.latitude_bits),
-  ]);
-
-  const batch = terrain.heightBatch(cases, { interpolation: "bilinear" });
-  assert.equal(batch.length, cases.length);
-  for (let i = 0; i < cases.length; i++) {
-    assert.equal(batch[i].ok, true);
-    assert.equal(batch[i].heightM, terrain.heightMWithOptions(cases[i][0], cases[i][1], {}));
-  }
-
-  const withError = terrain.heightBatch([[Number.NaN, 36.5], cases[0]], {});
-  assert.equal(withError[0].ok, false);
-  assert.match(withError[0].error, /longitude/);
-  assert.equal(withError[1].ok, true);
+test("DTED filesystem roots fail explicitly in WebAssembly", () => {
+  assert.throws(
+    () => new DtedTerrain(`${CORE_FIXTURES}/dted/tiles`),
+    (error) => {
+      assert.equal(error.name, "TypeError");
+      assert.match(error.message, /filesystem roots are unsupported in WebAssembly/);
+      assert.match(error.message, /MmapTerrain\.fromBytes/);
+      return true;
+    },
+  );
 });
 
 test("mmap terrain store built from DTED fixtures matches DTED terrain", () => {

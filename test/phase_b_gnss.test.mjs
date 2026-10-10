@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   CarrierBand,
   DtedTerrain,
+  ExactEpoch,
   ExactEpochQuery,
   GnssSystem,
   SbasCorrectionStore,
@@ -28,12 +29,14 @@ import {
   sampleSp3Ephemeris,
   sbasCorrectedState,
   solveSppSbas,
+  solveSppWithSsrExactEpoch,
   ssrCorrectedState,
+  ssrCorrectedStateExact,
   ssrSourceLabel,
   ssrStoreFromRtcm,
   ssrStoreFromRtcmStrict,
 } from "../pkg-node/sidereon.js";
-import { coreGoldens, fixture, fixtureJson, hexToF64 } from "./helpers.mjs";
+import { coreGoldens, fixture, fixtureJson } from "./helpers.mjs";
 
 const CORE_FIXTURES = fileURLToPath(new URL("./fixtures", import.meta.url));
 const C_M_S = 299792458.0;
@@ -41,7 +44,6 @@ const F_L1_HZ = 1575.42e6;
 const F_L2_HZ = 1227.6e6;
 
 const coreFixture = (rel) => readFileSync(`${CORE_FIXTURES}/${rel}`);
-const coreJson = (rel) => JSON.parse(coreFixture(rel).toString("utf8"));
 const hexToBytes = (hex) =>
   Uint8Array.from(
     hex
@@ -265,30 +267,11 @@ test("source-agnostic ephemeris sampler covers precise and broadcast sources", (
   assert.ok(broadcast.some((row) => row.status === "gap"));
 });
 
-test("DTED terrain wrapper delegates lookup and validation to core", () => {
-  const terrain = new DtedTerrain(`${CORE_FIXTURES}/dted/tiles`);
-  const points = coreJson("dted/dted_points.json");
-  const bilinear = points.bilinear_cases[0];
-
-  assert.equal(
-    terrain.heightM(hexToF64(bilinear.longitude_bits), hexToF64(bilinear.latitude_bits)),
-    0.0,
-  );
-  assert.equal(
-    terrain.heightMWithOptions(
-      hexToF64(bilinear.longitude_bits),
-      hexToF64(bilinear.latitude_bits),
-      {
-        interpolation: "nearest",
-      },
-    ),
-    0.0,
-  );
+test("DTED terrain roots are rejected before a false missing-tile result", () => {
   assert.throws(
-    () => terrain.heightMWithOptions(-106.5, 36.5, { interpolation: "cubic" }),
-    TypeError,
+    () => new DtedTerrain(`${CORE_FIXTURES}/dted/tiles`),
+    /filesystem roots are unsupported/,
   );
-  assert.throws(() => terrain.heightM(Number.NaN, 36.5), Error);
 });
 
 test("SBAS decode, store, corrected state, and corrected SPP route through core", () => {
@@ -626,6 +609,55 @@ test("SSR decode, correction store, and corrected state route through core", () 
   );
   assert.ok(state);
   assert.ok(state.positionEcefM.every(Number.isFinite));
+  assert.ok(ssrCorrectedState(nav, store, sat, gpsJ2000FromWeekTow(ssrWeek, ssrTowS), true, 65535));
+
+  const exactEpoch = ExactEpoch.fromJ2000Seconds(gpsJ2000FromWeekTow(ssrWeek, ssrTowS));
+  const exactQuery = exactEpoch.asQuery();
+
+  for (const provider of [65536, Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
+    assert.throws(
+      () =>
+        ssrCorrectedState(nav, store, sat, gpsJ2000FromWeekTow(ssrWeek, ssrTowS), true, provider),
+      (error) => {
+        assert.equal(error.name, "TypeError");
+        assert.match(
+          error.message,
+          /allowRegionalProvider must be an integer from 0 through 65535/,
+        );
+        return true;
+      },
+    );
+    assert.throws(
+      () => ssrCorrectedStateExact(nav, store, sat, exactQuery, exactQuery, true, provider),
+      /allowRegionalProvider must be an integer from 0 through 65535/,
+    );
+    assert.throws(
+      () =>
+        nav.ssrEphemerisVarianceAtExactQueries(store, sat, exactQuery, exactQuery, true, provider),
+      /allowRegionalProvider must be an integer from 0 through 65535/,
+    );
+    assert.throws(
+      () =>
+        nav.ssrClockRelativityAtExactQuery(
+          store,
+          sat,
+          exactQuery,
+          state.positionEcefM,
+          true,
+          provider,
+        ),
+      /allowRegionalProvider must be an integer from 0 through 65535/,
+    );
+    assert.throws(
+      () => solveSppWithSsrExactEpoch(nav, store, null, exactEpoch, true, provider),
+      /allowRegionalProvider must be an integer from 0 through 65535/,
+    );
+  }
+
+  assert.throws(
+    () => solveSppWithSsrExactEpoch(nav, store, null, exactEpoch, true, 65535),
+    /invalid SPP request/,
+  );
 });
 
 test("owned SSR corrected source has an independent core numeric oracle and survives freed inputs", () => {

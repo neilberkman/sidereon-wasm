@@ -106,9 +106,9 @@ struct TerrainStoreErrorDetail {
     #[serde(skip_serializing_if = "Option::is_none")]
     lon_index: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    expected: Option<String>,
+    expected: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    found: Option<String>,
+    found: Option<serde_json::Value>,
     /// Index field whose value disagrees with the tile id, for
     /// `TileBoundsMismatch`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -116,6 +116,9 @@ struct TerrainStoreErrorDetail {
     /// Horizontal datum a DTED input states, for `NonWgs84Tile`.
     #[serde(skip_serializing_if = "Option::is_none")]
     datum: Option<DtedHorizontalDatumJs>,
+    /// Structured DTED parsing error, for `Tile`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<serde_json::Value>,
 }
 
 impl TerrainStoreErrorDetail {
@@ -133,6 +136,7 @@ impl TerrainStoreErrorDetail {
             found: None,
             field: None,
             datum: None,
+            error: None,
         }
     }
 }
@@ -230,7 +234,7 @@ fn missing_egm96_dac_error(path: String) -> JsValue {
     value
 }
 
-fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
+fn terrain_store_error_detail(error: CoreTerrainStoreError) -> TerrainStoreErrorDetail {
     let message = error.to_string();
     let mut detail = match error {
         CoreTerrainStoreError::Io { path, message: _ } => {
@@ -248,9 +252,21 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
             detail.version = Some(version);
             detail
         }
-        CoreTerrainStoreError::TileIdMismatch { path, .. } => {
+        CoreTerrainStoreError::TileIdMismatch {
+            path,
+            expected,
+            found,
+        } => {
             let mut detail = TerrainStoreErrorDetail::new("TileIdMismatch", message.clone());
             detail.path = Some(path.display().to_string());
+            detail.expected = Some(serde_json::json!({
+                "latIndex": expected.lat_index,
+                "lonIndex": expected.lon_index,
+            }));
+            detail.found = Some(serde_json::json!({
+                "latIndex": found.lat_index,
+                "lonIndex": found.lon_index,
+            }));
             detail
         }
         CoreTerrainStoreError::UnsupportedDatum { tag } => {
@@ -276,15 +292,15 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
             let mut detail = TerrainStoreErrorDetail::new("Checksum", message.clone());
             detail.lat_index = Some(lat_index);
             detail.lon_index = Some(lon_index);
-            detail.expected = Some(format!("{expected:#x}"));
-            detail.found = Some(format!("{found:#x}"));
+            detail.expected = Some(serde_json::Value::String(format!("{expected:#x}")));
+            detail.found = Some(serde_json::Value::String(format!("{found:#x}")));
             detail
         }
         CoreTerrainStoreError::AttestedChecksumMismatch { expected, found } => {
             let mut detail =
                 TerrainStoreErrorDetail::new("AttestedChecksumMismatch", message.clone());
-            detail.expected = Some(format!("{expected:#x}"));
-            detail.found = Some(format!("{found:#x}"));
+            detail.expected = Some(serde_json::Value::String(format!("{expected:#x}")));
+            detail.found = Some(serde_json::Value::String(format!("{found:#x}")));
             detail
         }
         CoreTerrainStoreError::TileIdOutOfRange {
@@ -313,6 +329,12 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
             detail.datum = Some(DtedHorizontalDatumJs::from(&datum));
             detail
         }
+        CoreTerrainStoreError::Tile { path, error } => {
+            let mut detail = TerrainStoreErrorDetail::new("Tile", message.clone());
+            detail.path = Some(path.display().to_string());
+            detail.error = Some(crate::core_error::dted_tile_error_payload(&error));
+            detail
+        }
         _ => {
             let mut detail = TerrainStoreErrorDetail::new("Unknown", message.clone());
             detail.reason = Some(message.clone());
@@ -320,7 +342,12 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
         }
     };
     detail.message = message.clone();
-    typed_error(detail.name, message, &detail)
+    detail
+}
+
+fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
+    let detail = terrain_store_error_detail(error);
+    typed_error(detail.name, detail.message.clone(), &detail)
 }
 
 fn terrain_datum_error(error: CoreTerrainDatumError) -> JsValue {
@@ -408,6 +435,9 @@ pub enum TerrainStoreError {
     NonWgs84Tile,
     /// A future core terrain-store error not yet mapped by this binding.
     Unknown,
+    /// A DTED input could not be read as a tile. Appended to preserve all
+    /// previously published numeric enum discriminants.
+    Tile,
 }
 
 /// Terrain datum conversion and optional geoid-grid loading error variants.
@@ -999,5 +1029,56 @@ impl MmapTerrain {
     #[wasm_bindgen(js_name = toBytes)]
     pub fn to_bytes(&self) -> Vec<u8> {
         self.inner.to_bytes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sidereon_core::terrain::DtedTileError;
+    use sidereon_core::terrain_store::TerrainTileId;
+
+    #[test]
+    fn terrain_store_tile_error_preserves_path_and_typed_cause() {
+        let detail = terrain_store_error_detail(CoreTerrainStoreError::Tile {
+            path: "w123/n45.dt2".into(),
+            error: Box::new(DtedTileError::TooShort {
+                path: "w123/n45.dt2".into(),
+            }),
+        });
+        assert_eq!(detail.name, "Tile");
+        assert_eq!(detail.path.as_deref(), Some("w123/n45.dt2"));
+        assert_eq!(
+            detail.error,
+            Some(serde_json::json!({
+                "kind": "tooShort",
+                "path": "w123/n45.dt2",
+            }))
+        );
+    }
+
+    #[test]
+    fn terrain_store_tile_id_mismatch_preserves_both_ids() {
+        let detail = terrain_store_error_detail(CoreTerrainStoreError::TileIdMismatch {
+            path: "w123/n45.dt2".into(),
+            expected: TerrainTileId {
+                lat_index: 45,
+                lon_index: -123,
+            },
+            found: TerrainTileId {
+                lat_index: 46,
+                lon_index: -122,
+            },
+        });
+        assert_eq!(detail.name, "TileIdMismatch");
+        assert_eq!(detail.path.as_deref(), Some("w123/n45.dt2"));
+        assert_eq!(
+            detail.expected,
+            Some(serde_json::json!({"latIndex": 45, "lonIndex": -123}))
+        );
+        assert_eq!(
+            detail.found,
+            Some(serde_json::json!({"latIndex": 46, "lonIndex": -122}))
+        );
     }
 }

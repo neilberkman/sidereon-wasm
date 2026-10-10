@@ -129,7 +129,9 @@ pub enum CoreErrorDetail {
     },
 }
 
-fn dted_tile_error_payload(error: &sidereon_core::terrain::DtedTileError) -> serde_json::Value {
+pub(crate) fn dted_tile_error_payload(
+    error: &sidereon_core::terrain::DtedTileError,
+) -> serde_json::Value {
     use sidereon_core::terrain::DtedTileError as E;
     match error {
         E::Io { path, message } => serde_json::json!({
