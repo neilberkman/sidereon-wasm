@@ -67,6 +67,21 @@ test("NtripClientMachine emits connection, payload, and stream-end events", () =
   assert.equal(machine.stateLabel, "closed");
 });
 
+test("NtripClientMachine finish emits an unterminated sourcetable once", () => {
+  const machine = new NtripClientMachine(CONFIG);
+  machine.connectionRequest();
+
+  const events = machine.push(
+    encoder.encode("SOURCETABLE 200 OK\r\nContent-Type: gnss/sourcetable\r\n\r\nENDSOURCETABLE"),
+  );
+  events.push(...machine.finish());
+
+  assert.equal(events.filter((event) => event.kind === "sourcetable").length, 1);
+  assert.equal(machine.state, NtripState.Closed);
+  assert.equal(machine.stateLabel, "closed");
+  assert.deepEqual(machine.finish(), []);
+});
+
 test("parseNtripSourcetable exposes stream rows from Uint8Array input", () => {
   const table = parseNtripSourcetable(
     encoder.encode(
