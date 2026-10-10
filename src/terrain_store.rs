@@ -116,6 +116,9 @@ struct TerrainStoreErrorDetail {
     /// Horizontal datum a DTED input states, for `NonWgs84Tile`.
     #[serde(skip_serializing_if = "Option::is_none")]
     datum: Option<DtedHorizontalDatumJs>,
+    /// Structured DTED parsing error, for `Tile`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<serde_json::Value>,
 }
 
 impl TerrainStoreErrorDetail {
@@ -133,6 +136,7 @@ impl TerrainStoreErrorDetail {
             found: None,
             field: None,
             datum: None,
+            error: None,
         }
     }
 }
@@ -248,9 +252,15 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
             detail.version = Some(version);
             detail
         }
-        CoreTerrainStoreError::TileIdMismatch { path, .. } => {
+        CoreTerrainStoreError::TileIdMismatch {
+            path,
+            expected,
+            found,
+        } => {
             let mut detail = TerrainStoreErrorDetail::new("TileIdMismatch", message.clone());
             detail.path = Some(path.display().to_string());
+            detail.expected = Some(format!("{},{}", expected.lat_index, expected.lon_index));
+            detail.found = Some(format!("{},{}", found.lat_index, found.lon_index));
             detail
         }
         CoreTerrainStoreError::UnsupportedDatum { tag } => {
@@ -311,6 +321,12 @@ fn terrain_store_error(error: CoreTerrainStoreError) -> JsValue {
             let mut detail = TerrainStoreErrorDetail::new("NonWgs84Tile", message.clone());
             detail.path = Some(path.display().to_string());
             detail.datum = Some(DtedHorizontalDatumJs::from(&datum));
+            detail
+        }
+        CoreTerrainStoreError::Tile { path, error } => {
+            let mut detail = TerrainStoreErrorDetail::new("Tile", message.clone());
+            detail.path = Some(path.display().to_string());
+            detail.error = Some(crate::core_error::dted_tile_error_payload(&error));
             detail
         }
         _ => {
@@ -408,6 +424,9 @@ pub enum TerrainStoreError {
     NonWgs84Tile,
     /// A future core terrain-store error not yet mapped by this binding.
     Unknown,
+    /// A DTED input could not be read as a tile. Appended to preserve all
+    /// previously published numeric enum discriminants.
+    Tile,
 }
 
 /// Terrain datum conversion and optional geoid-grid loading error variants.
