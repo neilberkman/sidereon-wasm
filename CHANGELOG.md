@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 3.0.3 - 2026-10-12
+
 ### Fixed
 
 - Preserves the core RINEX SPP ionosphere and troposphere defaults when `corrections` or either switch is omitted, while explicit `false` still disables that correction. Generic SPP requests retain their default-off behavior.
@@ -9,6 +11,9 @@
 - Preserves RINEX clock trailing-text notice counts and first-line numbers. Record readings keep their published string labels and add `readingDetail` and `continuationReadingDetail` for the trailing-text column layout.
 - Preserves `TerrainStoreError` tile parsing causes and both tile identifiers for mismatches. The appended `Tile` enum member leaves existing numeric discriminants unchanged.
 - Makes `DtedTerrain` construction fail explicitly because WebAssembly cannot read a filesystem root, instead of reporting valid tiles as missing terrain. Load host-read terrain-store bytes with `MmapTerrain.fromBytes`.
+- Decodes GPS LNAV HOW fields correctly when the preceding word's D30* parity bit is set.
+- Applies requested PPP seed meteorology and reports invalid meteorology instead of silently using defaults.
+- Emits an unterminated NTRIP sourcetable exactly once when the stream finishes at `ENDSOURCETABLE`.
 
 ## 3.0.2 - 2026-10-05
 
