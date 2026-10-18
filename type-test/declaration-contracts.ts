@@ -3157,3 +3157,62 @@ type _WebTcaFinderOptions = Assert<
     WebBindings.TcaFinderOptions | null | undefined
   >
 >;
+
+// Static RTK uses nested fixed-solve options and returns nine named fields.
+// Keep both generated declaration targets aligned with the serde boundary.
+type _WebStaticRtkOptions = Assert<
+  Equal<
+    WebBindings.RtkStaticArcConfig["opts"],
+    WebBindings.RtkValidatedFixedOptions | undefined
+  >
+>;
+type _NodeStaticRtkOptions = Assert<
+  Equal<
+    NodeBindings.RtkStaticArcConfig["opts"],
+    NodeBindings.RtkValidatedFixedOptions | undefined
+  >
+>;
+type ExpectedStaticRtkSolutionKeys =
+  | "geometryQuality"
+  | "references"
+  | "ambiguityIds"
+  | "ambiguitySatellites"
+  | "floatSolution"
+  | "fixedSolution"
+  | "droppedSats"
+  | "splitCycleSlipArcs"
+  | "elevationMaskedSats";
+type _WebStaticRtkSolutionKeys = Assert<
+  Equal<keyof WebBindings.RtkStaticArcSolution, ExpectedStaticRtkSolutionKeys>
+>;
+type _NodeStaticRtkSolutionKeys = Assert<
+  Equal<keyof NodeBindings.RtkStaticArcSolution, ExpectedStaticRtkSolutionKeys>
+>;
+type _WebStaticRtkReturn = Assert<
+  Equal<ReturnType<typeof WebBindings.solveStaticRtkArc>, WebBindings.RtkStaticArcSolution>
+>;
+type _NodeStaticRtkReturn = Assert<
+  Equal<ReturnType<typeof NodeBindings.solveStaticRtkArc>, NodeBindings.RtkStaticArcSolution>
+>;
+type _WebStaticRtkFloatSolution = Assert<
+  Equal<
+    WebBindings.RtkStaticArcSolution["floatSolution"],
+    WebBindings.RtkFloatArcSolution
+  >
+>;
+type _NodeStaticRtkSplitArcs = Assert<
+  Equal<
+    NodeBindings.RtkStaticArcSolution["splitCycleSlipArcs"],
+    NodeBindings.RtkCycleSlipSplitArc[]
+  >
+>;
+
+const staticRtkConfig: WebBindings.RtkStaticArcConfig = {
+  arc: { baseM: [3512900, 780500, 5248700] },
+  opts: {
+    float: { positionTolM: 1e-4, ambiguityTolM: 1e-4, maxIterations: 8 },
+    fixed: { ratioThreshold: 3, partialAmbiguityResolution: true },
+    residual: { thresholdSigma: 4, maxExclusions: 1 },
+  },
+};
+void staticRtkConfig;

@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Publishes the nested static-RTK fixed-solve options and all nine runtime
+  result fields in the TypeScript declarations.
 - Declares the exact-cache single-flight waiter's structured `wait`, `takeover`,
   and `timeout` decisions instead of exposing its return value as `any`.
 - Publishes concrete TypeScript contracts for TCA finder and collision options,
