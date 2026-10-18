@@ -907,6 +907,7 @@ export type PppScalarMap = Record<string, number>;
  */
 export interface FusionConfig {
     [key: string]: any;
+    ukf?: UkfUpdateOptions;
 }
 
 export interface FusionTimeSyncConfig {

@@ -114,6 +114,7 @@ fn parse_update_options(
 
 fn parse_ukf_options(
     input: Option<UkfUpdateOptionsInput>,
+    dimension: usize,
 ) -> Result<core_fusion::UkfUpdateOptions, JsValue> {
     let mut out = core_fusion::UkfUpdateOptions::default();
     if let Some(input) = input {
@@ -131,6 +132,7 @@ fn parse_ukf_options(
                 min_rows: gate.min_rows,
             });
     }
+    out.validate_for_dimension(dimension).map_err(fusion_error)?;
     Ok(out)
 }
 
@@ -342,6 +344,11 @@ fn build_filter(config: JsValue) -> Result<core_fusion::InertialFilter, JsValue>
     let input: FusionConfigInput = serde_wasm_bindgen::from_value(config)
         .map_err(|e| type_error(&format!("invalid fusion config: {e}")))?;
     let layout = parse_layout(input.layout.as_deref())?;
+    let dimension = match layout {
+        core_fusion::ErrorStateLayout::Fifteen => 15,
+        core_fusion::ErrorStateLayout::TwentyOne => 21,
+    };
+    let ukf_update_options = parse_ukf_options(input.ukf, dimension)?;
     let nominal = build_nav_state(input.initial_state)?;
     let state = match (input.covariance_diagonal, input.covariance) {
         (Some(diagonal), None) => {
@@ -371,7 +378,7 @@ fn build_filter(config: JsValue) -> Result<core_fusion::InertialFilter, JsValue>
     core_config.mechanization = parse_mechanization(input.mechanization)?;
     core_config.loose = parse_loose_config(input.loose)?;
     core_config.tight = parse_tight_config(input.tight)?;
-    core_config.ukf_update_options = parse_ukf_options(input.ukf)?;
+    core_config.ukf_update_options = ukf_update_options;
 
     let mut filter =
         core_fusion::InertialFilter::with_config(state, core_config).map_err(fusion_error)?;
@@ -567,7 +574,9 @@ pub struct GnssInsFilter {
 impl GnssInsFilter {
     /// Build a filter from a JS configuration object.
     #[wasm_bindgen(constructor)]
-    pub fn new(config: JsValue) -> Result<GnssInsFilter, JsValue> {
+    pub fn new(
+        #[wasm_bindgen(unchecked_param_type = "FusionConfig")] config: JsValue,
+    ) -> Result<GnssInsFilter, JsValue> {
         Ok(GnssInsFilter {
             inner: build_filter(config)?,
         })
@@ -575,7 +584,10 @@ impl GnssInsFilter {
 
     /// Build a filter, then restore its state from versioned fusion-state bytes.
     #[wasm_bindgen(js_name = fromStateBytes)]
-    pub fn from_state_bytes(config: JsValue, bytes: &[u8]) -> Result<GnssInsFilter, JsValue> {
+    pub fn from_state_bytes(
+        #[wasm_bindgen(unchecked_param_type = "FusionConfig")] config: JsValue,
+        bytes: &[u8],
+    ) -> Result<GnssInsFilter, JsValue> {
         let mut filter = build_filter(config)?;
         filter.restore_encoded_state(bytes).map_err(fusion_error)?;
         Ok(GnssInsFilter { inner: filter })
@@ -1146,6 +1158,21 @@ struct UnscentedTransformInput {
     beta: Option<f64>,
     kappa: Option<f64>,
 }
+
+#[wasm_bindgen(typescript_custom_section)]
+const FUSION_INPUT_TYPES: &'static str = r#"
+export interface UnscentedTransformOptions {
+  alpha?: number;
+  beta?: number;
+  kappa?: number;
+}
+
+export interface UkfUpdateOptions {
+  transform?: UnscentedTransformOptions;
+  innovationGate?: { thresholdSigma: number; minRows: number };
+}
+
+"#;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -805,11 +805,17 @@ type _NodeFusionTimeSyncStatusAllowsArbitraryProperties = Assert<
 type _NodeFusionRtsEpochAllowsArbitraryProperties = Assert<
   IsAny<NodeBindings.FusionRtsEpoch["arbitraryProperty"]>
 >;
-type _WebFusionConstructorAvoidsStaleOverlay = Assert<
-  IsAny<ConstructorParameters<typeof WebBindings.GnssInsFilter>[0]>
+type _WebFusionConstructorUsesConfig = Assert<
+  Equal<ConstructorParameters<typeof WebBindings.GnssInsFilter>[0], WebBindings.FusionConfig>
 >;
-type _NodeFusionConstructorAvoidsStaleOverlay = Assert<
-  IsAny<ConstructorParameters<typeof NodeBindings.GnssInsFilter>[0]>
+type _NodeFusionConstructorUsesConfig = Assert<
+  Equal<ConstructorParameters<typeof NodeBindings.GnssInsFilter>[0], NodeBindings.FusionConfig>
+>;
+type _WebFusionUkfOptionsAreTyped = Assert<
+  Equal<WebBindings.FusionConfig["ukf"], WebBindings.UkfUpdateOptions | undefined>
+>;
+type _NodeFusionUkfOptionsAreTyped = Assert<
+  Equal<NodeBindings.FusionConfig["ukf"], NodeBindings.UkfUpdateOptions | undefined>
 >;
 type _WebFusionStateAvoidsStaleOverlay = Assert<
   IsAny<ReturnType<WebBindings.GnssInsFilter["state"]>>

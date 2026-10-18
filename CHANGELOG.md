@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+
+- Rejects WGS84 longitudes outside `[-pi, pi]` when the public coordinate is
+  constructed, instead of accepting a value that fails only when later passed
+  into a core conversion.
+- Validates UKF transform options before filter construction can mask their
+  field-specific error, and publishes the transform and update option input
+  types on the filter configuration.
+
 ## 3.0.4 - 2026-10-18
 
 ### Fixed
