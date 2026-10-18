@@ -1,6 +1,6 @@
 [package]
 name = "sidereon-wasm"
-version = "3.0.3"
+version = "3.0.4"
 authors = []
 edition = "2021"
 description = "WebAssembly / JavaScript interface over the sidereon GNSS + astrodynamics engine: SP3 loading and multi-product merge, SPP / RTK (float + fixed) / PPP (float + fixed) positioning, IONEX slant delay, SGP4 and numerical orbit propagation, RINEX observation/navigation/clock parsing, CRINEX (Hatanaka) decoding, the observable-domain math (carrier combinations, cycle slips, Hatch smoothing, weighting, velocity, GPS C/A signal), and the astro domain (scale-tagged time, frame transforms, Sun/Moon ephemerides, eclipse / body angles, DOP, passes / visibility, conjunction + collision probability, CDM / OMM / ANTEX parsing, RF link budget)"
@@ -17,11 +17,11 @@ crate-type = ["cdylib", "rlib"]
 # logic lives here: every call delegates to a `sidereon` entry point, and the
 # binding only ever calls the serial paths (solve_spp, propagate_teme_arc,
 # look_angle_arc), never the rayon `*_parallel` variants, so no thread pool is
-# spawned under wasm32. The engine facade, core and trust-region types share one
-# published release graph, with their versions constrained exactly.
-sidereon = { version = "=3.0.3" }
-sidereon-core = { version = "=3.0.3" }
-trust-region-least-squares = { version = "=0.11.0" }
+# spawned under wasm32. The engine facade, core and trust-region dependencies
+# use their exact coordinated registry versions.
+sidereon = "=3.0.4"
+sidereon-core = "=3.0.4"
+trust-region-least-squares = "=0.11.0"
 wasm-bindgen = "0.2"
 # Typed access to the JS Error / TypeError / RangeError constructors so failures
 # surface as the exception class a JS developer expects.
