@@ -25,6 +25,44 @@ use sidereon_core::astro::tca::{
 
 use crate::error::{engine_error, type_error};
 
+#[wasm_bindgen(typescript_custom_section)]
+const TS_TCA: &str = r#"
+export interface TcaFinderOptions {
+  coarseStepSeconds?: number;
+  timeToleranceSeconds?: number;
+}
+export type TcaPcMethod = "foster_equal_area" | "foster_numerical" | "alfano_2005";
+export interface TcaPcOptions {
+  hardBodyRadiusKm: number;
+  method?: TcaPcMethod;
+  primaryCovarianceKm2?: number[];
+  secondaryCovarianceKm2?: number[];
+}
+export interface TcaTle { line1: string; line2: string; }
+export interface TcaCandidate {
+  tcaJdWhole: number;
+  tcaJdFraction: number;
+  tcaJd: number;
+  tcaSecondsSinceWindowStart: number;
+  missDistanceKm: number;
+  relativePositionKm: number[];
+  relativeVelocityKmS: number[];
+}
+export interface TcaConjunction {
+  candidate: TcaCandidate;
+  pc: number;
+  missKm: number;
+  relativeSpeedKmS: number;
+  sigmaXKm: number;
+  sigmaZKm: number;
+}
+export interface TcaScreeningHit { secondaryIndex: number; candidate: TcaCandidate; }
+export interface TcaScreeningConjunctionHit {
+  secondaryIndex: number;
+  conjunction: TcaConjunction;
+}
+"#;
+
 /// Unix epoch as a Julian date (JD of 1970-01-01T00:00:00Z).
 const UNIX_EPOCH_JD: f64 = 2_440_587.5;
 const MICROSECONDS_PER_DAY: f64 = 86_400_000_000.0;
@@ -255,7 +293,10 @@ fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
 /// optional `TcaFinderOptions` object. Returns an array of `TcaCandidate`
 /// objects. Delegates to
 /// `sidereon_core::astro::tca::find_tca_candidates_from_tles`.
-#[wasm_bindgen(js_name = findTcaCandidates)]
+#[wasm_bindgen(
+    js_name = findTcaCandidates,
+    unchecked_return_type = "TcaCandidate[]"
+)]
 #[allow(clippy::too_many_arguments)]
 pub fn find_tca_candidates(
     primary_line1: &str,
@@ -264,6 +305,7 @@ pub fn find_tca_candidates(
     secondary_line2: &str,
     window_start_unix_micros: i64,
     window_end_unix_micros: i64,
+    #[wasm_bindgen(unchecked_param_type = "TcaFinderOptions | undefined | null")]
     options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let opts = parse_finder_options(options)?;
@@ -288,7 +330,10 @@ pub fn find_tca_candidates(
 /// hard-body radius, Pc method, and optional per-object covariances). Returns an
 /// array of `TcaConjunction` objects. Delegates to
 /// `sidereon_core::astro::tca::find_tca_conjunctions_from_tles`.
-#[wasm_bindgen(js_name = findTcaConjunctions)]
+#[wasm_bindgen(
+    js_name = findTcaConjunctions,
+    unchecked_return_type = "TcaConjunction[]"
+)]
 #[allow(clippy::too_many_arguments)]
 pub fn find_tca_conjunctions(
     primary_line1: &str,
@@ -297,7 +342,9 @@ pub fn find_tca_conjunctions(
     secondary_line2: &str,
     window_start_unix_micros: i64,
     window_end_unix_micros: i64,
+    #[wasm_bindgen(unchecked_param_type = "TcaPcOptions")]
     pc_options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "TcaFinderOptions | undefined | null")]
     options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let tca_options = parse_finder_options(options)?;
@@ -323,14 +370,19 @@ pub fn find_tca_conjunctions(
 /// Returns one `TcaScreeningHit` (`{ secondaryIndex, candidate }`) per local TCA
 /// at or below the threshold, in catalog then time order. Delegates to
 /// `sidereon_core::astro::tca::screen_tca_candidates_from_tle_catalog_serial`.
-#[wasm_bindgen(js_name = screenTcaCandidates)]
+#[wasm_bindgen(
+    js_name = screenTcaCandidates,
+    unchecked_return_type = "TcaScreeningHit[]"
+)]
 pub fn screen_tca_candidates(
     primary_line1: &str,
     primary_line2: &str,
+    #[wasm_bindgen(unchecked_param_type = "TcaTle[]")]
     secondaries: JsValue,
     window_start_unix_micros: i64,
     window_end_unix_micros: i64,
     miss_distance_threshold_km: f64,
+    #[wasm_bindgen(unchecked_param_type = "TcaFinderOptions | undefined | null")]
     options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let opts = parse_finder_options(options)?;
@@ -361,16 +413,22 @@ pub fn screen_tca_candidates(
 /// Like `screenTcaCandidates`, plus `pcOptions`. Returns an array of
 /// `TcaScreeningConjunctionHit` (`{ secondaryIndex, conjunction }`). Delegates to
 /// `sidereon_core::astro::tca::screen_tca_conjunctions_from_tle_catalog_serial`.
-#[wasm_bindgen(js_name = screenTcaConjunctions)]
+#[wasm_bindgen(
+    js_name = screenTcaConjunctions,
+    unchecked_return_type = "TcaScreeningConjunctionHit[]"
+)]
 #[allow(clippy::too_many_arguments)]
 pub fn screen_tca_conjunctions(
     primary_line1: &str,
     primary_line2: &str,
+    #[wasm_bindgen(unchecked_param_type = "TcaTle[]")]
     secondaries: JsValue,
     window_start_unix_micros: i64,
     window_end_unix_micros: i64,
     miss_distance_threshold_km: f64,
+    #[wasm_bindgen(unchecked_param_type = "TcaPcOptions")]
     pc_options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "TcaFinderOptions | undefined | null")]
     options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let tca_options = parse_finder_options(options)?;

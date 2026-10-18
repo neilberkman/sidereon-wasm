@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Publishes concrete TypeScript contracts for TCA finder and collision options,
+  TLE catalogs, candidates, conjunctions, and screening results instead of
+  exposing the structured JavaScript values as `any`.
 - Restore concrete TypeScript input and result declarations for the public orbit-fit functions.
 - Rejects WGS84 longitudes outside `[-pi, pi]` when the public coordinate is
   constructed, instead of accepting a value that fails only when later passed

@@ -3102,3 +3102,36 @@ type _PppCorrectionsReturn = Assert<
   Equal<ReturnType<typeof WebBindings.pppCorrections>, WebBindings.PppCorrections>
 >;
 void [pppEpoch, pppResult, codeBiasOptions];
+
+// TCA's serde-backed JS values must retain their public structure instead of
+// collapsing to `any` in either generated declaration target.
+type _WebTcaCandidatesNotAny = Assert<
+  Equal<IsAny<ReturnType<typeof WebBindings.findTcaCandidates>>, false>
+>;
+type _WebTcaCandidatesReturn = Assert<
+  Equal<ReturnType<typeof WebBindings.findTcaCandidates>, WebBindings.TcaCandidate[]>
+>;
+type _NodeTcaConjunctionsReturn = Assert<
+  Equal<ReturnType<typeof NodeBindings.findTcaConjunctions>, NodeBindings.TcaConjunction[]>
+>;
+type _WebTcaScreenReturn = Assert<
+  Equal<ReturnType<typeof WebBindings.screenTcaCandidates>, WebBindings.TcaScreeningHit[]>
+>;
+type _NodeTcaScreenConjunctionReturn = Assert<
+  Equal<
+    ReturnType<typeof NodeBindings.screenTcaConjunctions>,
+    NodeBindings.TcaScreeningConjunctionHit[]
+  >
+>;
+type _WebTcaCatalog = Assert<
+  Equal<Parameters<typeof WebBindings.screenTcaCandidates>[2], WebBindings.TcaTle[]>
+>;
+type _NodeTcaPcOptions = Assert<
+  Equal<Parameters<typeof NodeBindings.findTcaConjunctions>[6], NodeBindings.TcaPcOptions>
+>;
+type _WebTcaFinderOptions = Assert<
+  Equal<
+    Parameters<typeof WebBindings.findTcaCandidates>[6],
+    WebBindings.TcaFinderOptions | null | undefined
+  >
+>;
