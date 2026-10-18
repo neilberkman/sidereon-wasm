@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Restore concrete TypeScript input and result declarations for the public orbit-fit functions.
 - Rejects WGS84 longitudes outside `[-pi, pi]` when the public coordinate is
   constructed, instead of accepting a value that fails only when later passed
   into a core conversion.

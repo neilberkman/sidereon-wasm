@@ -29,6 +29,44 @@ use crate::geometry_quality::GeometryQualityJs;
 use crate::precise_samples::decode_core_samples;
 use crate::sp3::Sp3;
 
+#[wasm_bindgen(typescript_custom_section)]
+const TS_ORBIT_FIT: &str = r#"
+export interface OrbitFitOptions {
+  forceModel?: unknown;
+  muKm3S2?: number;
+  integrator?: string;
+  integratorOptions?: Record<string, number>;
+  solverOptions?: { gtol?: number; ftol?: number; xtol?: number; maxNfev?: number };
+  linearSolve?: "nalgebraLu" | "nalgebra_lu" | "ownedGaussianFirstTie" | "owned_gaussian_first_tie";
+  minLedgerSamples?: number;
+  drag?: unknown;
+}
+export type OrbitFitCovariance =
+  | { kind: "estimated"; matrix: number[][] }
+  | { kind: "unbounded" };
+export interface OrbitResidualStats {
+  radialRmsM: number; alongRmsM: number; crossRmsM: number; rms3dM: number;
+  n: number; lowSampleCount: boolean;
+}
+export interface OrbitArcSpan {
+  timeScale: string; startJ2000S: number; endJ2000S: number; durationS: number;
+}
+export interface OrbitFitSolution {
+  satellite: string; initialEpochS: number; initialPositionKm: number[];
+  initialVelocityKmS: number[]; covariance: OrbitFitCovariance;
+  geometryQuality: Record<string, unknown>; seedRms3dM: number; fitRms3dM: number;
+  iterations: number;
+}
+export interface OrbitFitReport {
+  fits: OrbitFitSolution[];
+  ledger: {
+    perSatellite: Array<{ satellite: string; stats: OrbitResidualStats }>;
+    perConstellation: Array<{ system: string; stats: OrbitResidualStats }>;
+    arcSpan: OrbitArcSpan;
+  };
+}
+"#;
+
 fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     value
         .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
@@ -296,10 +334,11 @@ impl From<OrbitFitReport> for OrbitFitReportJs {
 /// `satellite` is an IGS token such as `"G01"`. `options` may set
 /// `forceModel`, `integrator`, `integratorOptions`, `solverOptions`,
 /// `linearSolve`, `minLedgerSamples`, and `drag`.
-#[wasm_bindgen(js_name = fitSp3PreciseOrbit)]
+#[wasm_bindgen(js_name = fitSp3PreciseOrbit, unchecked_return_type = "OrbitFitReport")]
 pub fn fit_sp3_precise_orbit(
     sp3: &Sp3,
     satellite: &str,
+    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")]
     options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let sat = parse_satellite(satellite)?;
@@ -314,10 +353,11 @@ pub fn fit_sp3_precise_orbit(
 /// `satellite` is an IGS token such as `"G01"`. SP3 position and optional
 /// velocity records are transformed from Earth-fixed coordinates through the
 /// core `TdbEarthOrientationProvider` before fitting.
-#[wasm_bindgen(js_name = fitSp3EcefPreciseOrbit)]
+#[wasm_bindgen(js_name = fitSp3EcefPreciseOrbit, unchecked_return_type = "OrbitFitReport")]
 pub fn fit_sp3_ecef_precise_orbit(
     sp3: &Sp3,
     satellite: &str,
+    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")]
     options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let sat = parse_satellite(satellite)?;
@@ -332,10 +372,12 @@ pub fn fit_sp3_ecef_precise_orbit(
 ///
 /// `satellites` is a string array of IGS tokens such as `["G01", "G02"]`.
 /// The Earth-fixed to inertial conversion is handled by the core provider.
-#[wasm_bindgen(js_name = fitSp3EcefPreciseOrbits)]
+#[wasm_bindgen(js_name = fitSp3EcefPreciseOrbits, unchecked_return_type = "OrbitFitReport")]
 pub fn fit_sp3_ecef_precise_orbits(
     sp3: &Sp3,
+    #[wasm_bindgen(unchecked_param_type = "string[]")]
     satellites: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")]
     options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let sats = parse_satellites(satellites)?;
@@ -350,8 +392,12 @@ pub fn fit_sp3_ecef_precise_orbits(
 ///
 /// The residual ledger is computed against the original Earth-fixed SP3
 /// observations by the core fit path.
-#[wasm_bindgen(js_name = fitAllSp3EcefPreciseOrbits)]
-pub fn fit_all_sp3_ecef_precise_orbits(sp3: &Sp3, options: JsValue) -> Result<JsValue, JsValue> {
+#[wasm_bindgen(js_name = fitAllSp3EcefPreciseOrbits, unchecked_return_type = "OrbitFitReport")]
+pub fn fit_all_sp3_ecef_precise_orbits(
+    sp3: &Sp3,
+    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")]
+    options: JsValue,
+) -> Result<JsValue, JsValue> {
     let options = orbit_options(options)?;
     let provider = TdbEarthOrientationProvider::new();
     let report = core_fit_all_sp3_ecef_precise_orbits(&sp3.inner, &provider, &options)
@@ -364,10 +410,12 @@ pub fn fit_all_sp3_ecef_precise_orbits(sp3: &Sp3, options: JsValue) -> Result<Js
 /// `samples` is the same array accepted by `preciseEphemerisSamplesFromSamples`:
 /// `{ sat, epoch, positionEcefM, clockS?, clockEvent? }` with epochs in seconds
 /// since J2000.
-#[wasm_bindgen(js_name = fitPreciseEphemerisSampleOrbit)]
+#[wasm_bindgen(js_name = fitPreciseEphemerisSampleOrbit, unchecked_return_type = "OrbitFitReport")]
 pub fn fit_precise_ephemeris_sample_orbit(
+    #[wasm_bindgen(unchecked_param_type = "Sp3PreciseEphemerisSample[]")]
     samples: JsValue,
     satellite: &str,
+    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")]
     options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let samples = decode_core_samples(samples)?;

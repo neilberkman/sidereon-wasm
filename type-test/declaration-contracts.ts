@@ -95,6 +95,19 @@ type Equal<Left, Right> =
 type Assert<Condition extends true> = Condition;
 type IsAny<Value> = 0 extends 1 & Value ? true : false;
 
+type _WebOrbitFitReturn = Assert<
+  Equal<ReturnType<typeof WebBindings.fitPreciseEphemerisSampleOrbit>, WebBindings.OrbitFitReport>
+>;
+type _NodeOrbitFitReturn = Assert<
+  Equal<ReturnType<typeof NodeBindings.fitPreciseEphemerisSampleOrbit>, NodeBindings.OrbitFitReport>
+>;
+type _WebOrbitFitOptionsNotAny = Assert<
+  Equal<IsAny<Parameters<typeof WebBindings.fitPreciseEphemerisSampleOrbit>[2]>, false>
+>;
+type _NodeOrbitFitSamplesNotAny = Assert<
+  Equal<IsAny<Parameters<typeof NodeBindings.fitPreciseEphemerisSampleOrbit>[0]>, false>
+>;
+
 type _ExactCacheOpenReturn = Assert<
   Equal<
     Awaited<ReturnType<BrowserExactProductCache["openSingleFlight"]>>,
