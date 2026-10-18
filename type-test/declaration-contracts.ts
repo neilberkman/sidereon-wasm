@@ -114,6 +114,28 @@ type _ExactCacheOpenReturn = Assert<
     ExactCacheSingleFlightOpen
   >
 >;
+type ExactCacheSingleFlightDecision =
+  | { action: "wait"; delayMs: number }
+  | { action: "takeover" }
+  | { action: "timeout" };
+type _WebExactCacheSingleFlightDecision = Assert<
+  Equal<
+    ReturnType<WebBindings.ExactCacheSingleFlightWait["observe"]>,
+    ExactCacheSingleFlightDecision
+  >
+>;
+type _NodeExactCacheSingleFlightDecision = Assert<
+  Equal<
+    ReturnType<NodeBindings.ExactCacheSingleFlightWait["observe"]>,
+    ExactCacheSingleFlightDecision
+  >
+>;
+type _WebExactCacheSingleFlightDecisionNotAny = Assert<
+  Equal<IsAny<ReturnType<WebBindings.ExactCacheSingleFlightWait["observe"]>>, false>
+>;
+type _NodeExactCacheSingleFlightDecisionNotAny = Assert<
+  Equal<IsAny<ReturnType<NodeBindings.ExactCacheSingleFlightWait["observe"]>>, false>
+>;
 type _WebSp3ObservableBatch = Assert<
   Equal<ReturnType<WebBindings.Sp3["observableStatesAtJ2000S"]>, PreciseObservableStateBatch>
 >;

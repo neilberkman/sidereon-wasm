@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Declares the exact-cache single-flight waiter's structured `wait`, `takeover`,
+  and `timeout` decisions instead of exposing its return value as `any`.
 - Publishes concrete TypeScript contracts for TCA finder and collision options,
   TLE catalogs, candidates, conjunctions, and screening results instead of
   exposing the structured JavaScript values as `any`.
