@@ -77,12 +77,12 @@ official IERS notice is reproduced in
 `licenses/IERS-Conventions-Software-License.txt`.
 
 The exact public non-test tide sources distributed in `sidereon-core` 3.0.4
-at commit a100da16bd1c7a683a5b47dcbe1e2472402d3d60 are included under
+at commit 5cfcdf929b57a5998e304df786735b171ba8afaf are included under
 `third_party_source/sidereon-core-3.0.4/tides/`. Their contents match that
 release source. These copies provide the source for every tide routine in the
 compiled WebAssembly artifact; they are not represented as original IERS
 software or as endorsed by the IERS Conventions Center.
-Source: [sidereon-core tides at the pinned commit](https://github.com/neilberkman/sidereon/tree/a100da16bd1c7a683a5b47dcbe1e2472402d3d60/crates/sidereon-core/src/tides).
+Source: [sidereon-core tides at the published commit](https://github.com/neilberkman/sidereon/tree/5cfcdf929b57a5998e304df786735b171ba8afaf/crates/sidereon-core/src/tides).
 
 --------------------------------------------------------------------------------
 ## Reference algorithms (no code copied)
