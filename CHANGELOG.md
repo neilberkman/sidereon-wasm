@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 3.0.4 - 2026-10-18
+
+### Fixed
+
+- Rejects RINEX 2 observation and cycle-slip epochs before observable types are
+  declared, including empty `>` epoch records, while continuing to accept a
+  declaration supplied by the file header or a preceding header event.
+
 ## 3.0.3 - 2026-10-12
 
 ### Fixed
