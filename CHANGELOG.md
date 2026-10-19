@@ -20,6 +20,8 @@
 - Validates UKF transform options before filter construction can mask their
   field-specific error, and publishes the transform and update option input
   types on the filter configuration.
+- Rejects a zero robust SPP outer tolerance at the JavaScript boundary with a
+  `RangeError`, matching the engine's strictly positive tolerance contract.
 
 ## 3.0.4 - 2026-10-18
 
