@@ -115,9 +115,7 @@ type _ExactCacheOpenReturn = Assert<
   >
 >;
 type ExactCacheSingleFlightDecision =
-  | { action: "wait"; delayMs: number }
-  | { action: "takeover" }
-  | { action: "timeout" };
+  { action: "wait"; delayMs: number } | { action: "takeover" } | { action: "timeout" };
 type _WebExactCacheSingleFlightDecision = Assert<
   Equal<
     ReturnType<WebBindings.ExactCacheSingleFlightWait["observe"]>,
@@ -342,12 +340,8 @@ type NodeTrackConfig = ConstructorParameters<typeof NodeBindings.TrackFilterConf
 
 type _WebNtripDoesNotTakeFusionConfig = Assert<IsAny<WebNtripConfig>>;
 type _NodeNtripDoesNotTakeFusionConfig = Assert<IsAny<NodeNtripConfig>>;
-type _WebTrackConfigIsTyped = Assert<
-  Equal<WebTrackConfig, WebBindings.TrackFilterConfigInput>
->;
-type _NodeTrackConfigIsTyped = Assert<
-  Equal<NodeTrackConfig, NodeBindings.TrackFilterConfigInput>
->;
+type _WebTrackConfigIsTyped = Assert<Equal<WebTrackConfig, WebBindings.TrackFilterConfigInput>>;
+type _NodeTrackConfigIsTyped = Assert<Equal<NodeTrackConfig, NodeBindings.TrackFilterConfigInput>>;
 type _WebTrackFromPositionIsTyped = Assert<
   Equal<
     [
@@ -391,16 +385,10 @@ type _NodeTrackStateInnovationInputIsTyped = Assert<
   >
 >;
 type _WebTrackInnovationIsTyped = Assert<
-  Equal<
-    ReturnType<WebBindings.TrackFilter["positionInnovation"]>,
-    WebBindings.TrackInnovation
-  >
+  Equal<ReturnType<WebBindings.TrackFilter["positionInnovation"]>, WebBindings.TrackInnovation>
 >;
 type _NodeTrackInnovationIsTyped = Assert<
-  Equal<
-    ReturnType<NodeBindings.TrackFilter["stateInnovation"]>,
-    NodeBindings.TrackInnovation
-  >
+  Equal<ReturnType<NodeBindings.TrackFilter["stateInnovation"]>, NodeBindings.TrackInnovation>
 >;
 type _WebTrackUpdateIsTyped = Assert<
   Equal<ReturnType<WebBindings.TrackFilter["updatePosition"]>, WebBindings.TrackUpdate>
@@ -409,10 +397,7 @@ type _NodeTrackUpdateIsTyped = Assert<
   Equal<ReturnType<NodeBindings.TrackFilter["updateState"]>, NodeBindings.TrackUpdate>
 >;
 type _WebTrackGatedUpdateIsTyped = Assert<
-  Equal<
-    ReturnType<WebBindings.TrackFilter["updatePositionGated"]>,
-    WebBindings.TrackGatedUpdate
-  >
+  Equal<ReturnType<WebBindings.TrackFilter["updatePositionGated"]>, WebBindings.TrackGatedUpdate>
 >;
 type _NodeTrackGatedUpdateIsTyped = Assert<
   Equal<
@@ -823,16 +808,10 @@ type _WebTrackStateKeysRemainComplete = Assert<
   >
 >;
 type _WebTrackUpdateKeysRemainComplete = Assert<
-  Equal<
-    keyof WebBindings.TrackUpdate,
-    "predicted" | "updated" | "innovation" | "kalmanGain"
-  >
+  Equal<keyof WebBindings.TrackUpdate, "predicted" | "updated" | "innovation" | "kalmanGain">
 >;
 type _WebTrackRtsEpochKeysRemainComplete = Assert<
-  Equal<
-    keyof WebBindings.TrackRtsEpoch,
-    "tS" | "predicted" | "updated" | "transitionFromPrevious"
-  >
+  Equal<keyof WebBindings.TrackRtsEpoch, "tS" | "predicted" | "updated" | "transitionFromPrevious">
 >;
 type _WebSmoothedTrackEpochKeysRemainComplete = Assert<
   Equal<keyof WebBindings.SmoothedTrackEpoch, "tS" | "state" | "rtsGainToNext">
@@ -3288,16 +3267,10 @@ type _WebTcaFinderOptions = Assert<
 // Static RTK uses nested fixed-solve options and returns nine named fields.
 // Keep both generated declaration targets aligned with the serde boundary.
 type _WebStaticRtkOptions = Assert<
-  Equal<
-    WebBindings.RtkStaticArcConfig["opts"],
-    WebBindings.RtkValidatedFixedOptions | undefined
-  >
+  Equal<WebBindings.RtkStaticArcConfig["opts"], WebBindings.RtkValidatedFixedOptions | undefined>
 >;
 type _NodeStaticRtkOptions = Assert<
-  Equal<
-    NodeBindings.RtkStaticArcConfig["opts"],
-    NodeBindings.RtkValidatedFixedOptions | undefined
-  >
+  Equal<NodeBindings.RtkStaticArcConfig["opts"], NodeBindings.RtkValidatedFixedOptions | undefined>
 >;
 type ExpectedStaticRtkSolutionKeys =
   | "geometryQuality"
@@ -3322,10 +3295,7 @@ type _NodeStaticRtkReturn = Assert<
   Equal<ReturnType<typeof NodeBindings.solveStaticRtkArc>, NodeBindings.RtkStaticArcSolution>
 >;
 type _WebStaticRtkFloatSolution = Assert<
-  Equal<
-    WebBindings.RtkStaticArcSolution["floatSolution"],
-    WebBindings.RtkFloatArcSolution
-  >
+  Equal<WebBindings.RtkStaticArcSolution["floatSolution"], WebBindings.RtkFloatArcSolution>
 >;
 type _NodeStaticRtkSplitArcs = Assert<
   Equal<
