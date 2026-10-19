@@ -22,6 +22,7 @@
   types on the filter configuration.
 - Rejects a zero robust SPP outer tolerance at the JavaScript boundary with a
   `RangeError`, matching the engine's strictly positive tolerance contract.
+- Corrects the TypeScript input and result declarations for DLL jitter and multipath error-envelope APIs to match their runtime object shapes.
 
 ## 3.0.4 - 2026-10-18
 

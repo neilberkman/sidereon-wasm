@@ -1669,26 +1669,37 @@ export type Sgp4OperationError = Error & { detail: Sgp4OperationErrorDetail };
 
 export interface DllJitterOptions {
     cn0DbHz: number;
+    loopBandwidthHz: number;
+    integrationTimeS: number;
+    correlatorSpacingChips: number;
     receiverBandwidthHz: number;
-    earlyLateSpacingChips: number;
-    integrationTimeS?: number;
 }
 
 export interface DllJitterResult {
-    sigmaChips: number;
-    sigmaM: number;
+    seconds: number;
+    chips: number;
+    meters: number;
+    squaringLoss: number;
 }
 
 export interface MultipathEnvelopeOptions {
-    earlyLateSpacingChips: number;
+    multipathToDirectRatio: number;
+    correlatorSpacingChips: number;
     receiverBandwidthHz: number;
-    relativeAmplitude?: number;
-    carrierPhaseRad?: number;
 }
 
-export interface MultipathEnvelopeResult {
-    delayChips: Float64Array;
-    errorChips: Float64Array;
+export interface MultipathEnvelopePoint {
+    delayChips: number;
+    delayS: number;
+    inPhaseChips: number;
+    inPhaseS: number;
+    inPhaseM: number;
+    antiPhaseChips: number;
+    antiPhaseS: number;
+    antiPhaseM: number;
+    runningAverageChips: number;
+    runningAverageS: number;
+    runningAverageM: number;
 }
 
 export interface TerrainLookupOptions {
@@ -1987,7 +1998,7 @@ const classMemberReplacements = [
       ],
       [
         "multipathErrorEnvelope(options: any, delay_chips: Float64Array): any;",
-        "multipathErrorEnvelope(options: MultipathEnvelopeOptions, delay_chips: Float64Array): MultipathEnvelopeResult;",
+        "multipathErrorEnvelope(options: MultipathEnvelopeOptions, delay_chips: Float64Array): MultipathEnvelopePoint[];",
       ],
     ],
   ],

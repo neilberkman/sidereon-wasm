@@ -107,6 +107,86 @@ type _WebOrbitFitOptionsNotAny = Assert<
 type _NodeOrbitFitSamplesNotAny = Assert<
   Equal<IsAny<Parameters<typeof NodeBindings.fitPreciseEphemerisSampleOrbit>[0]>, false>
 >;
+type ExpectedDllJitterOptions = {
+  cn0DbHz: number;
+  loopBandwidthHz: number;
+  integrationTimeS: number;
+  correlatorSpacingChips: number;
+  receiverBandwidthHz: number;
+};
+type ExpectedDllJitterResult = {
+  seconds: number;
+  chips: number;
+  meters: number;
+  squaringLoss: number;
+};
+type ExpectedMultipathEnvelopeOptions = {
+  multipathToDirectRatio: number;
+  correlatorSpacingChips: number;
+  receiverBandwidthHz: number;
+};
+type ExpectedMultipathEnvelopePoint = {
+  delayChips: number;
+  delayS: number;
+  inPhaseChips: number;
+  inPhaseS: number;
+  inPhaseM: number;
+  antiPhaseChips: number;
+  antiPhaseS: number;
+  antiPhaseM: number;
+  runningAverageChips: number;
+  runningAverageS: number;
+  runningAverageM: number;
+};
+
+type _WebDllOptionsMatchRuntime = Assert<
+  Equal<
+    Parameters<WebBindings.SignalAnalysisModulation["dllThermalNoiseJitter"]>[0],
+    ExpectedDllJitterOptions
+  >
+>;
+type _NodeDllOptionsMatchRuntime = Assert<
+  Equal<
+    Parameters<NodeBindings.SignalAnalysisModulation["dllThermalNoiseJitter"]>[0],
+    ExpectedDllJitterOptions
+  >
+>;
+type _WebDllResultMatchesRuntime = Assert<
+  Equal<
+    ReturnType<WebBindings.SignalAnalysisModulation["dllThermalNoiseJitter"]>,
+    ExpectedDllJitterResult
+  >
+>;
+type _NodeDllResultMatchesRuntime = Assert<
+  Equal<
+    ReturnType<NodeBindings.SignalAnalysisModulation["dllThermalNoiseJitter"]>,
+    ExpectedDllJitterResult
+  >
+>;
+type _WebMultipathOptionsMatchRuntime = Assert<
+  Equal<
+    Parameters<WebBindings.SignalAnalysisModulation["multipathErrorEnvelope"]>[0],
+    ExpectedMultipathEnvelopeOptions
+  >
+>;
+type _NodeMultipathOptionsMatchRuntime = Assert<
+  Equal<
+    Parameters<NodeBindings.SignalAnalysisModulation["multipathErrorEnvelope"]>[0],
+    ExpectedMultipathEnvelopeOptions
+  >
+>;
+type _WebMultipathResultMatchesRuntime = Assert<
+  Equal<
+    ReturnType<WebBindings.SignalAnalysisModulation["multipathErrorEnvelope"]>,
+    ExpectedMultipathEnvelopePoint[]
+  >
+>;
+type _NodeMultipathResultMatchesRuntime = Assert<
+  Equal<
+    ReturnType<NodeBindings.SignalAnalysisModulation["multipathErrorEnvelope"]>,
+    ExpectedMultipathEnvelopePoint[]
+  >
+>;
 
 type _ExactCacheOpenReturn = Assert<
   Equal<
