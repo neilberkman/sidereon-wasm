@@ -200,6 +200,10 @@ test("events bad inputs throw", () => {
   assert.throws(() => sunAngle(new Float64Array(2), new Float64Array(3)));
   assert.throws(() => phaseAngle(new Float64Array(3), new Float64Array(6), new Float64Array(3)));
   assert.throws(() => new Wgs84Geodetic(Math.PI, 0.0));
+  assert.throws(
+    () => new Wgs84Geodetic(0.0, Math.PI + 0.1),
+    (error) => error instanceof RangeError && error.message === "lonRad must be in [-pi, pi]",
+  );
   assert.throws(() =>
     gnssDop(new Float64Array(9), Float64Array.from([1, 1, 1]), new Wgs84Geodetic(0, 0)),
   );

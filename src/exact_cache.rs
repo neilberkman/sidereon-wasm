@@ -16,6 +16,14 @@ use wasm_bindgen::prelude::*;
 use crate::domain_error::exact_cache_error;
 use crate::error::{engine_error, range_error};
 
+#[wasm_bindgen(typescript_custom_section)]
+const TS_TYPES: &'static str = r#"
+export type ExactCacheSingleFlightDecision =
+  | { action: "wait"; delayMs: number }
+  | { action: "takeover" }
+  | { action: "timeout" };
+"#;
+
 #[derive(Serialize)]
 #[serde(tag = "action", rename_all = "camelCase")]
 enum WaitDecision {
@@ -63,6 +71,7 @@ impl ExactCacheSingleFlightWait {
     }
 
     /// Observe an opaque IndexedDB owner/heartbeat revision.
+    #[wasm_bindgen(unchecked_return_type = "ExactCacheSingleFlightDecision")]
     pub fn observe(&mut self, now_ms: f64, revision: &[u8]) -> Result<JsValue, JsValue> {
         let now = duration_ms(now_ms, "nowMs")?;
         let decision = match self
