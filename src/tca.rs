@@ -305,8 +305,7 @@ pub fn find_tca_candidates(
     secondary_line2: &str,
     window_start_unix_micros: i64,
     window_end_unix_micros: i64,
-    #[wasm_bindgen(unchecked_param_type = "TcaFinderOptions | undefined | null")]
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "TcaFinderOptions | undefined | null")] options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let opts = parse_finder_options(options)?;
     let candidates = find_tca_candidates_from_tles(
@@ -342,10 +341,8 @@ pub fn find_tca_conjunctions(
     secondary_line2: &str,
     window_start_unix_micros: i64,
     window_end_unix_micros: i64,
-    #[wasm_bindgen(unchecked_param_type = "TcaPcOptions")]
-    pc_options: JsValue,
-    #[wasm_bindgen(unchecked_param_type = "TcaFinderOptions | undefined | null")]
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "TcaPcOptions")] pc_options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "TcaFinderOptions | undefined | null")] options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let tca_options = parse_finder_options(options)?;
     let pc_options = parse_pc_options(pc_options)?;
@@ -377,13 +374,11 @@ pub fn find_tca_conjunctions(
 pub fn screen_tca_candidates(
     primary_line1: &str,
     primary_line2: &str,
-    #[wasm_bindgen(unchecked_param_type = "TcaTle[]")]
-    secondaries: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "TcaTle[]")] secondaries: JsValue,
     window_start_unix_micros: i64,
     window_end_unix_micros: i64,
     miss_distance_threshold_km: f64,
-    #[wasm_bindgen(unchecked_param_type = "TcaFinderOptions | undefined | null")]
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "TcaFinderOptions | undefined | null")] options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let opts = parse_finder_options(options)?;
     let catalog = parse_tle_catalog(secondaries)?;
@@ -421,15 +416,12 @@ pub fn screen_tca_candidates(
 pub fn screen_tca_conjunctions(
     primary_line1: &str,
     primary_line2: &str,
-    #[wasm_bindgen(unchecked_param_type = "TcaTle[]")]
-    secondaries: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "TcaTle[]")] secondaries: JsValue,
     window_start_unix_micros: i64,
     window_end_unix_micros: i64,
     miss_distance_threshold_km: f64,
-    #[wasm_bindgen(unchecked_param_type = "TcaPcOptions")]
-    pc_options: JsValue,
-    #[wasm_bindgen(unchecked_param_type = "TcaFinderOptions | undefined | null")]
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "TcaPcOptions")] pc_options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "TcaFinderOptions | undefined | null")] options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let tca_options = parse_finder_options(options)?;
     let pc_options = parse_pc_options(pc_options)?;

@@ -164,7 +164,8 @@ fn parse_ukf_options(
                 min_rows: gate.min_rows,
             });
     }
-    out.validate_for_dimension(dimension).map_err(fusion_error)?;
+    out.validate_for_dimension(dimension)
+        .map_err(fusion_error)?;
     Ok(out)
 }
 

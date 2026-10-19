@@ -338,8 +338,7 @@ impl From<OrbitFitReport> for OrbitFitReportJs {
 pub fn fit_sp3_precise_orbit(
     sp3: &Sp3,
     satellite: &str,
-    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")]
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")] options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let sat = parse_satellite(satellite)?;
     let options = orbit_options(options)?;
@@ -357,8 +356,7 @@ pub fn fit_sp3_precise_orbit(
 pub fn fit_sp3_ecef_precise_orbit(
     sp3: &Sp3,
     satellite: &str,
-    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")]
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")] options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let sat = parse_satellite(satellite)?;
     let options = orbit_options(options)?;
@@ -375,10 +373,8 @@ pub fn fit_sp3_ecef_precise_orbit(
 #[wasm_bindgen(js_name = fitSp3EcefPreciseOrbits, unchecked_return_type = "OrbitFitReport")]
 pub fn fit_sp3_ecef_precise_orbits(
     sp3: &Sp3,
-    #[wasm_bindgen(unchecked_param_type = "string[]")]
-    satellites: JsValue,
-    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")]
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "string[]")] satellites: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")] options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let sats = parse_satellites(satellites)?;
     let options = orbit_options(options)?;
@@ -395,8 +391,7 @@ pub fn fit_sp3_ecef_precise_orbits(
 #[wasm_bindgen(js_name = fitAllSp3EcefPreciseOrbits, unchecked_return_type = "OrbitFitReport")]
 pub fn fit_all_sp3_ecef_precise_orbits(
     sp3: &Sp3,
-    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")]
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")] options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let options = orbit_options(options)?;
     let provider = TdbEarthOrientationProvider::new();
@@ -412,11 +407,9 @@ pub fn fit_all_sp3_ecef_precise_orbits(
 /// since J2000.
 #[wasm_bindgen(js_name = fitPreciseEphemerisSampleOrbit, unchecked_return_type = "OrbitFitReport")]
 pub fn fit_precise_ephemeris_sample_orbit(
-    #[wasm_bindgen(unchecked_param_type = "Sp3PreciseEphemerisSample[]")]
-    samples: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "Sp3PreciseEphemerisSample[]")] samples: JsValue,
     satellite: &str,
-    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")]
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "OrbitFitOptions | undefined | null")] options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let samples = decode_core_samples(samples)?;
     let sat = parse_satellite(satellite)?;
