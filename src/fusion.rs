@@ -112,6 +112,38 @@ fn parse_update_options(
     Ok(options)
 }
 
+fn validate_raw_ukf_transform(config: &JsValue) -> Result<(), JsValue> {
+    let ukf = js_sys::Reflect::get(config, &JsValue::from_str("ukf"))
+        .map_err(|_| type_error("could not read fusion config ukf"))?;
+    if ukf.is_undefined() || ukf.is_null() {
+        return Ok(());
+    }
+    let transform = js_sys::Reflect::get(&ukf, &JsValue::from_str("transform"))
+        .map_err(|_| type_error("could not read fusion config ukf.transform"))?;
+    if transform.is_undefined() || transform.is_null() {
+        return Ok(());
+    }
+    for (field, core_field) in [
+        ("alpha", "ukf_alpha"),
+        ("beta", "ukf_beta"),
+        ("kappa", "ukf_kappa"),
+    ] {
+        let value = js_sys::Reflect::get(&transform, &JsValue::from_str(field)).map_err(|_| {
+            type_error(&format!(
+                "could not read fusion config ukf.transform.{field}"
+            ))
+        })?;
+        if let Some(value) = value.as_f64() {
+            if !value.is_finite() {
+                return Err(range_error(&format!(
+                    "invalid fusion input {core_field}: must be finite"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn parse_ukf_options(
     input: Option<UkfUpdateOptionsInput>,
     dimension: usize,
@@ -341,6 +373,7 @@ fn build_nav_state(input: NavStateInput) -> Result<core_inertial::NavState, JsVa
 }
 
 fn build_filter(config: JsValue) -> Result<core_fusion::InertialFilter, JsValue> {
+    validate_raw_ukf_transform(&config)?;
     let input: FusionConfigInput = serde_wasm_bindgen::from_value(config)
         .map_err(|e| type_error(&format!("invalid fusion config: {e}")))?;
     let layout = parse_layout(input.layout.as_deref())?;
