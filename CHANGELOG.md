@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Restores concrete TypeScript declarations for the no-IMU track filter inputs,
+  state, predictions, innovations, updates, and RTS history/smoothing results.
 - Publishes the nested static-RTK fixed-solve options and all nine runtime
   result fields in the TypeScript declarations.
 - Declares the exact-cache single-flight waiter's structured `wait`, `takeover`,

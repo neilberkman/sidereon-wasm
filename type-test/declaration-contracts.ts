@@ -342,8 +342,93 @@ type NodeTrackConfig = ConstructorParameters<typeof NodeBindings.TrackFilterConf
 
 type _WebNtripDoesNotTakeFusionConfig = Assert<IsAny<WebNtripConfig>>;
 type _NodeNtripDoesNotTakeFusionConfig = Assert<IsAny<NodeNtripConfig>>;
-type _WebTrackDoesNotTakeFusionConfig = Assert<IsAny<WebTrackConfig>>;
-type _NodeTrackDoesNotTakeFusionConfig = Assert<IsAny<NodeTrackConfig>>;
+type _WebTrackConfigIsTyped = Assert<
+  Equal<WebTrackConfig, WebBindings.TrackFilterConfigInput>
+>;
+type _NodeTrackConfigIsTyped = Assert<
+  Equal<NodeTrackConfig, NodeBindings.TrackFilterConfigInput>
+>;
+type _WebTrackFromPositionIsTyped = Assert<
+  Equal<
+    [
+      Parameters<typeof WebBindings.TrackFilter.fromPosition>[0],
+      Parameters<typeof WebBindings.TrackFilterConfig.fromPosition>[0],
+    ],
+    [WebBindings.TrackFilterFromPositionInput, WebBindings.TrackFilterFromPositionInput]
+  >
+>;
+type _NodeTrackFromPositionIsTyped = Assert<
+  Equal<
+    [
+      Parameters<typeof NodeBindings.TrackFilter.fromPosition>[0],
+      Parameters<typeof NodeBindings.TrackFilterConfig.fromPosition>[0],
+    ],
+    [NodeBindings.TrackFilterFromPositionInput, NodeBindings.TrackFilterFromPositionInput]
+  >
+>;
+type _WebTrackStateIsTyped = Assert<
+  Equal<WebBindings.TrackFilter["state"], WebBindings.TrackState>
+>;
+type _NodeTrackStateIsTyped = Assert<
+  Equal<NodeBindings.TrackFilter["state"], NodeBindings.TrackState>
+>;
+type _WebTrackPredictionIsTyped = Assert<
+  Equal<ReturnType<WebBindings.TrackFilter["predict"]>, WebBindings.TrackPrediction>
+>;
+type _NodeTrackPredictionIsTyped = Assert<
+  Equal<ReturnType<NodeBindings.TrackFilter["predictRecorded"]>, NodeBindings.TrackPrediction>
+>;
+type _WebTrackPositionInnovationInputIsTyped = Assert<
+  Equal<
+    Parameters<WebBindings.TrackFilter["positionInnovation"]>[0],
+    WebBindings.TrackPositionObservationInput
+  >
+>;
+type _NodeTrackStateInnovationInputIsTyped = Assert<
+  Equal<
+    Parameters<NodeBindings.TrackFilter["stateInnovation"]>[0],
+    NodeBindings.TrackStateObservationInput
+  >
+>;
+type _WebTrackInnovationIsTyped = Assert<
+  Equal<
+    ReturnType<WebBindings.TrackFilter["positionInnovation"]>,
+    WebBindings.TrackInnovation
+  >
+>;
+type _NodeTrackInnovationIsTyped = Assert<
+  Equal<
+    ReturnType<NodeBindings.TrackFilter["stateInnovation"]>,
+    NodeBindings.TrackInnovation
+  >
+>;
+type _WebTrackUpdateIsTyped = Assert<
+  Equal<ReturnType<WebBindings.TrackFilter["updatePosition"]>, WebBindings.TrackUpdate>
+>;
+type _NodeTrackUpdateIsTyped = Assert<
+  Equal<ReturnType<NodeBindings.TrackFilter["updateState"]>, NodeBindings.TrackUpdate>
+>;
+type _WebTrackGatedUpdateIsTyped = Assert<
+  Equal<
+    ReturnType<WebBindings.TrackFilter["updatePositionGated"]>,
+    WebBindings.TrackGatedUpdate
+  >
+>;
+type _NodeTrackGatedUpdateIsTyped = Assert<
+  Equal<
+    ReturnType<NodeBindings.TrackFilter["updatePositionGatedRecorded"]>,
+    NodeBindings.TrackGatedUpdate
+  >
+>;
+type _WebTrackConfigObjectIsTyped = Assert<
+  Equal<ReturnType<WebBindings.TrackFilterConfig["toObject"]>, WebBindings.TrackFilterConfigObject>
+>;
+type _NodeTrackConfigObjectIsTyped = Assert<
+  Equal<
+    ReturnType<NodeBindings.TrackFilterConfig["toObject"]>,
+    NodeBindings.TrackFilterConfigObject
+  >
+>;
 
 const webContentStart: WebBindings.Sp3ContentStartConvention =
   WebBindings.sp3ContentStartConvention("gfz_ult", 2022, 9, 7, "0300");
@@ -711,11 +796,52 @@ void nodePreciseDigestProvenance;
 
 type _WebNmeaEpochsAreNotFusionEpochs = Assert<IsAny<WebBindings.NmeaParseResult["epochs"]>>;
 type _NodeNmeaEpochsAreNotFusionEpochs = Assert<IsAny<NodeBindings.NmeaParseResult["epochs"]>>;
-type _WebTrackEpochsAreNotFusionEpochs = Assert<IsAny<WebBindings.TrackRtsHistory["epochs"]>>;
-type _NodeTrackEpochsAreNotFusionEpochs = Assert<IsAny<NodeBindings.TrackRtsHistory["epochs"]>>;
-type _WebSmoothedTrackEpochsAreNotFusionEpochs = Assert<IsAny<WebBindings.SmoothedTrack["epochs"]>>;
-type _NodeSmoothedTrackEpochsAreNotFusionEpochs = Assert<
-  IsAny<NodeBindings.SmoothedTrack["epochs"]>
+type _WebTrackEpochsRemainTyped = Assert<
+  Equal<WebBindings.TrackRtsHistory["epochs"], WebBindings.TrackRtsEpoch[]>
+>;
+type _NodeTrackEpochsRemainTyped = Assert<
+  Equal<NodeBindings.TrackRtsHistory["epochs"], NodeBindings.TrackRtsEpoch[]>
+>;
+type _WebSmoothedTrackEpochsRemainTyped = Assert<
+  Equal<WebBindings.SmoothedTrack["epochs"], WebBindings.SmoothedTrackEpoch[]>
+>;
+type _NodeSmoothedTrackEpochsRemainTyped = Assert<
+  Equal<NodeBindings.SmoothedTrack["epochs"], NodeBindings.SmoothedTrackEpoch[]>
+>;
+type _WebTrackStateKeysRemainComplete = Assert<
+  Equal<
+    keyof WebBindings.TrackState,
+    | "frame"
+    | "tS"
+    | "positionM"
+    | "velocityMS"
+    | "covariance"
+    | "stateVector"
+    | "positionCovarianceM2"
+    | "dimension"
+    | "stateDimension"
+  >
+>;
+type _WebTrackUpdateKeysRemainComplete = Assert<
+  Equal<
+    keyof WebBindings.TrackUpdate,
+    "predicted" | "updated" | "innovation" | "kalmanGain"
+  >
+>;
+type _WebTrackRtsEpochKeysRemainComplete = Assert<
+  Equal<
+    keyof WebBindings.TrackRtsEpoch,
+    "tS" | "predicted" | "updated" | "transitionFromPrevious"
+  >
+>;
+type _WebSmoothedTrackEpochKeysRemainComplete = Assert<
+  Equal<keyof WebBindings.SmoothedTrackEpoch, "tS" | "state" | "rtsGainToNext">
+>;
+type _WebRejectedTrackGateIsNullable = Assert<
+  Equal<WebBindings.TrackGatedUpdate["update"], WebBindings.TrackUpdate | null>
+>;
+type _WebFinalRtsGainIsNullable = Assert<
+  Equal<WebBindings.SmoothedTrackEpoch["rtsGainToNext"], number[][] | null>
 >;
 
 type _WebStaticResidualsAreNotPppResiduals = Assert<IsAny<WebBindings.StaticSolution["residuals"]>>;
@@ -877,7 +1003,7 @@ function compileOnlyConstructorExamples() {
   new WebBindings.NtripClientMachine({ host: "caster.example.test" });
   new NodeBindings.NtripClientMachine({ host: "caster.example.test" });
 
-  const trackConfig = {
+  const webTrackConfig = {
     frame: "callerDefinedCartesian",
     initialTS: 0,
     initialPositionM: [0],
@@ -887,10 +1013,11 @@ function compileOnlyConstructorExamples() {
       [0, 1],
     ],
     accelerationVarianceSpectralDensityM2S3: 0.1,
-  };
+  } satisfies WebBindings.TrackFilterConfigInput;
 
-  new WebBindings.TrackFilterConfig(trackConfig);
-  new NodeBindings.TrackFilterConfig(trackConfig);
+  const nodeTrackConfig = webTrackConfig satisfies NodeBindings.TrackFilterConfigInput;
+  new WebBindings.TrackFilterConfig(webTrackConfig);
+  new NodeBindings.TrackFilterConfig(nodeTrackConfig);
 }
 // --- IONEX -----------------------------------------------------------------
 //
