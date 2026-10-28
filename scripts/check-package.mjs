@@ -174,11 +174,30 @@ try {
     "includeInfluence?: boolean;",
     "* @deprecated Use `closedFormInitialGuess` instead.",
   ];
+  const requiredLnavUnitDeclarations = [
+    ["Mean motion difference, semicircles per second.", "deltaN"],
+    ["Mean anomaly at reference time, semicircles.", "m0"],
+    ["Longitude of ascending node at weekly epoch, semicircles.", "omega0"],
+    ["Inclination at reference time, semicircles.", "i0"],
+    ["Argument of perigee, semicircles.", "omega"],
+    ["Rate of right ascension, semicircles per second.", "omegaDot"],
+    ["Rate of inclination, semicircles per second.", "idot"],
+    ["Cosine harmonic correction to argument of latitude, radians.", "cuc"],
+    ["Sine harmonic correction to argument of latitude, radians.", "cus"],
+    ["Cosine harmonic correction to inclination, radians.", "cic"],
+    ["Sine harmonic correction to inclination, radians.", "cis"],
+  ];
   for (const path of ["pkg/sidereon.d.ts", "pkg-node/sidereon.d.ts"]) {
     const declarations = readFileSync(join(packageRoot, path), "utf8");
     for (const declaration of requiredDeclarations) {
       if (!declarations.includes(declaration)) {
         throw new Error(`${path} is missing declaration ${declaration}`);
+      }
+    }
+    for (const [documentation, field] of requiredLnavUnitDeclarations) {
+      const declaration = `* ${documentation}\n     */\n    readonly ${field}: number;`;
+      if (!declarations.includes(declaration)) {
+        throw new Error(`${path} is missing LNAV unit declaration for ${field}`);
       }
     }
   }

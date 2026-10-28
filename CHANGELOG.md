@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Corrects the `LnavDecoded` getter documentation for the seven raw broadcast
+  angular fields to state semicircles or semicircles per second. Their
+  transmitted-integer-times-LSB numerical values are unchanged.
 - Restores concrete TypeScript declarations for the no-IMU track filter inputs,
   state, predictions, innovations, updates, and RTS history/smoothing results.
 - Publishes the nested static-RTK fixed-solve options and all nine runtime
