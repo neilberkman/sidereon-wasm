@@ -164,7 +164,7 @@ test("accuracy rounding reports a nonzero conservative sigma increase", () => {
   assert.equal(restored.header.posVelBase, 2);
   assert.equal(restored.recordAccuracy("G12", 0).p.positionSigmaM[0].value, 0.032);
   assert.ok(
-    Math.abs(report.accuracySigmas.positionSigmaXMaxChangeM - 0.013810105964541435) < 1e-15,
+    Math.abs(report.accuracySigmas.positionSigmaXMaxChangeM - 0.01381010596454144) < 1e-15,
   );
 });
 
