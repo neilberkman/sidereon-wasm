@@ -27,6 +27,8 @@ function replacePositionXExponent(text, satellite, exponent) {
 }
 
 function replaceCodes(text, satellite, { position, velocity }) {
+  const format = (value, width) =>
+    value === null ? " ".repeat(width) : String(value).padStart(width);
   return `${text
     .split("\n")
     .map((line) => {
@@ -37,7 +39,7 @@ function replaceCodes(text, satellite, { position, velocity }) {
           : null;
       return codes
         ? line.slice(0, 60) +
-            `${String(codes[0]).padStart(2)} ${String(codes[1]).padStart(2)} ${String(codes[2]).padStart(2)} ${String(codes[3]).padStart(3)}  `
+            ` ${format(codes[0], 2)} ${format(codes[1], 2)} ${format(codes[2], 2)} ${format(codes[3], 3)}  `
         : line;
     })
     .join("\n")}`;
@@ -195,8 +197,8 @@ test("accuracy rounding report maps all eight sigma fields", () => {
   assert.equal(deltas.length, 8);
   const source = sp3.recordAccuracy("G12", 0);
   const output = restored.recordAccuracy("G12", 0);
-  assert.equal(source.v, null);
-  assert.equal(output.v, null);
+  assert.equal(source.v, undefined);
+  assert.equal(output.v, undefined);
   for (let index = 0; index < 3; index += 1) {
     assert.equal(source.p.positionSigmaM[index].kind, "known");
     assert.equal(output.p.positionSigmaM[index].kind, "known");
@@ -228,14 +230,14 @@ test("accuracy rounding report maps all eight sigma fields", () => {
 });
 
 test("accuracy rounding respects I2 and I3 lower finite bounds and sentinels", () => {
-  let aText = replaceBases(new TextDecoder().decode(fixture("sp3/accuracy-rounding/A.sp3")), {
+  let aText = replaceBases(new TextDecoder().decode(fixture("sp3/accuracy-rounding/A-anchor.sp3")), {
     position: 2,
   });
-  aText = replaceCodes(aText, "G01", { position: [-9, 99, 99, 999] });
-  let bText = replaceBases(new TextDecoder().decode(fixture("sp3/accuracy-rounding/B.sp3")), {
+  aText = replaceCodes(aText, "G01", { position: [-9, null, null, null] });
+  let bText = replaceBases(new TextDecoder().decode(fixture("sp3/accuracy-rounding/B-anchor.sp3")), {
     position: 4,
   });
-  bText = replaceCodes(bText, "G12", { position: [-5, 99, 99, 999] });
+  bText = replaceCodes(bText, "G12", { position: [-5, null, null, null] });
   const lowerAxis = mergeSp3(
     [loadSp3(encoder.encode(aText)), loadSp3(encoder.encode(bText))],
     options,
@@ -253,12 +255,12 @@ test("accuracy rounding respects I2 and I3 lower finite bounds and sentinels", (
     new TextDecoder().decode(fixture("sp3/accuracy-rounding/A-anchor.sp3")),
     { clock: 2 },
   );
-  aClock = replaceCodes(aClock, "G01", { position: [99, 99, 99, -99] });
+  aClock = replaceCodes(aClock, "G01", { position: [null, null, null, -99] });
   let bClock = replaceBases(
     new TextDecoder().decode(fixture("sp3/accuracy-rounding/B-anchor.sp3")),
     { clock: 4 },
   );
-  bClock = replaceCodes(bClock, "G12", { position: [99, 99, 99, -50] });
+  bClock = replaceCodes(bClock, "G12", { position: [null, null, null, -50] });
   const lowerClock = mergeSp3(
     [loadSp3(encoder.encode(aClock)), loadSp3(encoder.encode(bClock))],
     options,
@@ -276,12 +278,12 @@ test("accuracy rounding respects I2 and I3 lower finite bounds and sentinels", (
     new TextDecoder().decode(fixture("sp3/accuracy-rounding/A-anchor.sp3")),
     { clock: 1.025 },
   );
-  upperA = replaceCodes(upperA, "G01", { position: [99, 99, 99, 1] });
+  upperA = replaceCodes(upperA, "G01", { position: [null, null, null, 1] });
   let upperB = replaceBases(
     new TextDecoder().decode(fixture("sp3/accuracy-rounding/B-anchor.sp3")),
     { clock: 2 },
   );
-  upperB = replaceCodes(upperB, "G12", { position: [99, 99, 99, 998] });
+  upperB = replaceCodes(upperB, "G12", { position: [null, null, null, 998] });
   const upperClock = mergeSp3(
     [loadSp3(encoder.encode(upperA)), loadSp3(encoder.encode(upperB))],
     options,

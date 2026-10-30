@@ -109,10 +109,7 @@ export function checkSp3Consumer({ Sp3AccuracyRoundingPolicy, loadSp3, mergeSp3 
     systems: ["G"],
   };
   const { sp3: noOp } = mergeSp3(
-    [
-      accuracyProduct(["G01", "G02"], 0, 0, null),
-      accuracyProduct(["G02", "G12"], 1.25, 1.025, 13),
-    ],
+    [accuracyProduct(["G01", "G02"], 0, 0, null), accuracyProduct(["G02", "G12"], 1.25, 1.025, 13)],
     accuracyOptions,
   );
   try {
@@ -122,10 +119,7 @@ export function checkSp3Consumer({ Sp3AccuracyRoundingPolicy, loadSp3, mergeSp3 
     assert.deepEqual(Object.values(report.accuracySigmas), Array(8).fill(0));
     const reread = loadSp3(encoder.encode(text));
     try {
-      assert.equal(
-        reread.recordAccuracy("G12", 0).p.positionSigmaM[0].value,
-        0.018189894035458565,
-      );
+      assert.equal(reread.recordAccuracy("G12", 0).p.positionSigmaM[0].value, 0.018189894035458565);
       assert.equal(reread.recordAccuracy("G01", 0).p.positionSigmaM[0].kind, "unknown");
     } finally {
       reread.free();
@@ -135,18 +129,14 @@ export function checkSp3Consumer({ Sp3AccuracyRoundingPolicy, loadSp3, mergeSp3 
   }
 
   const { sp3: changed } = mergeSp3(
-    [
-      accuracyProduct(["G01", "G02"], 2, 2, 1),
-      accuracyProduct(["G02", "G12"], 1.25, 1.025, 13),
-    ],
+    [accuracyProduct(["G01", "G02"], 2, 2, 1), accuracyProduct(["G02", "G12"], 1.25, 1.025, 13)],
     accuracyOptions,
   );
   try {
-    const directSource = loadSp3(encoder.encode(accuracyProduct(["G12"], 2, 2, 1)));
+    const directSource = accuracyProduct(["G12"], 2, 2, 1);
     try {
-      const { text: directText, report: directReport } = directSource.toSp3StringWithAccuracyRounding(
-        Sp3AccuracyRoundingPolicy.Conservative,
-      );
+      const { text: directText, report: directReport } =
+        directSource.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative);
       assert.deepEqual(Object.values(directReport.accuracySigmas), Array(8).fill(0));
       const directOutput = loadSp3(encoder.encode(directText));
       try {
@@ -179,9 +169,12 @@ export function checkSp3Consumer({ Sp3AccuracyRoundingPolicy, loadSp3, mergeSp3 
       assert.deepEqual(reportDeltas.slice(3, 6), Array(3).fill(0));
       assert.ok(reportDeltas[6] > 0);
       assert.equal(reportDeltas[7], 0);
-      assert.equal(source.v, null);
-      assert.equal(output.v, null);
-      assert.deepEqual(output.p.positionSigmaM.map((value) => value.value), [0.032, 0.032, 0.032]);
+      assert.equal(source.v, undefined);
+      assert.equal(output.v, undefined);
+      assert.deepEqual(
+        output.p.positionSigmaM.map((value) => value.value),
+        [0.032, 0.032, 0.032],
+      );
       assert.equal(output.p.clockSigmaM.value, 2 * (299792458 * 1e-12));
     } finally {
       reread.free();
@@ -200,18 +193,12 @@ export function checkSp3Consumer({ Sp3AccuracyRoundingPolicy, loadSp3, mergeSp3 
   }
 
   const { sp3: unrepresentable } = mergeSp3(
-    [
-      accuracyProduct(["G01", "G02"], 1.25, 1.025, 1),
-      accuracyProduct(["G02", "G12"], 2, 2, 98),
-    ],
+    [accuracyProduct(["G01", "G02"], 1.25, 1.025, 1), accuracyProduct(["G02", "G12"], 2, 2, 98)],
     accuracyOptions,
   );
   try {
     assert.throws(
-      () =>
-        unrepresentable.toSp3StringWithAccuracyRounding(
-          Sp3AccuracyRoundingPolicy.Conservative,
-        ),
+      () => unrepresentable.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative),
       (error) =>
         error.name === "Sp3WriteError" && error.detail.kind === "ACCURACY_NOT_REPRESENTABLE",
     );
