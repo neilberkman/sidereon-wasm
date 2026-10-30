@@ -938,7 +938,8 @@ impl From<DroppedInputEpoch> for Sp3DroppedInputEpoch {
 }
 
 /// Per-(epoch, satellite) agreement statistics for one accepted merged cell:
-/// how tightly the consensus sources clustered about the combined value.
+/// how tightly the consensus sources clustered about the combined value,
+/// before final SP3 record-column rounding.
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct Sp3AgreementMetric {
