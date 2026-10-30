@@ -7,7 +7,7 @@ on:
         description: sidereon commit to reproduce goldens against
         required: true
         type: string
-        default: da59d0eba8e273cc37821eac5535662e5d991126
+        default: 39e5f3d67866c24f08b01d51db7fc09b0d06cd88
 permissions:
   contents: read
 
@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: neilberkman/sidereon
-          ref: ${{ github.event.inputs.core_rev || 'da59d0eba8e273cc37821eac5535662e5d991126' }}
+          ref: ${{ github.event.inputs.core_rev || '39e5f3d67866c24f08b01d51db7fc09b0d06cd88' }}
           path: sidereon-at-rev
 
       - uses: dtolnay/rust-toolchain@1.98.1
@@ -45,8 +45,11 @@ jobs:
           version, manifest = sys.argv[1:]
           path = Path(manifest)
           text = path.read_text()
+          # A prepublication candidate uses full-revision Git pins. Normalize
+          # either source form to exact versions, then patch both crates to the
+          # explicitly checked-out revision in the generation step below.
           for crate in ("sidereon", "sidereon-core"):
-              pattern = rf'^{re.escape(crate)} = \{{ version = "=[^"]+" \}}$'
+              pattern = rf'^{re.escape(crate)}\s*=\s*\{{[^\n]*\}}$'
               text, count = re.subn(
                   pattern,
                   f'{crate} = {{ version = "={version}" }}',
@@ -54,7 +57,7 @@ jobs:
                   flags=re.MULTILINE,
               )
               if count != 1:
-                  raise SystemExit(f"expected one {crate} version dependency, found {count}")
+                  raise SystemExit(f"expected one {crate} dependency to bind to the checked-out core, found {count}")
           path.write_text(text)
           PY
 

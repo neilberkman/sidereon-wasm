@@ -1497,6 +1497,10 @@ type RinexObsWriteErrorDetail = import("../types/sidereon-extra.js").RinexObsWri
 type Sp3WriteErrorDetail = import("../types/sidereon-extra.js").Sp3WriteErrorDetail;
 type Sp3RoundingReport = import("../types/sidereon-extra.js").Sp3RoundingReport;
 type Sp3StringWithRounding = import("../types/sidereon-extra.js").Sp3StringWithRounding;
+type Sp3AccuracyRoundingPolicy = import("../pkg/sidereon.js").Sp3AccuracyRoundingPolicy;
+type Sp3DetailedRoundingReport = import("../types/sidereon-extra.js").Sp3DetailedRoundingReport;
+type Sp3StringWithAccuracyRounding =
+  import("../types/sidereon-extra.js").Sp3StringWithAccuracyRounding;
 type Sp3AccuracyValue = import("../types/sidereon-extra.js").Sp3AccuracyValue;
 type Sp3RawRecordAccuracy = import("../types/sidereon-extra.js").Sp3RawRecordAccuracy;
 type Sp3RecordAccuracy = import("../types/sidereon-extra.js").Sp3RecordAccuracy;
@@ -1858,6 +1862,23 @@ type _WebSp3WriteWithRounding = Assert<
   Equal<ReturnType<WebBindings.Sp3["toSp3StringWithRounding"]>, Sp3StringWithRounding>
 >;
 type _Sp3RoundingReportField = Assert<Equal<Sp3RoundingReport["clockRateMaxChangeSPerS"], number>>;
+type _WebSp3AccuracyWrite = Assert<
+  Equal<
+    ReturnType<WebBindings.Sp3["toSp3StringWithAccuracyRounding"]>,
+    Sp3StringWithAccuracyRounding
+  >
+>;
+type _WebSp3AccuracyPolicy = Assert<
+  Equal<
+    Parameters<WebBindings.Sp3["toSp3StringWithAccuracyRounding"]>[0],
+    Sp3AccuracyRoundingPolicy
+  >
+>;
+type _Sp3AccuracySigmaField = Assert<
+  Equal<Sp3DetailedRoundingReport["accuracySigmas"]["clockSigmaMaxChangeM"], number>
+>;
+const _conservativeSp3AccuracyPolicy: Sp3AccuracyRoundingPolicy =
+  WebBindings.Sp3AccuracyRoundingPolicy.Conservative;
 type _WebAntexWrite = Assert<Equal<ReturnType<WebBindings.Antex["toAntexString"]>, string>>;
 
 // The Node declaration target carries the same generated types.
@@ -1869,6 +1890,12 @@ type _NodeEpochTime = Assert<
 >;
 type _NodeSp3WriteWithRounding = Assert<
   Equal<ReturnType<NodeBindings.Sp3["toSp3StringWithRounding"]>, Sp3StringWithRounding>
+>;
+type _NodeSp3AccuracyWrite = Assert<
+  Equal<
+    ReturnType<NodeBindings.Sp3["toSp3StringWithAccuracyRounding"]>,
+    Sp3StringWithAccuracyRounding
+  >
 >;
 type _NodePhaseCorrections = Assert<
   Equal<NodeBindings.CarrierPhaseSeries["phaseShiftCorrections"], NodeCarrierPhaseShift[]>

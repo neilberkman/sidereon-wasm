@@ -21,6 +21,6 @@ publish = false
 [dependencies]
 # The version the crates of the recorded core commit (`coreRev` in the
 # output) state; Cargo.lock was resolved against that checkout.
-sidereon = { version = "=3.0.5" }
-sidereon-core = { version = "=3.0.5" }
+sidereon = { version = "=3.0.6" }
+sidereon-core = { version = "=3.0.6" }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }

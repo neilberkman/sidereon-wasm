@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 3.0.6 - 2026-10-30
+
+### Added
+
+- Adds `Sp3.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative)` with a detailed
+  report of record-value and accuracy-sigma changes, while keeping the existing
+  record-only writer unchanged.
 
 ## 3.0.5 - 2026-10-30
 
