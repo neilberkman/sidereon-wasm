@@ -132,7 +132,6 @@ for (const reverse of [false, true]) {
       sp3.recordAccuracy("G01", 0).p.clockSigmaM.value,
       sp3.recordAccuracy("G12", 0).p.clockSigmaM.value,
     );
-    for (const product of [a, b, aRoundtrip, bRoundtrip, sp3, strict, rounded]) product.free();
   });
 }
 
@@ -273,12 +272,6 @@ test("accuracy rounding report maps all eight sigma fields", () => {
     [0.032, 0.032, 0.032],
   );
   assert.equal(output.p.clockSigmaM.value, 2 * (299792458 * 1e-12));
-  directRestored.free();
-  direct.free();
-  a.free();
-  b.free();
-  sp3.free();
-  restored.free();
 });
 
 test("accuracy rounding respects I2 and I3 lower finite bounds and sentinels", () => {
