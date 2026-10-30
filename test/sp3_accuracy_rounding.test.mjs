@@ -84,6 +84,58 @@ for (const order of ["A.sp3", "B.sp3"]) {
   });
 }
 
+for (const reverse of [false, true]) {
+  test(`compatible defined accuracy bases preserve values in either order (reverse=${reverse})`, () => {
+    let aText = replaceBases(
+      new TextDecoder().decode(fixture("sp3/accuracy-rounding/A-anchor.sp3")),
+      {
+        position: 2,
+        clock: 2,
+      },
+    );
+    aText = replaceCodes(aText, "G01", { position: [2, null, null, 2] });
+    let bText = replaceBases(
+      new TextDecoder().decode(fixture("sp3/accuracy-rounding/B-anchor.sp3")),
+      {
+        position: 4,
+        clock: 4,
+      },
+    );
+    bText = replaceCodes(bText, "G12", { position: [1, null, null, 1] });
+    const a = loadSp3(encoder.encode(aText));
+    const b = loadSp3(encoder.encode(bText));
+    const aRoundtrip = loadSp3(encoder.encode(a.toSp3String()));
+    const bRoundtrip = loadSp3(encoder.encode(b.toSp3String()));
+    for (const [source, restored, satellite] of [
+      [a, aRoundtrip, "G01"],
+      [b, bRoundtrip, "G12"],
+    ]) {
+      assert.deepEqual(restored.recordAccuracy(satellite, 0), source.recordAccuracy(satellite, 0));
+    }
+    const { sp3 } = mergeSp3(reverse ? [b, a] : [a, b], options);
+    const strictText = sp3.toSp3String();
+    const strict = loadSp3(encoder.encode(strictText));
+    const { text, report } = sp3.toSp3StringWithAccuracyRounding(
+      Sp3AccuracyRoundingPolicy.Conservative,
+    );
+    const rounded = loadSp3(encoder.encode(text));
+    assert.equal(rounded.toSp3String(), strict.toSp3String());
+    assert.deepEqual(Object.values(report.accuracySigmas), Array(8).fill(0));
+    for (const satellite of ["G01", "G12"]) {
+      assert.deepEqual(rounded.recordAccuracy(satellite, 0), strict.recordAccuracy(satellite, 0));
+    }
+    assert.equal(
+      sp3.recordAccuracy("G01", 0).p.positionSigmaM[0].value,
+      sp3.recordAccuracy("G12", 0).p.positionSigmaM[0].value,
+    );
+    assert.equal(
+      sp3.recordAccuracy("G01", 0).p.clockSigmaM.value,
+      sp3.recordAccuracy("G12", 0).p.clockSigmaM.value,
+    );
+    for (const product of [a, b, aRoundtrip, bRoundtrip, sp3, strict, rounded]) product.free();
+  });
+}
+
 test("accuracy rounding requires the explicit recognized policy", () => {
   const sp3 = load("B.sp3");
   assert.throws(() => sp3.toSp3StringWithAccuracyRounding(), TypeError);
@@ -230,13 +282,19 @@ test("accuracy rounding report maps all eight sigma fields", () => {
 });
 
 test("accuracy rounding respects I2 and I3 lower finite bounds and sentinels", () => {
-  let aText = replaceBases(new TextDecoder().decode(fixture("sp3/accuracy-rounding/A-anchor.sp3")), {
-    position: 2,
-  });
+  let aText = replaceBases(
+    new TextDecoder().decode(fixture("sp3/accuracy-rounding/A-anchor.sp3")),
+    {
+      position: 2,
+    },
+  );
   aText = replaceCodes(aText, "G01", { position: [-9, null, null, null] });
-  let bText = replaceBases(new TextDecoder().decode(fixture("sp3/accuracy-rounding/B-anchor.sp3")), {
-    position: 4,
-  });
+  let bText = replaceBases(
+    new TextDecoder().decode(fixture("sp3/accuracy-rounding/B-anchor.sp3")),
+    {
+      position: 4,
+    },
+  );
   bText = replaceCodes(bText, "G12", { position: [-5, null, null, null] });
   const lowerAxis = mergeSp3(
     [loadSp3(encoder.encode(aText)), loadSp3(encoder.encode(bText))],
