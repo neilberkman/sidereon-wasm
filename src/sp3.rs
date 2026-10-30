@@ -18,7 +18,7 @@ use sidereon_core::ephemeris::{
     ExactSp3Request as CoreExactSp3Request, ExactSp3ValidationError,
     MmapPreciseEphemerisInterpolant as CorePreciseInterpolantArtifact,
     PreciseInterpolantStoreError as CorePreciseInterpolantStoreError, Sp3 as CoreSp3,
-    Sp3WriteError as CoreSp3WriteError,
+    Sp3RoundingReport as CoreSp3RoundingReport, Sp3WriteError as CoreSp3WriteError,
 };
 use sidereon_core::ephemeris::{
     check_continuity, CellSelection, ContinuityDefect, ContinuityOptionRejection,
@@ -1127,7 +1127,8 @@ pub fn validate_exact_sp3(
 /// Create with [`load_sp3`]. Query interpolated states with
 /// [`Sp3.interpolate`], the exact parsed records with [`Sp3.state`], the node
 /// epoch axis with [`Sp3.epochsJ2000Seconds`], run positioning with
-/// [`Sp3.solveSpp`], and serialize back with [`Sp3.toSp3String`].
+/// [`Sp3.solveSpp`], and serialize back with [`Sp3.toSp3String`] or explicitly
+/// quantize record values with [`Sp3.toSp3StringWithRounding`].
 #[wasm_bindgen]
 pub struct Sp3 {
     pub(crate) inner: CoreSp3,
@@ -1675,6 +1676,25 @@ impl Sp3 {
         self.inner.to_sp3_string().map_err(sp3_write_error)
     }
 
+    /// Serialize after explicitly rounding a copy of the record values to SP3
+    /// column precision. The returned report gives the maximum absolute
+    /// change in each record field, in that field's SI units. Header fields
+    /// and epochs retain their existing precision. Structural failures,
+    /// overflow, and values that would become SP3 absence sentinels still
+    /// throw a typed `Sp3WriteError`.
+    #[wasm_bindgen(js_name = toSp3StringWithRounding, unchecked_return_type = "Sp3StringWithRounding")]
+    pub fn to_sp3_string_with_rounding(&self) -> Result<JsValue, JsValue> {
+        let (text, report) = self
+            .inner
+            .to_sp3_string_with_rounding()
+            .map_err(sp3_write_error)?;
+        serde_wasm_bindgen::to_value(&Sp3StringWithRoundingJs {
+            text,
+            report: report.into(),
+        })
+        .map_err(|error| engine_error(error.to_string()))
+    }
+
     /// Build deterministic precise-interpolant artifact bytes from this SP3 product.
     ///
     /// `gapThresholdFactor` optionally overrides the product's interpolation policy;
@@ -1749,6 +1769,48 @@ impl Sp3 {
             receiver_ecef_m,
             options,
         )
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sp3StringWithRoundingJs {
+    text: String,
+    report: Sp3RoundingReportJs,
+}
+
+#[derive(Serialize)]
+struct Sp3RoundingReportJs {
+    #[serde(rename = "positionXMaxChangeM")]
+    position_x_max_change_m: f64,
+    #[serde(rename = "positionYMaxChangeM")]
+    position_y_max_change_m: f64,
+    #[serde(rename = "positionZMaxChangeM")]
+    position_z_max_change_m: f64,
+    #[serde(rename = "velocityXMaxChangeMPerS")]
+    velocity_x_max_change_m_per_s: f64,
+    #[serde(rename = "velocityYMaxChangeMPerS")]
+    velocity_y_max_change_m_per_s: f64,
+    #[serde(rename = "velocityZMaxChangeMPerS")]
+    velocity_z_max_change_m_per_s: f64,
+    #[serde(rename = "clockMaxChangeS")]
+    clock_max_change_s: f64,
+    #[serde(rename = "clockRateMaxChangeSPerS")]
+    clock_rate_max_change_s_per_s: f64,
+}
+
+impl From<CoreSp3RoundingReport> for Sp3RoundingReportJs {
+    fn from(value: CoreSp3RoundingReport) -> Self {
+        Self {
+            position_x_max_change_m: value.position_x_m,
+            position_y_max_change_m: value.position_y_m,
+            position_z_max_change_m: value.position_z_m,
+            velocity_x_max_change_m_per_s: value.velocity_x_m_s,
+            velocity_y_max_change_m_per_s: value.velocity_y_m_s,
+            velocity_z_max_change_m_per_s: value.velocity_z_m_s,
+            clock_max_change_s: value.clock_s,
+            clock_rate_max_change_s_per_s: value.clock_rate_s_s,
+        }
     }
 }
 
@@ -2948,6 +3010,30 @@ export interface Sp3PreciseEphemerisSample {
   positionEcefM: [number, number, number];
   clockS: number | null;
   clockEvent: boolean;
+}
+
+export interface Sp3RoundingReport {
+  /** Maps to core `position_x_m`; maximum absolute change in meters. */
+  positionXMaxChangeM: number;
+  /** Maps to core `position_y_m`; maximum absolute change in meters. */
+  positionYMaxChangeM: number;
+  /** Maps to core `position_z_m`; maximum absolute change in meters. */
+  positionZMaxChangeM: number;
+  /** Maps to core `velocity_x_m_s`; maximum absolute change in m/s. */
+  velocityXMaxChangeMPerS: number;
+  /** Maps to core `velocity_y_m_s`; maximum absolute change in m/s. */
+  velocityYMaxChangeMPerS: number;
+  /** Maps to core `velocity_z_m_s`; maximum absolute change in m/s. */
+  velocityZMaxChangeMPerS: number;
+  /** Maps to core `clock_s`; maximum absolute change in seconds. */
+  clockMaxChangeS: number;
+  /** Maps to core `clock_rate_s_s`; maximum absolute change in s/s. */
+  clockRateMaxChangeSPerS: number;
+}
+
+export interface Sp3StringWithRounding {
+  text: string;
+  report: Sp3RoundingReport;
 }
 
 export type Sp3SampleInstant = {

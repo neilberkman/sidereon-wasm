@@ -76,9 +76,9 @@ source documents how it is based on and differs from the original. The complete
 official IERS notice is reproduced in
 `licenses/IERS-Conventions-Software-License.txt`.
 
-The exact public non-test tide sources distributed in `sidereon-core` 3.0.4
+The exact public non-test tide sources distributed in `sidereon-core` 3.0.5
 at commit 5cfcdf929b57a5998e304df786735b171ba8afaf are included under
-`third_party_source/sidereon-core-3.0.4/tides/`. Their contents match that
+`third_party_source/sidereon-core-3.0.5/tides/`. Their contents match that
 release source. These copies provide the source for every tide routine in the
 compiled WebAssembly artifact; they are not represented as original IERS
 software or as endorsed by the IERS Conventions Center.

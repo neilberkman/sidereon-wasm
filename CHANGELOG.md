@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 3.0.5 - 2026-10-30
+
+### Added
+
+- Adds `Sp3.toSp3StringWithRounding()`, returning SP3 text and maximum absolute
+  record-field changes in SI units, while keeping `toSp3String()` strict.
+### Fixed
+
+- Writes source-grid-derived SP3 merge means at record precision and keeps the
+  parsed interpolation caches aligned with the emitted columns.
+- Normalize quaternions at extreme finite magnitudes without losing their direction.
+- Reject positive and negative zero in estimation probability inputs, preserving the documented open `(0, 1)` domain.
+
 ## 3.0.4 - 2026-10-18
 
 ### Fixed

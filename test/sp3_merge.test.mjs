@@ -150,6 +150,31 @@ test("degenerate single source reports single-source cells", () => {
   assert.ok(Math.abs(actual.clockS[0] - expected.clockS[0]) <= 1e-15);
 });
 
+test("merged on-grid means serialize and expose the typed rounding result", () => {
+  const left = miniSp3("IGS14", [["G01", [15000, -20000, 5000], 123.456789]]);
+  const right = miniSp3("IGS14", [["G01", [15000.000001, -20000, 5000], 123.456789]]);
+  const { sp3: merged } = mergeSp3([left, right], {
+    positionToleranceM: 0.01,
+    clockMinCommon: 1,
+  });
+
+  const text = merged.toSp3String();
+  assert.match(text, /15000\.000000|15000\.000001/);
+  const result = merged.toSp3StringWithRounding();
+  assert.equal(result.text, text);
+  assert.deepEqual(Object.keys(result.report).sort(), [
+    "clockMaxChangeS",
+    "clockRateMaxChangeSPerS",
+    "positionXMaxChangeM",
+    "positionYMaxChangeM",
+    "positionZMaxChangeM",
+    "velocityXMaxChangeMPerS",
+    "velocityYMaxChangeMPerS",
+    "velocityZMaxChangeMPerS",
+  ]);
+  assert.ok(Object.values(result.report).every((value) => value === 0));
+});
+
 test("merge rejects empty sources and mismatched frames", () => {
   assert.throws(() => mergeSp3([], undefined), TypeError);
 

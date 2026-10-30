@@ -134,6 +134,8 @@ export type {
   Ut1Validated,
   Sp3RawRecordAccuracy,
   Sp3RecordAccuracy,
+  Sp3RoundingReport,
+  Sp3StringWithRounding,
   Sp3VelocityAccuracy,
   Sp3WriteErrorDetail,
   SsrCorrectionSize,

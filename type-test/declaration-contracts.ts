@@ -1268,6 +1268,8 @@ type ObsValue = import("../types/sidereon-extra.js").ObsValue;
 type RinexObsDowngrade = import("../types/sidereon-extra.js").RinexObsDowngrade;
 type RinexObsWriteErrorDetail = import("../types/sidereon-extra.js").RinexObsWriteErrorDetail;
 type Sp3WriteErrorDetail = import("../types/sidereon-extra.js").Sp3WriteErrorDetail;
+type Sp3RoundingReport = import("../types/sidereon-extra.js").Sp3RoundingReport;
+type Sp3StringWithRounding = import("../types/sidereon-extra.js").Sp3StringWithRounding;
 type Sp3AccuracyValue = import("../types/sidereon-extra.js").Sp3AccuracyValue;
 type Sp3RawRecordAccuracy = import("../types/sidereon-extra.js").Sp3RawRecordAccuracy;
 type Sp3RecordAccuracy = import("../types/sidereon-extra.js").Sp3RecordAccuracy;
@@ -1625,6 +1627,10 @@ type _WebAgreementRms = Assert<
   Equal<WebBindings.Sp3AgreementMetric["positionRmsM"], number | undefined>
 >;
 type _WebSp3Write = Assert<Equal<ReturnType<WebBindings.Sp3["toSp3String"]>, string>>;
+type _WebSp3WriteWithRounding = Assert<
+  Equal<ReturnType<WebBindings.Sp3["toSp3StringWithRounding"]>, Sp3StringWithRounding>
+>;
+type _Sp3RoundingReportField = Assert<Equal<Sp3RoundingReport["clockRateMaxChangeSPerS"], number>>;
 type _WebAntexWrite = Assert<Equal<ReturnType<WebBindings.Antex["toAntexString"]>, string>>;
 
 // The Node declaration target carries the same generated types.
@@ -1633,6 +1639,9 @@ type _NodeDowngradeReturn = Assert<
 >;
 type _NodeEpochTime = Assert<
   Equal<NodeBindings.ObsEpoch["epoch"], NodeBindings.ObsEpochTime | undefined>
+>;
+type _NodeSp3WriteWithRounding = Assert<
+  Equal<ReturnType<NodeBindings.Sp3["toSp3StringWithRounding"]>, Sp3StringWithRounding>
 >;
 type _NodePhaseCorrections = Assert<
   Equal<NodeBindings.CarrierPhaseSeries["phaseShiftCorrections"], NodeCarrierPhaseShift[]>

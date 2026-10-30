@@ -114,7 +114,7 @@ test("scenario simulator is byte-deterministic for the same schema and seed", ()
 test("the simulation set writes the engine's RINEX text and SPP observations", () => {
   const ref = coreGoldens().scenario;
   const sim = simulateScenarioSet(SCENARIO);
-  // The fingerprint includes the engine version. This exact 3.0.4 value was
+  // The fingerprint includes the engine version. This exact 3.0.5 value was
   // produced by the registry core locked in Cargo.lock.
   assert.equal(sim.determinismFingerprintHex, ref.determinismFingerprintHex);
   assert.equal(sim.arrays.observationCount, ref.observationCount);

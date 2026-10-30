@@ -64,6 +64,10 @@ test("an SP3 product the reader kept but its columns cannot restate is refused b
     value: 1.25000001,
     message: precision.message,
   });
+  assert.deepEqual(
+    thrown(() => fine.toSp3StringWithRounding(), "Sp3WriteError").detail,
+    precision.detail,
+  );
 
   // A non-finite start is kept for exact validation to report; no column
   // states it.
