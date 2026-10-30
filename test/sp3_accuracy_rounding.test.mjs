@@ -314,8 +314,31 @@ test("accuracy rounding respects I2 and I3 lower finite bounds and sentinels", (
   invalidText = replaceCodes(invalidText, "G12", { position: [1, 99, 99, 999] });
   const invalidBase = loadSp3(encoder.encode(invalidText));
   assert.equal(invalidBase.recordAccuracy("G12", 0).p.positionSigmaM[0].kind, "invalidBase");
-  assert.throws(
-    () => invalidBase.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative),
-    (error) => error.name === "Sp3WriteError" && error.detail.kind === "ACCURACY_NOT_REPRESENTABLE",
+  const invalidResult = invalidBase.toSp3StringWithAccuracyRounding(
+    Sp3AccuracyRoundingPolicy.Conservative,
   );
+  assert.equal(
+    loadSp3(encoder.encode(invalidResult.text)).recordAccuracyCodes("G12", 0).p.axisExponents[0],
+    1,
+  );
+  assert.equal(invalidResult.report.accuracySigmas.positionSigmaXMaxChangeM, 0);
+
+  let invalidSource = new TextDecoder().decode(fixture("sp3/accuracy-rounding/A-anchor.sp3"));
+  invalidSource = replaceCodes(invalidSource, "G01", { position: [13, 13, 13, 13] });
+  let knownSource = new TextDecoder().decode(fixture("sp3/accuracy-rounding/B-anchor.sp3"));
+  knownSource = replaceCodes(knownSource, "G12", { position: [13, 13, 13, 13] });
+  for (const inputs of [
+    [invalidSource, knownSource],
+    [knownSource, invalidSource],
+  ]) {
+    const conflict = mergeSp3(
+      inputs.map((text) => loadSp3(encoder.encode(text))),
+      options,
+    ).sp3;
+    assert.throws(
+      () => conflict.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative),
+      (error) =>
+        error.name === "Sp3WriteError" && error.detail.kind === "ACCURACY_NOT_REPRESENTABLE",
+    );
+  }
 });
