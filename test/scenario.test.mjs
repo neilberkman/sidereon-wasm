@@ -39,7 +39,10 @@ const SCENARIO = {
   schema_version: 1,
   seed: 123456789,
   epochs: { start_j2000_s: START, count: 2, cadence_s: 30 },
-  receiver: { kind: "static_geodetic", position: { lat_rad: 0, lon_rad: 0, height_m: 0 } },
+  receiver: {
+    kind: "static_geodetic",
+    position: { lat_rad: 0, lon_rad: 0, height_m: 0 },
+  },
   constellation: { kind: "synthetic_keplerian", satellites: SATELLITES },
   signals: [
     {
@@ -72,7 +75,12 @@ const SCENARIO = {
       carrier_phase_sigma_m: 0.002,
       doppler_sigma_hz: 0.02,
     },
-    multipath: { enabled: true, amplitude_m: 0.15, reflector_height_m: 1.25, phase_rad: 0.3 },
+    multipath: {
+      enabled: true,
+      amplitude_m: 0.15,
+      reflector_height_m: 1.25,
+      phase_rad: 0.3,
+    },
     elevation_mask_deg: -90,
   },
 };
@@ -114,8 +122,8 @@ test("scenario simulator is byte-deterministic for the same schema and seed", ()
 test("the simulation set writes the engine's RINEX text and SPP observations", () => {
   const ref = coreGoldens().scenario;
   const sim = simulateScenarioSet(SCENARIO);
-  // The fingerprint includes the engine version. This exact 3.0.4 value was
-  // produced by the registry core locked in Cargo.lock.
+  // The fingerprint includes the engine version; the fixture records the
+  // core revision used by the native generator.
   assert.equal(sim.determinismFingerprintHex, ref.determinismFingerprintHex);
   assert.equal(sim.arrays.observationCount, ref.observationCount);
 

@@ -115,6 +115,7 @@ test("a malformed robust tuning value is rejected as a RangeError", async () => 
   assert.throws(() => sp3.solveSpp({ ...request, robust: { huberK: -1 } }), RangeError);
   assert.throws(() => sp3.solveSpp({ ...request, robust: { scaleFloorM: 0 } }), RangeError);
   assert.throws(() => sp3.solveSpp({ ...request, robust: { maxOuter: 0 } }), RangeError);
+  assert.throws(() => sp3.solveSpp({ ...request, robust: { outerTolM: 0 } }), RangeError);
   assert.throws(() => sp3.solveSpp({ ...request, robust: { outerTolM: Infinity } }), RangeError);
 });
 

@@ -95,11 +95,124 @@ type Equal<Left, Right> =
 type Assert<Condition extends true> = Condition;
 type IsAny<Value> = 0 extends 1 & Value ? true : false;
 
+type _WebOrbitFitReturn = Assert<
+  Equal<ReturnType<typeof WebBindings.fitPreciseEphemerisSampleOrbit>, WebBindings.OrbitFitReport>
+>;
+type _NodeOrbitFitReturn = Assert<
+  Equal<ReturnType<typeof NodeBindings.fitPreciseEphemerisSampleOrbit>, NodeBindings.OrbitFitReport>
+>;
+type _WebOrbitFitOptionsNotAny = Assert<
+  Equal<IsAny<Parameters<typeof WebBindings.fitPreciseEphemerisSampleOrbit>[2]>, false>
+>;
+type _NodeOrbitFitSamplesNotAny = Assert<
+  Equal<IsAny<Parameters<typeof NodeBindings.fitPreciseEphemerisSampleOrbit>[0]>, false>
+>;
+type ExpectedDllJitterOptions = {
+  cn0DbHz: number;
+  loopBandwidthHz: number;
+  integrationTimeS: number;
+  correlatorSpacingChips: number;
+  receiverBandwidthHz: number;
+};
+type ExpectedDllJitterResult = {
+  seconds: number;
+  chips: number;
+  meters: number;
+  squaringLoss: number;
+};
+type ExpectedMultipathEnvelopeOptions = {
+  multipathToDirectRatio: number;
+  correlatorSpacingChips: number;
+  receiverBandwidthHz: number;
+};
+type ExpectedMultipathEnvelopePoint = {
+  delayChips: number;
+  delayS: number;
+  inPhaseChips: number;
+  inPhaseS: number;
+  inPhaseM: number;
+  antiPhaseChips: number;
+  antiPhaseS: number;
+  antiPhaseM: number;
+  runningAverageChips: number;
+  runningAverageS: number;
+  runningAverageM: number;
+};
+
+type _WebDllOptionsMatchRuntime = Assert<
+  Equal<
+    Parameters<WebBindings.SignalAnalysisModulation["dllThermalNoiseJitter"]>[0],
+    ExpectedDllJitterOptions
+  >
+>;
+type _NodeDllOptionsMatchRuntime = Assert<
+  Equal<
+    Parameters<NodeBindings.SignalAnalysisModulation["dllThermalNoiseJitter"]>[0],
+    ExpectedDllJitterOptions
+  >
+>;
+type _WebDllResultMatchesRuntime = Assert<
+  Equal<
+    ReturnType<WebBindings.SignalAnalysisModulation["dllThermalNoiseJitter"]>,
+    ExpectedDllJitterResult
+  >
+>;
+type _NodeDllResultMatchesRuntime = Assert<
+  Equal<
+    ReturnType<NodeBindings.SignalAnalysisModulation["dllThermalNoiseJitter"]>,
+    ExpectedDllJitterResult
+  >
+>;
+type _WebMultipathOptionsMatchRuntime = Assert<
+  Equal<
+    Parameters<WebBindings.SignalAnalysisModulation["multipathErrorEnvelope"]>[0],
+    ExpectedMultipathEnvelopeOptions
+  >
+>;
+type _NodeMultipathOptionsMatchRuntime = Assert<
+  Equal<
+    Parameters<NodeBindings.SignalAnalysisModulation["multipathErrorEnvelope"]>[0],
+    ExpectedMultipathEnvelopeOptions
+  >
+>;
+type _WebMultipathResultMatchesRuntime = Assert<
+  Equal<
+    ReturnType<WebBindings.SignalAnalysisModulation["multipathErrorEnvelope"]>,
+    ExpectedMultipathEnvelopePoint[]
+  >
+>;
+type _NodeMultipathResultMatchesRuntime = Assert<
+  Equal<
+    ReturnType<NodeBindings.SignalAnalysisModulation["multipathErrorEnvelope"]>,
+    ExpectedMultipathEnvelopePoint[]
+  >
+>;
+
 type _ExactCacheOpenReturn = Assert<
   Equal<
     Awaited<ReturnType<BrowserExactProductCache["openSingleFlight"]>>,
     ExactCacheSingleFlightOpen
   >
+>;
+type ExactCacheSingleFlightDecision =
+  { action: "wait"; delayMs: number } | { action: "takeover" } | { action: "timeout" };
+type _WebExactCacheSingleFlightDecision = Assert<
+  Equal<
+    ReturnType<WebBindings.ExactCacheSingleFlightWait["observe"]>,
+    ExactCacheSingleFlightDecision
+  >
+>;
+type _NodeExactCacheSingleFlightDecision = Assert<
+  Equal<
+    ReturnType<NodeBindings.ExactCacheSingleFlightWait["observe"]>,
+    ExactCacheSingleFlightDecision
+  >
+>;
+type _WebExactCacheSingleFlightDecisionNotAny = Assert<
+  Equal<IsAny<ReturnType<WebBindings.ExactCacheSingleFlightWait["observe"]>>, false>
+>;
+type _NodeExactCacheSingleFlightDecisionNotAny = Assert<
+  Equal<IsAny<ReturnType<NodeBindings.ExactCacheSingleFlightWait["observe"]>>, false>
 >;
 type _WebSp3ObservableBatch = Assert<
   Equal<ReturnType<WebBindings.Sp3["observableStatesAtJ2000S"]>, PreciseObservableStateBatch>
@@ -307,8 +420,80 @@ type NodeTrackConfig = ConstructorParameters<typeof NodeBindings.TrackFilterConf
 
 type _WebNtripDoesNotTakeFusionConfig = Assert<IsAny<WebNtripConfig>>;
 type _NodeNtripDoesNotTakeFusionConfig = Assert<IsAny<NodeNtripConfig>>;
-type _WebTrackDoesNotTakeFusionConfig = Assert<IsAny<WebTrackConfig>>;
-type _NodeTrackDoesNotTakeFusionConfig = Assert<IsAny<NodeTrackConfig>>;
+type _WebTrackConfigIsTyped = Assert<Equal<WebTrackConfig, WebBindings.TrackFilterConfigInput>>;
+type _NodeTrackConfigIsTyped = Assert<Equal<NodeTrackConfig, NodeBindings.TrackFilterConfigInput>>;
+type _WebTrackFromPositionIsTyped = Assert<
+  Equal<
+    [
+      Parameters<typeof WebBindings.TrackFilter.fromPosition>[0],
+      Parameters<typeof WebBindings.TrackFilterConfig.fromPosition>[0],
+    ],
+    [WebBindings.TrackFilterFromPositionInput, WebBindings.TrackFilterFromPositionInput]
+  >
+>;
+type _NodeTrackFromPositionIsTyped = Assert<
+  Equal<
+    [
+      Parameters<typeof NodeBindings.TrackFilter.fromPosition>[0],
+      Parameters<typeof NodeBindings.TrackFilterConfig.fromPosition>[0],
+    ],
+    [NodeBindings.TrackFilterFromPositionInput, NodeBindings.TrackFilterFromPositionInput]
+  >
+>;
+type _WebTrackStateIsTyped = Assert<
+  Equal<WebBindings.TrackFilter["state"], WebBindings.TrackState>
+>;
+type _NodeTrackStateIsTyped = Assert<
+  Equal<NodeBindings.TrackFilter["state"], NodeBindings.TrackState>
+>;
+type _WebTrackPredictionIsTyped = Assert<
+  Equal<ReturnType<WebBindings.TrackFilter["predict"]>, WebBindings.TrackPrediction>
+>;
+type _NodeTrackPredictionIsTyped = Assert<
+  Equal<ReturnType<NodeBindings.TrackFilter["predictRecorded"]>, NodeBindings.TrackPrediction>
+>;
+type _WebTrackPositionInnovationInputIsTyped = Assert<
+  Equal<
+    Parameters<WebBindings.TrackFilter["positionInnovation"]>[0],
+    WebBindings.TrackPositionObservationInput
+  >
+>;
+type _NodeTrackStateInnovationInputIsTyped = Assert<
+  Equal<
+    Parameters<NodeBindings.TrackFilter["stateInnovation"]>[0],
+    NodeBindings.TrackStateObservationInput
+  >
+>;
+type _WebTrackInnovationIsTyped = Assert<
+  Equal<ReturnType<WebBindings.TrackFilter["positionInnovation"]>, WebBindings.TrackInnovation>
+>;
+type _NodeTrackInnovationIsTyped = Assert<
+  Equal<ReturnType<NodeBindings.TrackFilter["stateInnovation"]>, NodeBindings.TrackInnovation>
+>;
+type _WebTrackUpdateIsTyped = Assert<
+  Equal<ReturnType<WebBindings.TrackFilter["updatePosition"]>, WebBindings.TrackUpdate>
+>;
+type _NodeTrackUpdateIsTyped = Assert<
+  Equal<ReturnType<NodeBindings.TrackFilter["updateState"]>, NodeBindings.TrackUpdate>
+>;
+type _WebTrackGatedUpdateIsTyped = Assert<
+  Equal<ReturnType<WebBindings.TrackFilter["updatePositionGated"]>, WebBindings.TrackGatedUpdate>
+>;
+type _NodeTrackGatedUpdateIsTyped = Assert<
+  Equal<
+    ReturnType<NodeBindings.TrackFilter["updatePositionGatedRecorded"]>,
+    NodeBindings.TrackGatedUpdate
+  >
+>;
+type _WebTrackConfigObjectIsTyped = Assert<
+  Equal<ReturnType<WebBindings.TrackFilterConfig["toObject"]>, WebBindings.TrackFilterConfigObject>
+>;
+type _NodeTrackConfigObjectIsTyped = Assert<
+  Equal<
+    ReturnType<NodeBindings.TrackFilterConfig["toObject"]>,
+    NodeBindings.TrackFilterConfigObject
+  >
+>;
 
 const webContentStart: WebBindings.Sp3ContentStartConvention =
   WebBindings.sp3ContentStartConvention("gfz_ult", 2022, 9, 7, "0300");
@@ -676,11 +861,46 @@ void nodePreciseDigestProvenance;
 
 type _WebNmeaEpochsAreNotFusionEpochs = Assert<IsAny<WebBindings.NmeaParseResult["epochs"]>>;
 type _NodeNmeaEpochsAreNotFusionEpochs = Assert<IsAny<NodeBindings.NmeaParseResult["epochs"]>>;
-type _WebTrackEpochsAreNotFusionEpochs = Assert<IsAny<WebBindings.TrackRtsHistory["epochs"]>>;
-type _NodeTrackEpochsAreNotFusionEpochs = Assert<IsAny<NodeBindings.TrackRtsHistory["epochs"]>>;
-type _WebSmoothedTrackEpochsAreNotFusionEpochs = Assert<IsAny<WebBindings.SmoothedTrack["epochs"]>>;
-type _NodeSmoothedTrackEpochsAreNotFusionEpochs = Assert<
-  IsAny<NodeBindings.SmoothedTrack["epochs"]>
+type _WebTrackEpochsRemainTyped = Assert<
+  Equal<WebBindings.TrackRtsHistory["epochs"], WebBindings.TrackRtsEpoch[]>
+>;
+type _NodeTrackEpochsRemainTyped = Assert<
+  Equal<NodeBindings.TrackRtsHistory["epochs"], NodeBindings.TrackRtsEpoch[]>
+>;
+type _WebSmoothedTrackEpochsRemainTyped = Assert<
+  Equal<WebBindings.SmoothedTrack["epochs"], WebBindings.SmoothedTrackEpoch[]>
+>;
+type _NodeSmoothedTrackEpochsRemainTyped = Assert<
+  Equal<NodeBindings.SmoothedTrack["epochs"], NodeBindings.SmoothedTrackEpoch[]>
+>;
+type _WebTrackStateKeysRemainComplete = Assert<
+  Equal<
+    keyof WebBindings.TrackState,
+    | "frame"
+    | "tS"
+    | "positionM"
+    | "velocityMS"
+    | "covariance"
+    | "stateVector"
+    | "positionCovarianceM2"
+    | "dimension"
+    | "stateDimension"
+  >
+>;
+type _WebTrackUpdateKeysRemainComplete = Assert<
+  Equal<keyof WebBindings.TrackUpdate, "predicted" | "updated" | "innovation" | "kalmanGain">
+>;
+type _WebTrackRtsEpochKeysRemainComplete = Assert<
+  Equal<keyof WebBindings.TrackRtsEpoch, "tS" | "predicted" | "updated" | "transitionFromPrevious">
+>;
+type _WebSmoothedTrackEpochKeysRemainComplete = Assert<
+  Equal<keyof WebBindings.SmoothedTrackEpoch, "tS" | "state" | "rtsGainToNext">
+>;
+type _WebRejectedTrackGateIsNullable = Assert<
+  Equal<WebBindings.TrackGatedUpdate["update"], WebBindings.TrackUpdate | null>
+>;
+type _WebFinalRtsGainIsNullable = Assert<
+  Equal<WebBindings.SmoothedTrackEpoch["rtsGainToNext"], number[][] | null>
 >;
 
 type _WebStaticResidualsAreNotPppResiduals = Assert<IsAny<WebBindings.StaticSolution["residuals"]>>;
@@ -805,11 +1025,17 @@ type _NodeFusionTimeSyncStatusAllowsArbitraryProperties = Assert<
 type _NodeFusionRtsEpochAllowsArbitraryProperties = Assert<
   IsAny<NodeBindings.FusionRtsEpoch["arbitraryProperty"]>
 >;
-type _WebFusionConstructorAvoidsStaleOverlay = Assert<
-  IsAny<ConstructorParameters<typeof WebBindings.GnssInsFilter>[0]>
+type _WebFusionConstructorUsesConfig = Assert<
+  Equal<ConstructorParameters<typeof WebBindings.GnssInsFilter>[0], WebBindings.FusionConfig>
 >;
-type _NodeFusionConstructorAvoidsStaleOverlay = Assert<
-  IsAny<ConstructorParameters<typeof NodeBindings.GnssInsFilter>[0]>
+type _NodeFusionConstructorUsesConfig = Assert<
+  Equal<ConstructorParameters<typeof NodeBindings.GnssInsFilter>[0], NodeBindings.FusionConfig>
+>;
+type _WebFusionUkfOptionsAreTyped = Assert<
+  Equal<WebBindings.FusionConfig["ukf"], WebBindings.UkfUpdateOptions | undefined>
+>;
+type _NodeFusionUkfOptionsAreTyped = Assert<
+  Equal<NodeBindings.FusionConfig["ukf"], NodeBindings.UkfUpdateOptions | undefined>
 >;
 type _WebFusionStateAvoidsStaleOverlay = Assert<
   IsAny<ReturnType<WebBindings.GnssInsFilter["state"]>>
@@ -836,7 +1062,7 @@ function compileOnlyConstructorExamples() {
   new WebBindings.NtripClientMachine({ host: "caster.example.test" });
   new NodeBindings.NtripClientMachine({ host: "caster.example.test" });
 
-  const trackConfig = {
+  const webTrackConfig = {
     frame: "callerDefinedCartesian",
     initialTS: 0,
     initialPositionM: [0],
@@ -846,10 +1072,11 @@ function compileOnlyConstructorExamples() {
       [0, 1],
     ],
     accelerationVarianceSpectralDensityM2S3: 0.1,
-  };
+  } satisfies WebBindings.TrackFilterConfigInput;
 
-  new WebBindings.TrackFilterConfig(trackConfig);
-  new NodeBindings.TrackFilterConfig(trackConfig);
+  const nodeTrackConfig = webTrackConfig satisfies NodeBindings.TrackFilterConfigInput;
+  new WebBindings.TrackFilterConfig(webTrackConfig);
+  new NodeBindings.TrackFilterConfig(nodeTrackConfig);
 }
 // --- IONEX -----------------------------------------------------------------
 //
@@ -1268,6 +1495,8 @@ type ObsValue = import("../types/sidereon-extra.js").ObsValue;
 type RinexObsDowngrade = import("../types/sidereon-extra.js").RinexObsDowngrade;
 type RinexObsWriteErrorDetail = import("../types/sidereon-extra.js").RinexObsWriteErrorDetail;
 type Sp3WriteErrorDetail = import("../types/sidereon-extra.js").Sp3WriteErrorDetail;
+type Sp3RoundingReport = import("../types/sidereon-extra.js").Sp3RoundingReport;
+type Sp3StringWithRounding = import("../types/sidereon-extra.js").Sp3StringWithRounding;
 type Sp3AccuracyValue = import("../types/sidereon-extra.js").Sp3AccuracyValue;
 type Sp3RawRecordAccuracy = import("../types/sidereon-extra.js").Sp3RawRecordAccuracy;
 type Sp3RecordAccuracy = import("../types/sidereon-extra.js").Sp3RecordAccuracy;
@@ -1625,6 +1854,10 @@ type _WebAgreementRms = Assert<
   Equal<WebBindings.Sp3AgreementMetric["positionRmsM"], number | undefined>
 >;
 type _WebSp3Write = Assert<Equal<ReturnType<WebBindings.Sp3["toSp3String"]>, string>>;
+type _WebSp3WriteWithRounding = Assert<
+  Equal<ReturnType<WebBindings.Sp3["toSp3StringWithRounding"]>, Sp3StringWithRounding>
+>;
+type _Sp3RoundingReportField = Assert<Equal<Sp3RoundingReport["clockRateMaxChangeSPerS"], number>>;
 type _WebAntexWrite = Assert<Equal<ReturnType<WebBindings.Antex["toAntexString"]>, string>>;
 
 // The Node declaration target carries the same generated types.
@@ -1633,6 +1866,9 @@ type _NodeDowngradeReturn = Assert<
 >;
 type _NodeEpochTime = Assert<
   Equal<NodeBindings.ObsEpoch["epoch"], NodeBindings.ObsEpochTime | undefined>
+>;
+type _NodeSp3WriteWithRounding = Assert<
+  Equal<ReturnType<NodeBindings.Sp3["toSp3StringWithRounding"]>, Sp3StringWithRounding>
 >;
 type _NodePhaseCorrections = Assert<
   Equal<NodeBindings.CarrierPhaseSeries["phaseShiftCorrections"], NodeCarrierPhaseShift[]>
@@ -3083,3 +3319,86 @@ type _PppCorrectionsReturn = Assert<
   Equal<ReturnType<typeof WebBindings.pppCorrections>, WebBindings.PppCorrections>
 >;
 void [pppEpoch, pppResult, codeBiasOptions];
+
+// TCA's serde-backed JS values must retain their public structure instead of
+// collapsing to `any` in either generated declaration target.
+type _WebTcaCandidatesNotAny = Assert<
+  Equal<IsAny<ReturnType<typeof WebBindings.findTcaCandidates>>, false>
+>;
+type _WebTcaCandidatesReturn = Assert<
+  Equal<ReturnType<typeof WebBindings.findTcaCandidates>, WebBindings.TcaCandidate[]>
+>;
+type _NodeTcaConjunctionsReturn = Assert<
+  Equal<ReturnType<typeof NodeBindings.findTcaConjunctions>, NodeBindings.TcaConjunction[]>
+>;
+type _WebTcaScreenReturn = Assert<
+  Equal<ReturnType<typeof WebBindings.screenTcaCandidates>, WebBindings.TcaScreeningHit[]>
+>;
+type _NodeTcaScreenConjunctionReturn = Assert<
+  Equal<
+    ReturnType<typeof NodeBindings.screenTcaConjunctions>,
+    NodeBindings.TcaScreeningConjunctionHit[]
+  >
+>;
+type _WebTcaCatalog = Assert<
+  Equal<Parameters<typeof WebBindings.screenTcaCandidates>[2], WebBindings.TcaTle[]>
+>;
+type _NodeTcaPcOptions = Assert<
+  Equal<Parameters<typeof NodeBindings.findTcaConjunctions>[6], NodeBindings.TcaPcOptions>
+>;
+type _WebTcaFinderOptions = Assert<
+  Equal<
+    Parameters<typeof WebBindings.findTcaCandidates>[6],
+    WebBindings.TcaFinderOptions | null | undefined
+  >
+>;
+
+// Static RTK uses nested fixed-solve options and returns nine named fields.
+// Keep both generated declaration targets aligned with the serde boundary.
+type _WebStaticRtkOptions = Assert<
+  Equal<WebBindings.RtkStaticArcConfig["opts"], WebBindings.RtkValidatedFixedOptions | undefined>
+>;
+type _NodeStaticRtkOptions = Assert<
+  Equal<NodeBindings.RtkStaticArcConfig["opts"], NodeBindings.RtkValidatedFixedOptions | undefined>
+>;
+type ExpectedStaticRtkSolutionKeys =
+  | "geometryQuality"
+  | "references"
+  | "ambiguityIds"
+  | "ambiguitySatellites"
+  | "floatSolution"
+  | "fixedSolution"
+  | "droppedSats"
+  | "splitCycleSlipArcs"
+  | "elevationMaskedSats";
+type _WebStaticRtkSolutionKeys = Assert<
+  Equal<keyof WebBindings.RtkStaticArcSolution, ExpectedStaticRtkSolutionKeys>
+>;
+type _NodeStaticRtkSolutionKeys = Assert<
+  Equal<keyof NodeBindings.RtkStaticArcSolution, ExpectedStaticRtkSolutionKeys>
+>;
+type _WebStaticRtkReturn = Assert<
+  Equal<ReturnType<typeof WebBindings.solveStaticRtkArc>, WebBindings.RtkStaticArcSolution>
+>;
+type _NodeStaticRtkReturn = Assert<
+  Equal<ReturnType<typeof NodeBindings.solveStaticRtkArc>, NodeBindings.RtkStaticArcSolution>
+>;
+type _WebStaticRtkFloatSolution = Assert<
+  Equal<WebBindings.RtkStaticArcSolution["floatSolution"], WebBindings.RtkFloatArcSolution>
+>;
+type _NodeStaticRtkSplitArcs = Assert<
+  Equal<
+    NodeBindings.RtkStaticArcSolution["splitCycleSlipArcs"],
+    NodeBindings.RtkCycleSlipSplitArc[]
+  >
+>;
+
+const staticRtkConfig: WebBindings.RtkStaticArcConfig = {
+  arc: { baseM: [3512900, 780500, 5248700] },
+  opts: {
+    float: { positionTolM: 1e-4, ambiguityTolM: 1e-4, maxIterations: 8 },
+    fixed: { ratioThreshold: 3, partialAmbiguityResolution: true },
+    residual: { thresholdSigma: 4, maxExclusions: 1 },
+  },
+};
+void staticRtkConfig;

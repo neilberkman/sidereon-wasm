@@ -1,6 +1,7 @@
-// SP3 and ANTEX writers refuse, with a typed detail, a product whose fixed
-// columns cannot restate a value it holds, instead of rounding or dropping it.
-// Each text is one the core's own tests read and refuse to write the same way.
+// Strict SP3 and ANTEX writers refuse, with a typed detail, a product whose
+// fixed columns cannot restate a value it holds. SP3 also exposes a separate
+// explicit rounding writer, covered below. Each refusal text is read by the
+// core's own tests and refused there in the same way.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -64,6 +65,10 @@ test("an SP3 product the reader kept but its columns cannot restate is refused b
     value: 1.25000001,
     message: precision.message,
   });
+  assert.deepEqual(
+    thrown(() => fine.toSp3StringWithRounding(), "Sp3WriteError").detail,
+    precision.detail,
+  );
 
   // A non-finite start is kept for exact validation to report; no column
   // states it.

@@ -1,0 +1,80 @@
+name: generate-core-goldens
+
+on:
+  workflow_dispatch:
+    inputs:
+      core_rev:
+        description: sidereon commit to reproduce goldens against
+        required: true
+        type: string
+        default: da59d0eba8e273cc37821eac5535662e5d991126
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: neilberkman/sidereon
+          ref: ${{ github.event.inputs.core_rev || 'da59d0eba8e273cc37821eac5535662e5d991126' }}
+          path: sidereon-at-rev
+
+      - uses: dtolnay/rust-toolchain@1.98.1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-golden-generator
+
+      - name: Match generator crate versions to the checked-out core
+        shell: bash
+        id: core
+        run: |
+          core_rev="$(git -C sidereon-at-rev rev-parse HEAD)"
+          echo "core_rev=$core_rev" >> "$GITHUB_OUTPUT"
+          core_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' sidereon-at-rev/crates/sidereon-core/Cargo.toml | head -n 1)"
+          test -n "$core_version"
+          python3 - "$core_version" test/golden-gen/Cargo.toml <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          version, manifest = sys.argv[1:]
+          path = Path(manifest)
+          text = path.read_text()
+          for crate in ("sidereon", "sidereon-core"):
+              pattern = rf'^{re.escape(crate)} = \{{ version = "=[^"]+" \}}$'
+              text, count = re.subn(
+                  pattern,
+                  f'{crate} = {{ version = "={version}" }}',
+                  text,
+                  flags=re.MULTILINE,
+              )
+              if count != 1:
+                  raise SystemExit(f"expected one {crate} version dependency, found {count}")
+          path.write_text(text)
+          PY
+
+      - name: Generate golden fixture
+        env:
+          CORE_REV: ${{ steps.core.outputs.core_rev }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIDEREON_CORE_REV="$CORE_REV" cargo run --release \
+            --manifest-path test/golden-gen/Cargo.toml \
+            --config 'patch.crates-io.sidereon-core.path="sidereon-at-rev/crates/sidereon-core"' \
+            --config 'patch.crates-io.sidereon.path="sidereon-at-rev/crates/sidereon"' \
+            > "$RUNNER_TEMP/core_goldens.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-goldens-${{ steps.core.outputs.core_rev }}
+          path: |
+            ${{ runner.temp }}/core_goldens.json
+            test/golden-gen/Cargo.toml
+            test/golden-gen/Cargo.lock
+          if-no-files-found: error

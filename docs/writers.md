@@ -28,6 +28,20 @@ A refusal is an `Error` named `Sp3WriteError` whose `detail` is an
 `RECORD_FIELDS_DISAGREE`, and `UNKNOWN` for a variant this binding does not yet
 name.
 
+Call `Sp3.toSp3StringWithRounding()` when SP3 column precision is an explicit
+output choice. It returns `{ text, report }`, where `report` is a
+`Sp3RoundingReport` containing maximum absolute changes in SI units. The JS
+names map to the core report fields as follows: `positionXMaxChangeM` /
+`positionYMaxChangeM` / `positionZMaxChangeM` are `position_x_m` /
+`position_y_m` / `position_z_m`; `velocityXMaxChangeMPerS` /
+`velocityYMaxChangeMPerS` / `velocityZMaxChangeMPerS` are `velocity_x_m_s` /
+`velocity_y_m_s` / `velocity_z_m_s`; `clockMaxChangeS` is `clock_s`; and
+`clockRateMaxChangeSPerS` is `clock_rate_s_s`. Rounding uses nearest decimal
+with ties to even at the six places in each record column. Headers and epochs
+are not rounded, the input `Sp3` is unchanged, and the same structural,
+finite-value, width and absence-sentinel checks still apply. `toSp3String()`
+remains strict and does not opt into rounding.
+
 - A satellite is its token (`"G01"`), a time scale its short identifier
   (`"GPST"`), and an SP3 time system its three-character label (`"GPS"`).
   `SATELLITE_NOT_REPRESENTABLE` names a satellite that has no `01`..`99`
