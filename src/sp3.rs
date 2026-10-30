@@ -1716,8 +1716,7 @@ impl Sp3 {
     )]
     pub fn to_sp3_string_with_accuracy_rounding(
         &self,
-        #[wasm_bindgen(unchecked_param_type = "Sp3AccuracyRoundingPolicy")]
-        policy: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "Sp3AccuracyRoundingPolicy")] policy: JsValue,
     ) -> Result<JsValue, JsValue> {
         let policy = match policy.as_f64() {
             Some(value) if value == Sp3AccuracyRoundingPolicy::Conservative as u32 as f64 => {
