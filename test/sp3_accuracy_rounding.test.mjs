@@ -26,14 +26,46 @@ function replacePositionXExponent(text, satellite, exponent) {
     .join("\n")}`;
 }
 
+function replaceCodes(text, satellite, { position, velocity }) {
+  return `${text
+    .split("\n")
+    .map((line) => {
+      const codes = line.startsWith(`P${satellite}`)
+        ? position
+        : line.startsWith(`V${satellite}`)
+          ? velocity
+          : null;
+      return codes
+        ? line.slice(0, 60) +
+            `${String(codes[0]).padStart(2)} ${String(codes[1]).padStart(2)} ${String(codes[2]).padStart(2)} ${String(codes[3]).padStart(3)}  `
+        : line;
+    })
+    .join("\n")}`;
+}
+
+function replaceBases(text, { position, clock }) {
+  return `${text
+    .split("\n")
+    .map((line) => {
+      if (!line.startsWith("%f ")) return line;
+      const fields = line.split(/\s+/);
+      if (position !== undefined) fields[1] = Number(position).toFixed(7);
+      if (clock !== undefined) fields[2] = Number(clock).toFixed(9);
+      return `%f ${String(fields[1]).padStart(10)} ${String(fields[2]).padStart(12)} ${fields[3]} ${fields[4]}`;
+    })
+    .join("\n")}`;
+}
 
 for (const order of ["A.sp3", "B.sp3"]) {
   test(`accuracy rounding preserves sigmas after merge with ${order} first`, () => {
-    const sources = order === "A.sp3" ? [load("A.sp3"), load("B.sp3")] : [load("B.sp3"), load("A.sp3")];
+    const sources =
+      order === "A.sp3" ? [load("A.sp3"), load("B.sp3")] : [load("B.sp3"), load("A.sp3")];
     for (const source of sources) assert.equal(typeof source.toSp3String(), "string");
 
     const { sp3 } = mergeSp3(sources, options);
-    const { text, report } = sp3.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative);
+    const { text, report } = sp3.toSp3StringWithAccuracyRounding(
+      Sp3AccuracyRoundingPolicy.Conservative,
+    );
     const restored = loadSp3(encoder.encode(text));
 
     assert.equal(typeof report.recordValues.positionXMaxChangeM, "number");
@@ -72,13 +104,33 @@ test("accuracy rounding reports a nonzero conservative sigma increase", () => {
   assert.equal(typeof b.toSp3String(), "string");
   const { sp3 } = mergeSp3([a, b], options);
 
-  const { text, report } = sp3.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative);
+  const { text, report } = sp3.toSp3StringWithAccuracyRounding(
+    Sp3AccuracyRoundingPolicy.Conservative,
+  );
   const restored = loadSp3(encoder.encode(text));
   assert.equal(restored.header.posVelBase, 2);
   assert.equal(restored.recordAccuracy("G12", 0).p.positionSigmaM[0].value, 0.032);
   assert.ok(
     Math.abs(report.accuracySigmas.positionSigmaXMaxChangeM - 0.013810105964541435) < 1e-15,
   );
+});
+
+test("accuracy rounding reports nonzero changes with the incompatible bases reversed", () => {
+  let first = new TextDecoder().decode(fixture("sp3/accuracy-rounding/A.sp3"));
+  first = first.replace("%f  0.0000000", "%f  2.0000000");
+  first = replacePositionXExponent(first, "G01", 1);
+  const a = loadSp3(encoder.encode(first));
+  const b = load("B.sp3");
+  const { sp3 } = mergeSp3([b, a], options);
+  const { text, report } = sp3.toSp3StringWithAccuracyRounding(
+    Sp3AccuracyRoundingPolicy.Conservative,
+  );
+  const restored = loadSp3(encoder.encode(text));
+  const before = sp3.recordAccuracy("G01", 0).p.positionSigmaM[0];
+  const after = restored.recordAccuracy("G01", 0).p.positionSigmaM[0];
+  assert.ok(after.value > before.value);
+  assert.ok(report.accuracySigmas.positionSigmaXMaxChangeM > 0);
+  assert.equal(report.accuracySigmas.positionSigmaXMaxChangeM, after.value - before.value);
 });
 
 test("accuracy rounding refuses when the output exponent range cannot preserve sigma", () => {
@@ -101,7 +153,9 @@ test("accuracy rounding refuses when the output exponent range cannot preserve s
 
 test("accuracy rounding preserves sigma when a shared clock anchor is present", () => {
   const { sp3 } = mergeSp3([load("A-anchor.sp3"), load("B-anchor.sp3")], options);
-  const { text, report } = sp3.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative);
+  const { text, report } = sp3.toSp3StringWithAccuracyRounding(
+    Sp3AccuracyRoundingPolicy.Conservative,
+  );
   const restored = loadSp3(encoder.encode(text));
   const source = sp3.recordAccuracy("G12", 0).p.clockSigmaM;
   const output = restored.recordAccuracy("G12", 0).p.clockSigmaM;
@@ -115,7 +169,9 @@ test("accuracy rounding preserves sigma when a shared clock anchor is present", 
 
 test("accuracy rounding report maps all eight sigma fields", () => {
   const direct = load("B-velocity.sp3");
-  const directResult = direct.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative);
+  const directResult = direct.toSp3StringWithAccuracyRounding(
+    Sp3AccuracyRoundingPolicy.Conservative,
+  );
   const directRestored = loadSp3(encoder.encode(directResult.text));
   assert.deepEqual(Object.values(directResult.report.accuracySigmas), Array(8).fill(0));
   const directSource = direct.recordAccuracy("G12", 0);
@@ -130,7 +186,9 @@ test("accuracy rounding report maps all eight sigma fields", () => {
   assert.equal(typeof a.toSp3String(), "string");
   assert.equal(typeof b.toSp3String(), "string");
   const { sp3 } = mergeSp3([a, b], options);
-  const { text, report } = sp3.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative);
+  const { text, report } = sp3.toSp3StringWithAccuracyRounding(
+    Sp3AccuracyRoundingPolicy.Conservative,
+  );
   const restored = loadSp3(encoder.encode(text));
   const deltas = Object.values(report.accuracySigmas);
 
@@ -156,7 +214,10 @@ test("accuracy rounding report maps all eight sigma fields", () => {
   assert.deepEqual(deltas.slice(3, 6), Array(3).fill(0));
   assert.ok(deltas[6] > 0);
   assert.equal(deltas[7], 0);
-  assert.deepEqual(output.p.positionSigmaM.map((value) => value.value), [0.032, 0.032, 0.032]);
+  assert.deepEqual(
+    output.p.positionSigmaM.map((value) => value.value),
+    [0.032, 0.032, 0.032],
+  );
   assert.equal(output.p.clockSigmaM.value, 2 * (299792458 * 1e-12));
   directRestored.free();
   direct.free();
@@ -164,4 +225,97 @@ test("accuracy rounding report maps all eight sigma fields", () => {
   b.free();
   sp3.free();
   restored.free();
+});
+
+test("accuracy rounding respects I2 and I3 lower finite bounds and sentinels", () => {
+  let aText = replaceBases(new TextDecoder().decode(fixture("sp3/accuracy-rounding/A.sp3")), {
+    position: 2,
+  });
+  aText = replaceCodes(aText, "G01", { position: [-9, 99, 99, 999] });
+  let bText = replaceBases(new TextDecoder().decode(fixture("sp3/accuracy-rounding/B.sp3")), {
+    position: 4,
+  });
+  bText = replaceCodes(bText, "G12", { position: [-5, 99, 99, 999] });
+  const lowerAxis = mergeSp3(
+    [loadSp3(encoder.encode(aText)), loadSp3(encoder.encode(bText))],
+    options,
+  ).sp3;
+  const axisResult = lowerAxis.toSp3StringWithAccuracyRounding(
+    Sp3AccuracyRoundingPolicy.Conservative,
+  );
+  assert.equal(
+    loadSp3(encoder.encode(axisResult.text)).recordAccuracyCodes("G12", 0).p.axisExponents[0],
+    -9,
+  );
+  assert.ok(axisResult.report.accuracySigmas.positionSigmaXMaxChangeM > 0);
+
+  let aClock = replaceBases(
+    new TextDecoder().decode(fixture("sp3/accuracy-rounding/A-anchor.sp3")),
+    { clock: 2 },
+  );
+  aClock = replaceCodes(aClock, "G01", { position: [99, 99, 99, -99] });
+  let bClock = replaceBases(
+    new TextDecoder().decode(fixture("sp3/accuracy-rounding/B-anchor.sp3")),
+    { clock: 4 },
+  );
+  bClock = replaceCodes(bClock, "G12", { position: [99, 99, 99, -50] });
+  const lowerClock = mergeSp3(
+    [loadSp3(encoder.encode(aClock)), loadSp3(encoder.encode(bClock))],
+    options,
+  ).sp3;
+  const clockResult = lowerClock.toSp3StringWithAccuracyRounding(
+    Sp3AccuracyRoundingPolicy.Conservative,
+  );
+  assert.equal(
+    loadSp3(encoder.encode(clockResult.text)).recordAccuracyCodes("G12", 0).p.clockExponent,
+    -99,
+  );
+  assert.ok(clockResult.report.accuracySigmas.clockSigmaMaxChangeM > 0);
+
+  let upperA = replaceBases(
+    new TextDecoder().decode(fixture("sp3/accuracy-rounding/A-anchor.sp3")),
+    { clock: 1.025 },
+  );
+  upperA = replaceCodes(upperA, "G01", { position: [99, 99, 99, 1] });
+  let upperB = replaceBases(
+    new TextDecoder().decode(fixture("sp3/accuracy-rounding/B-anchor.sp3")),
+    { clock: 2 },
+  );
+  upperB = replaceCodes(upperB, "G12", { position: [99, 99, 99, 998] });
+  const upperClock = mergeSp3(
+    [loadSp3(encoder.encode(upperA)), loadSp3(encoder.encode(upperB))],
+    options,
+  ).sp3;
+  assert.throws(
+    () => upperClock.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative),
+    (error) => error.name === "Sp3WriteError" && error.detail.kind === "ACCURACY_NOT_REPRESENTABLE",
+  );
+
+  let sentinelText = replaceBases(
+    new TextDecoder().decode(fixture("sp3/accuracy-rounding/B.sp3")),
+    { position: 2, clock: 2 },
+  );
+  sentinelText = replaceCodes(sentinelText, "G12", { position: [99, 99, 99, 999] });
+  const sentinel = loadSp3(encoder.encode(sentinelText));
+  const sentinelResult = sentinel.toSp3StringWithAccuracyRounding(
+    Sp3AccuracyRoundingPolicy.Conservative,
+  );
+  const sentinelCodes = loadSp3(encoder.encode(sentinelResult.text)).recordAccuracyCodes(
+    "G12",
+    0,
+  ).p;
+  assert.deepEqual(sentinelCodes.axisExponents, [99, 99, 99]);
+  assert.equal(sentinelCodes.clockExponent, 999);
+  assert.deepEqual(Object.values(sentinelResult.report.accuracySigmas), Array(8).fill(0));
+
+  let invalidText = replaceBases(new TextDecoder().decode(fixture("sp3/accuracy-rounding/B.sp3")), {
+    position: 0,
+  });
+  invalidText = replaceCodes(invalidText, "G12", { position: [1, 99, 99, 999] });
+  const invalidBase = loadSp3(encoder.encode(invalidText));
+  assert.equal(invalidBase.recordAccuracy("G12", 0).p.positionSigmaM[0].kind, "invalidBase");
+  assert.throws(
+    () => invalidBase.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative),
+    (error) => error.name === "Sp3WriteError" && error.detail.kind === "ACCURACY_NOT_REPRESENTABLE",
+  );
 });
