@@ -694,9 +694,32 @@ export interface RtkArcConfig {
     preprocessing?: Record<string, number | boolean | string[]>;
 }
 
+export interface RtkFloatSolveOptions {
+    positionTolM?: number;
+    ambiguityTolM?: number;
+    maxIterations?: number;
+}
+
+export interface RtkFixedSolveOptions extends RtkFloatSolveOptions {
+    ratioThreshold?: number;
+    partialAmbiguityResolution?: boolean;
+    partialMinAmbiguities?: number;
+}
+
+export interface RtkResidualValidationOptions {
+    thresholdSigma?: number;
+    maxExclusions?: number;
+}
+
+export interface RtkValidatedFixedOptions {
+    float?: RtkFloatSolveOptions;
+    fixed?: RtkFixedSolveOptions;
+    residual?: RtkResidualValidationOptions;
+}
+
 export interface RtkStaticArcConfig {
     arc: RtkArcConfig;
-    opts?: Record<string, number | boolean>;
+    opts?: RtkValidatedFixedOptions;
 }
 
 export interface RtkArcSolution {
@@ -706,8 +729,38 @@ export interface RtkArcSolution {
 }
 
 export interface RtkStaticArcSolution {
-    float: Record<string, number | string | boolean | string[] | number[] | Record<string, number> | null>;
-    fixed: Record<string, number | string | boolean | string[] | number[] | Record<string, number> | null>;
+    geometryQuality: RtkGeometryQuality;
+    references: Record<string, string>;
+    ambiguityIds: string[];
+    ambiguitySatellites: Record<string, string>;
+    floatSolution: RtkFloatArcSolution;
+    fixedSolution: RtkValidatedFixedArcSolution;
+    droppedSats: string[];
+    splitCycleSlipArcs: RtkCycleSlipSplitArc[];
+    elevationMaskedSats: string[];
+}
+
+export interface RtkGeometryQuality {
+    tier: "RankDeficient" | "ZeroRedundancy" | "Weak" | "Nominal";
+    redundancy: number;
+    rank: number;
+    conditionNumber: number;
+    gdop: number;
+    raimCheckable: boolean;
+    covarianceValidated: boolean;
+}
+
+export type RtkFloatArcSolution = Record<string, unknown>;
+
+export type RtkValidatedFixedArcSolution = Record<string, unknown>;
+
+export interface RtkCycleSlipSplitArc {
+    receiver: "base" | "rover";
+    satelliteId: string;
+    ambiguityId: string;
+    startEpochIndex: number;
+    endEpochIndex: number;
+    nEpochs: number;
 }
 
 export interface RtkDualFrequencyObservation {
@@ -907,6 +960,7 @@ export type PppScalarMap = Record<string, number>;
  */
 export interface FusionConfig {
     [key: string]: any;
+    ukf?: UkfUpdateOptions;
 }
 
 export interface FusionTimeSyncConfig {
@@ -1615,26 +1669,37 @@ export type Sgp4OperationError = Error & { detail: Sgp4OperationErrorDetail };
 
 export interface DllJitterOptions {
     cn0DbHz: number;
+    loopBandwidthHz: number;
+    integrationTimeS: number;
+    correlatorSpacingChips: number;
     receiverBandwidthHz: number;
-    earlyLateSpacingChips: number;
-    integrationTimeS?: number;
 }
 
 export interface DllJitterResult {
-    sigmaChips: number;
-    sigmaM: number;
+    seconds: number;
+    chips: number;
+    meters: number;
+    squaringLoss: number;
 }
 
 export interface MultipathEnvelopeOptions {
-    earlyLateSpacingChips: number;
+    multipathToDirectRatio: number;
+    correlatorSpacingChips: number;
     receiverBandwidthHz: number;
-    relativeAmplitude?: number;
-    carrierPhaseRad?: number;
 }
 
-export interface MultipathEnvelopeResult {
-    delayChips: Float64Array;
-    errorChips: Float64Array;
+export interface MultipathEnvelopePoint {
+    delayChips: number;
+    delayS: number;
+    inPhaseChips: number;
+    inPhaseS: number;
+    inPhaseM: number;
+    antiPhaseChips: number;
+    antiPhaseS: number;
+    antiPhaseM: number;
+    runningAverageChips: number;
+    runningAverageS: number;
+    runningAverageM: number;
 }
 
 export interface TerrainLookupOptions {
@@ -1933,7 +1998,7 @@ const classMemberReplacements = [
       ],
       [
         "multipathErrorEnvelope(options: any, delay_chips: Float64Array): any;",
-        "multipathErrorEnvelope(options: MultipathEnvelopeOptions, delay_chips: Float64Array): MultipathEnvelopeResult;",
+        "multipathErrorEnvelope(options: MultipathEnvelopeOptions, delay_chips: Float64Array): MultipathEnvelopePoint[];",
       ],
     ],
   ],

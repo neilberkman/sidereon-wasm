@@ -14,6 +14,27 @@
   parsed interpolation caches aligned with the emitted columns.
 - Normalize quaternions at extreme finite magnitudes without losing their direction.
 - Reject positive and negative zero in estimation probability inputs, preserving the documented open `(0, 1)` domain.
+- Corrects the `LnavDecoded` getter documentation for the seven raw broadcast
+  angular fields to state semicircles or semicircles per second. Their
+  transmitted-integer-times-LSB numerical values are unchanged.
+- Restores concrete TypeScript declarations for the no-IMU track filter inputs,
+  state, predictions, innovations, updates, and RTS history/smoothing results.
+- Publishes the nested static-RTK fixed-solve options and all nine runtime
+  result fields in the TypeScript declarations.
+- Declares the exact-cache single-flight waiter's structured `wait`, `takeover`,
+  and `timeout` decisions instead of exposing its return value as `any`.
+- Publishes concrete TypeScript contracts for TCA finder and collision options,
+  TLE catalogs, candidates, conjunctions, and screening results instead of
+  exposing the structured JavaScript values as `any`.
+- Restores concrete TypeScript input and result declarations for public orbit-fit functions.
+- Rejects WGS84 longitudes outside `[-pi, pi]` when the public coordinate is
+  constructed, matching the core coordinate contract.
+- Validates UKF transform options before filter construction can mask their
+  field-specific error, and publishes the transform and update option input
+  types on the filter configuration.
+- Rejects a zero robust SPP outer tolerance at the JavaScript boundary with a
+  `RangeError`, matching the engine's strictly positive tolerance contract.
+- Corrects the TypeScript input and result declarations for DLL jitter and multipath error-envelope APIs to match their runtime contracts.
 
 ## 3.0.4 - 2026-10-18
 

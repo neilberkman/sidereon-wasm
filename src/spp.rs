@@ -186,9 +186,9 @@ impl RobustInput {
                 "robust.scaleFloorM must be a finite positive number",
             ));
         }
-        if !(outer_tol_m.is_finite() && outer_tol_m >= 0.0) {
+        if !(outer_tol_m.is_finite() && outer_tol_m > 0.0) {
             return Err(range_error(
-                "robust.outerTolM must be a finite non-negative number",
+                "robust.outerTolM must be a finite positive number",
             ));
         }
         if max_outer < 1 {

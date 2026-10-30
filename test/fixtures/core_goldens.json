@@ -1,6 +1,6 @@
 {
-  "source": "test/golden-gen: the test scenarios reproduced natively against sidereon-core 7970b1a3332ceba70088b64b4849b12b6d2b4874",
-  "coreRev": "7970b1a3332ceba70088b64b4849b12b6d2b4874",
+  "source": "test/golden-gen: the test scenarios reproduced natively against sidereon-core da59d0eba8e273cc37821eac5535662e5d991126",
+  "coreRev": "da59d0eba8e273cc37821eac5535662e5d991126",
   "velocity": {
     "tRxJ2000S": "0x41c342aa00000000",
     "receiverEcefM": [

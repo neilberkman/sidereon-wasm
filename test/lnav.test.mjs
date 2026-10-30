@@ -52,6 +52,55 @@ const PARAMS = {
 };
 const OPTIONS = { tow: 100, alert: 0, antiSpoof: 0, integrity: 0, tlmMessage: 0 };
 
+// Independent raw broadcast integers retained from the unit-contract review.
+// Constructing the transmitted words here avoids using lnavEncode as the
+// decoder's oracle and protects the public transmitted-integer-times-LSB scale.
+const PARITY_TAPS = [
+  [1, 2, 3, 5, 6, 10, 11, 12, 13, 14, 17, 18, 20, 23],
+  [2, 3, 4, 6, 7, 11, 12, 13, 14, 15, 18, 19, 21, 24],
+  [1, 3, 4, 5, 7, 8, 12, 13, 14, 15, 16, 19, 20, 22],
+  [2, 4, 5, 6, 8, 9, 13, 14, 15, 16, 17, 20, 21, 23],
+  [1, 3, 5, 6, 7, 9, 10, 14, 15, 16, 17, 18, 21, 22, 24],
+  [3, 5, 6, 8, 9, 10, 11, 13, 15, 19, 22, 23, 24],
+];
+const PARITY_MASKS = PARITY_TAPS.map((positions) =>
+  positions.reduce((mask, position) => mask | (1 << (24 - position)), 0),
+);
+
+function parity(value) {
+  let result = 0;
+  while (value !== 0) {
+    result ^= value & 1;
+    value >>>= 1;
+  }
+  return result;
+}
+
+function transmittedSubframe(words) {
+  let previousD29 = 0;
+  let previousD30 = 0;
+  const bits = [];
+  for (const sourceWord of words) {
+    let parityBits = 0;
+    for (let index = 0; index < PARITY_MASKS.length; index += 1) {
+      const previous = [0, 2, 5].includes(index) ? previousD29 : previousD30;
+      parityBits = parityBits * 2 + (parity(sourceWord & PARITY_MASKS[index]) ^ previous);
+    }
+    const transmittedData = sourceWord ^ (previousD30 === 1 ? 0xffffff : 0);
+    const transmittedWord = transmittedData * 64 + parityBits;
+    for (let index = 29; index >= 0; index -= 1) {
+      bits.push(Math.floor(transmittedWord / 2 ** index) & 1);
+    }
+    previousD29 = (parityBits >> 1) & 1;
+    previousD30 = parityBits & 1;
+  }
+  return Uint8Array.from(bits);
+}
+
+function signedBits(value, width) {
+  return Number(BigInt.asUintN(width, BigInt(value)));
+}
+
 test("lnavEncode produces three 300-bit subframes", () => {
   const sf = lnavEncode(PARAMS, OPTIONS);
   for (const s of [sf.subframe1, sf.subframe2, sf.subframe3]) {
@@ -96,6 +145,63 @@ test("lnavDecode round-trips the encoded parameters", () => {
     "idot",
   ]) {
     assert.equal(d[attr], 0.0, `${attr} round-trips to zero`);
+  }
+});
+
+test("lnavDecode preserves raw LNAV angular fields in semicircles", () => {
+  const raw = {
+    deltaN: 23_456,
+    m0: -123_456_789,
+    omega0: -345_678_901,
+    i0: 567_890_123,
+    omega: -678_901_234,
+    omegaDot: 3_456_789,
+    idot: -4_321,
+  };
+  const m0 = signedBits(raw.m0, 32);
+  const omega0 = signedBits(raw.omega0, 32);
+  const i0 = signedBits(raw.i0, 32);
+  const omega = signedBits(raw.omega, 32);
+  const subframe1Words = Array.from(
+    { length: 10 },
+    (_, index) => (0x731fa9 + 0x13579b * index) & 0xffffff,
+  );
+  const subframe2Words = Array.from(
+    { length: 10 },
+    (_, index) => (0x2468ad + 0x13579b * index) & 0xffffff,
+  );
+  const subframe3Words = Array.from(
+    { length: 10 },
+    (_, index) => (0x1953bf + 0x13579b * index) & 0xffffff,
+  );
+  subframe2Words[3] = signedBits(raw.deltaN, 16) * 256 + Math.floor(m0 / 2 ** 24);
+  subframe2Words[4] = m0 & 0xffffff;
+  subframe3Words[2] = Math.floor(omega0 / 2 ** 24);
+  subframe3Words[3] = omega0 & 0xffffff;
+  subframe3Words[4] = Math.floor(i0 / 2 ** 24);
+  subframe3Words[5] = i0 & 0xffffff;
+  subframe3Words[6] = Math.floor(omega / 2 ** 24);
+  subframe3Words[7] = omega & 0xffffff;
+  subframe3Words[8] = signedBits(raw.omegaDot, 24);
+  subframe3Words[9] = signedBits(raw.idot, 14) * 4;
+
+  const decoded = lnavDecode(
+    transmittedSubframe(subframe1Words),
+    transmittedSubframe(subframe2Words),
+    transmittedSubframe(subframe3Words),
+  );
+  const expected = {
+    deltaN: raw.deltaN / 2 ** 43,
+    m0: raw.m0 / 2 ** 31,
+    omega0: raw.omega0 / 2 ** 31,
+    i0: raw.i0 / 2 ** 31,
+    omega: raw.omega / 2 ** 31,
+    omegaDot: raw.omegaDot / 2 ** 43,
+    idot: raw.idot / 2 ** 43,
+  };
+  for (const [field, value] of Object.entries(expected)) {
+    assert.equal(decoded[field], value, `${field} is the raw integer times its LNAV LSB`);
+    assert.notEqual(decoded[field], value * Math.PI, `${field} is not converted to radians`);
   }
 });
 

@@ -128,6 +128,24 @@ test("fusion UKF option applies the same loose measurement surface", () => {
   eqBits(update.nis, "0x3FB0CCCCCCCCCCCC");
 });
 
+test("fusion UKF options report their invalid field before filter construction", () => {
+  for (const [field, value, coreField] of [
+    ["alpha", Number.NaN, "ukf_alpha"],
+    ["beta", Number.POSITIVE_INFINITY, "ukf_beta"],
+    ["kappa", Number.POSITIVE_INFINITY, "ukf_kappa"],
+  ]) {
+    const config = baseConfig("ukf");
+    config.initialState.positionEcefM[0] = Number.NaN;
+    config.ukf = { transform: { [field]: value } };
+    assert.throws(
+      () => new GnssInsFilter(config),
+      (error) =>
+        error instanceof RangeError &&
+        error.message === `invalid fusion input ${coreField}: must be finite`,
+    );
+  }
+});
+
 test("fusion field-mode omission keeps the loose update bit-identical", () => {
   const defaultFilter = new GnssInsFilter(baseConfig());
   const omittedConfig = baseConfig();

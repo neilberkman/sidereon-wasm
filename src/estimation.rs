@@ -176,6 +176,116 @@ fn frame_label(frame: TrackCoordinateFrame) -> &'static str {
     }
 }
 
+#[wasm_bindgen(typescript_custom_section)]
+const TS_TRACK: &str = r#"
+export type TrackCoordinateFrame = "ecef" | "enu" | "callerDefinedCartesian";
+export type TrackCoordinateFrameInput =
+  | TrackCoordinateFrame
+  | "ECEF"
+  | "ENU"
+  | "caller_defined_cartesian";
+
+export interface TrackFilterConfigInput {
+  frame: TrackCoordinateFrameInput;
+  initialTS: number;
+  initialPositionM: number[];
+  initialVelocityMS: number[];
+  initialCovariance: number[][];
+  accelerationVarianceSpectralDensityM2S3: number;
+}
+
+export interface TrackFilterFromPositionInput {
+  frame: TrackCoordinateFrameInput;
+  initialTS: number;
+  initialPositionM: number[];
+  positionCovarianceM2: number[][];
+  initialVelocityVarianceM2S2: number;
+  accelerationVarianceSpectralDensityM2S3: number;
+}
+
+export interface TrackPositionObservationInput {
+  positionM: number[];
+  covarianceM2: number[][];
+}
+
+export interface TrackStateObservationInput {
+  state: number[];
+  covariance: number[][];
+}
+
+export interface TrackGatedPositionObservationInput extends TrackPositionObservationInput {
+  confidence: number;
+}
+
+export interface TrackFilterConfigObject {
+  frame: TrackCoordinateFrame;
+  initialTS: number;
+  initialPositionM: number[];
+  initialVelocityMS: number[];
+  initialCovariance: number[][];
+  accelerationVarianceSpectralDensityM2S3: number;
+  dimension: number;
+}
+
+export interface TrackState {
+  frame: TrackCoordinateFrame;
+  tS: number;
+  positionM: number[];
+  velocityMS: number[];
+  covariance: number[][];
+  stateVector: number[];
+  positionCovarianceM2: number[][];
+  dimension: number;
+  stateDimension: number;
+}
+
+export interface TrackPrediction {
+  dtS: number;
+  transition: number[][];
+  processNoise: number[][];
+  predicted: TrackState;
+}
+
+export interface TrackInnovation {
+  innovation: number[];
+  innovationCovariance: number[][];
+  nis: number;
+}
+
+export interface TrackUpdate {
+  predicted: TrackState;
+  updated: TrackState;
+  innovation: TrackInnovation;
+  kalmanGain: number[][];
+}
+
+export interface TrackNisGate {
+  nis: number;
+  threshold: number;
+  inGate: boolean;
+  dof: number;
+}
+
+export interface TrackGatedUpdate {
+  gate: TrackNisGate;
+  update: TrackUpdate | null;
+  state: TrackState;
+}
+
+export interface TrackRtsEpoch {
+  tS: number;
+  predicted: TrackState;
+  updated: TrackState;
+  transitionFromPrevious: number[][] | null;
+}
+
+export interface SmoothedTrackEpoch {
+  tS: number;
+  state: TrackState;
+  rtsGainToNext: number[][] | null;
+}
+"#;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TrackFilterConfigInput {
@@ -401,7 +511,9 @@ pub struct TrackFilterConfig {
 impl TrackFilterConfig {
     /// Build a no-IMU track filter config from a JS object.
     #[wasm_bindgen(constructor)]
-    pub fn new(config: JsValue) -> Result<TrackFilterConfig, JsValue> {
+    pub fn new(
+        #[wasm_bindgen(unchecked_param_type = "TrackFilterConfigInput")] config: JsValue,
+    ) -> Result<TrackFilterConfig, JsValue> {
         let config: TrackFilterConfigInput = from_js(config, "track filter config")?;
         let inner = CoreTrackFilterConfig::from_position_velocity(
             frame_from_label(&config.frame)?,
@@ -417,7 +529,9 @@ impl TrackFilterConfig {
 
     /// Build a config from a position fix and uncertain zero initial velocity.
     #[wasm_bindgen(js_name = fromPosition)]
-    pub fn from_position(config: JsValue) -> Result<TrackFilterConfig, JsValue> {
+    pub fn from_position(
+        #[wasm_bindgen(unchecked_param_type = "TrackFilterFromPositionInput")] config: JsValue,
+    ) -> Result<TrackFilterConfig, JsValue> {
         let config: TrackFilterFromPositionInput = from_js(config, "track position config")?;
         let inner = CoreTrackFilterConfig::from_position(
             frame_from_label(&config.frame)?,
@@ -436,7 +550,7 @@ impl TrackFilterConfig {
         self.inner.dimension()
     }
 
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, unchecked_return_type = "TrackCoordinateFrame")]
     pub fn frame(&self) -> String {
         frame_label(self.inner.frame).to_owned()
     }
@@ -446,7 +560,7 @@ impl TrackFilterConfig {
         self.inner.initial_t_s
     }
 
-    #[wasm_bindgen(js_name = toObject)]
+    #[wasm_bindgen(js_name = toObject, unchecked_return_type = "TrackFilterConfigObject")]
     pub fn to_object(&self) -> Result<JsValue, JsValue> {
         to_js(&TrackFilterConfigJs::from(&self.inner))
     }
@@ -469,12 +583,14 @@ impl TrackFilter {
 
     /// Build a filter from a position fix and uncertain zero initial velocity.
     #[wasm_bindgen(js_name = fromPosition)]
-    pub fn from_position(config: JsValue) -> Result<TrackFilter, JsValue> {
+    pub fn from_position(
+        #[wasm_bindgen(unchecked_param_type = "TrackFilterFromPositionInput")] config: JsValue,
+    ) -> Result<TrackFilter, JsValue> {
         let config = TrackFilterConfig::from_position(config)?;
         Self::new(&config)
     }
 
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, unchecked_return_type = "TrackState")]
     pub fn state(&self) -> Result<JsValue, JsValue> {
         to_js(&TrackStateJs::from(self.inner.state()))
     }
@@ -489,12 +605,13 @@ impl TrackFilter {
         self.inner.acceleration_variance_spectral_density_m2_s3()
     }
 
+    #[wasm_bindgen(unchecked_return_type = "TrackPrediction")]
     pub fn predict(&mut self, dt_s: f64) -> Result<JsValue, JsValue> {
         let prediction = self.inner.predict(dt_s).map_err(track_error)?;
         to_js(&TrackPredictionJs::from(&prediction))
     }
 
-    #[wasm_bindgen(js_name = predictRecorded)]
+    #[wasm_bindgen(js_name = predictRecorded, unchecked_return_type = "TrackPrediction")]
     pub fn predict_recorded(
         &mut self,
         dt_s: f64,
@@ -507,8 +624,11 @@ impl TrackFilter {
         to_js(&TrackPredictionJs::from(&prediction))
     }
 
-    #[wasm_bindgen(js_name = positionInnovation)]
-    pub fn position_innovation(&self, request: JsValue) -> Result<JsValue, JsValue> {
+    #[wasm_bindgen(js_name = positionInnovation, unchecked_return_type = "TrackInnovation")]
+    pub fn position_innovation(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "TrackPositionObservationInput")] request: JsValue,
+    ) -> Result<JsValue, JsValue> {
         let request: TrackPositionObservationInput =
             from_js(request, "track position observation")?;
         let innovation = self
@@ -518,8 +638,11 @@ impl TrackFilter {
         to_js(&TrackInnovationJs::from(&innovation))
     }
 
-    #[wasm_bindgen(js_name = stateInnovation)]
-    pub fn state_innovation(&self, request: JsValue) -> Result<JsValue, JsValue> {
+    #[wasm_bindgen(js_name = stateInnovation, unchecked_return_type = "TrackInnovation")]
+    pub fn state_innovation(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "TrackStateObservationInput")] request: JsValue,
+    ) -> Result<JsValue, JsValue> {
         let request: TrackStateObservationInput = from_js(request, "track state observation")?;
         let innovation = self
             .inner
@@ -528,8 +651,11 @@ impl TrackFilter {
         to_js(&TrackInnovationJs::from(&innovation))
     }
 
-    #[wasm_bindgen(js_name = updatePosition)]
-    pub fn update_position(&mut self, request: JsValue) -> Result<JsValue, JsValue> {
+    #[wasm_bindgen(js_name = updatePosition, unchecked_return_type = "TrackUpdate")]
+    pub fn update_position(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "TrackPositionObservationInput")] request: JsValue,
+    ) -> Result<JsValue, JsValue> {
         let request: TrackPositionObservationInput =
             from_js(request, "track position observation")?;
         let update = self
@@ -539,8 +665,11 @@ impl TrackFilter {
         to_js(&TrackUpdateJs::from(&update))
     }
 
-    #[wasm_bindgen(js_name = updateState)]
-    pub fn update_state(&mut self, request: JsValue) -> Result<JsValue, JsValue> {
+    #[wasm_bindgen(js_name = updateState, unchecked_return_type = "TrackUpdate")]
+    pub fn update_state(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "TrackStateObservationInput")] request: JsValue,
+    ) -> Result<JsValue, JsValue> {
         let request: TrackStateObservationInput = from_js(request, "track state observation")?;
         let update = self
             .inner
@@ -549,8 +678,12 @@ impl TrackFilter {
         to_js(&TrackUpdateJs::from(&update))
     }
 
-    #[wasm_bindgen(js_name = updatePositionGated)]
-    pub fn update_position_gated(&mut self, request: JsValue) -> Result<JsValue, JsValue> {
+    #[wasm_bindgen(js_name = updatePositionGated, unchecked_return_type = "TrackGatedUpdate")]
+    pub fn update_position_gated(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "TrackGatedPositionObservationInput")]
+        request: JsValue,
+    ) -> Result<JsValue, JsValue> {
         let request: TrackGatedPositionObservationInput =
             from_js(request, "gated track position observation")?;
         let update = self
@@ -564,10 +697,10 @@ impl TrackFilter {
         to_js(&TrackGatedUpdateJs::from(&update))
     }
 
-    #[wasm_bindgen(js_name = updatePositionRecorded)]
+    #[wasm_bindgen(js_name = updatePositionRecorded, unchecked_return_type = "TrackUpdate")]
     pub fn update_position_recorded(
         &mut self,
-        request: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "TrackPositionObservationInput")] request: JsValue,
         history: &mut TrackRtsHistoryBuilder,
     ) -> Result<JsValue, JsValue> {
         let request: TrackPositionObservationInput =
@@ -583,9 +716,13 @@ impl TrackFilter {
         to_js(&TrackUpdateJs::from(&update))
     }
 
-    #[wasm_bindgen(js_name = updatePositionGatedRecorded)]
+    #[wasm_bindgen(
+        js_name = updatePositionGatedRecorded,
+        unchecked_return_type = "TrackGatedUpdate"
+    )]
     pub fn update_position_gated_recorded(
         &mut self,
+        #[wasm_bindgen(unchecked_param_type = "TrackGatedPositionObservationInput")]
         request: JsValue,
         history: &mut TrackRtsHistoryBuilder,
     ) -> Result<JsValue, JsValue> {
@@ -657,7 +794,7 @@ pub struct TrackRtsHistory {
 
 #[wasm_bindgen]
 impl TrackRtsHistory {
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, unchecked_return_type = "TrackRtsEpoch[]")]
     pub fn epochs(&self) -> Result<JsValue, JsValue> {
         let epochs = self
             .inner
@@ -682,7 +819,7 @@ pub struct SmoothedTrack {
 
 #[wasm_bindgen]
 impl SmoothedTrack {
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, unchecked_return_type = "SmoothedTrackEpoch[]")]
     pub fn epochs(&self) -> Result<JsValue, JsValue> {
         let epochs = self
             .inner

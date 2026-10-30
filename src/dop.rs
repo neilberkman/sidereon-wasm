@@ -60,7 +60,8 @@ pub struct Wgs84Geodetic {
 #[wasm_bindgen]
 impl Wgs84Geodetic {
     /// Build a WGS84 geodetic coordinate. `heightM` defaults to 0. Throws a
-    /// `RangeError` on a non-finite field or latitude outside `[-pi/2, pi/2]`.
+    /// `RangeError` on a non-finite field, latitude outside `[-pi/2, pi/2]`,
+    /// or longitude outside `[-pi, pi]`.
     #[wasm_bindgen(constructor)]
     pub fn new(
         lat_rad: f64,
@@ -76,6 +77,9 @@ impl Wgs84Geodetic {
         }
         if !lon_rad.is_finite() {
             return Err(range_error("lonRad must be finite"));
+        }
+        if !(-core::f64::consts::PI..=core::f64::consts::PI).contains(&lon_rad) {
+            return Err(range_error("lonRad must be in [-pi, pi]"));
         }
         if !height_m.is_finite() {
             return Err(range_error("heightM must be finite"));

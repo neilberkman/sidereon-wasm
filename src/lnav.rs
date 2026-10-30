@@ -255,13 +255,13 @@ impl LnavDecoded {
         self.inner.crs
     }
 
-    /// Mean motion difference, radians per second.
+    /// Mean motion difference, semicircles per second.
     #[wasm_bindgen(getter, js_name = deltaN)]
     pub fn delta_n(&self) -> f64 {
         self.inner.delta_n
     }
 
-    /// Mean anomaly at reference time, radians.
+    /// Mean anomaly at reference time, semicircles.
     #[wasm_bindgen(getter)]
     pub fn m0(&self) -> f64 {
         self.inner.m0
@@ -315,7 +315,7 @@ impl LnavDecoded {
         self.inner.cic
     }
 
-    /// Longitude of ascending node at weekly epoch, radians.
+    /// Longitude of ascending node at weekly epoch, semicircles.
     #[wasm_bindgen(getter)]
     pub fn omega0(&self) -> f64 {
         self.inner.omega0
@@ -327,7 +327,7 @@ impl LnavDecoded {
         self.inner.cis
     }
 
-    /// Inclination at reference time, radians.
+    /// Inclination at reference time, semicircles.
     #[wasm_bindgen(getter)]
     pub fn i0(&self) -> f64 {
         self.inner.i0
@@ -339,19 +339,19 @@ impl LnavDecoded {
         self.inner.crc
     }
 
-    /// Argument of perigee, radians.
+    /// Argument of perigee, semicircles.
     #[wasm_bindgen(getter)]
     pub fn omega(&self) -> f64 {
         self.inner.omega
     }
 
-    /// Rate of right ascension, radians per second.
+    /// Rate of right ascension, semicircles per second.
     #[wasm_bindgen(getter, js_name = omegaDot)]
     pub fn omega_dot(&self) -> f64 {
         self.inner.omega_dot
     }
 
-    /// Rate of inclination, radians per second.
+    /// Rate of inclination, semicircles per second.
     #[wasm_bindgen(getter)]
     pub fn idot(&self) -> f64 {
         self.inner.idot
