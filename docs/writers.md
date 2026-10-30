@@ -42,6 +42,15 @@ are not rounded, the input `Sp3` is unchanged, and the same structural,
 finite-value, width and absence-sentinel checks still apply. `toSp3String()`
 remains strict and does not opt into rounding.
 
+`Sp3.toSp3StringWithAccuracyRounding(Sp3AccuracyRoundingPolicy.Conservative)`
+also adjusts encoded
+finite accuracy standard deviations when their columns require it. Pass the
+policy explicitly; omitted, null, or unknown policies throw `TypeError`. It
+returns `{ text, report: { recordValues, accuracySigmas } }`. The accuracy
+report gives the maximum absolute SI change for each standard deviation, and
+conservative policy never lowers a finite value. Unknown and unspecified
+accuracy states remain unchanged.
+
 - A satellite is its token (`"G01"`), a time scale its short identifier
   (`"GPST"`), and an SP3 time system its three-character label (`"GPS"`).
   `SATELLITE_NOT_REPRESENTABLE` names a satellite that has no `01`..`99`

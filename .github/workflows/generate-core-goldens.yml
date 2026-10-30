@@ -7,7 +7,7 @@ on:
         description: sidereon commit to reproduce goldens against
         required: true
         type: string
-        default: da59d0eba8e273cc37821eac5535662e5d991126
+        default: 304c92747b0a7733f543d4d79f509c5644a6c72b
 permissions:
   contents: read
 
@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: neilberkman/sidereon
-          ref: ${{ github.event.inputs.core_rev || 'da59d0eba8e273cc37821eac5535662e5d991126' }}
+          ref: ${{ github.event.inputs.core_rev || '304c92747b0a7733f543d4d79f509c5644a6c72b' }}
           path: sidereon-at-rev
 
       - uses: dtolnay/rust-toolchain@1.98.1

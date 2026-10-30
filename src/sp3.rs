@@ -18,8 +18,19 @@ use sidereon_core::ephemeris::{
     ExactSp3Request as CoreExactSp3Request, ExactSp3ValidationError,
     MmapPreciseEphemerisInterpolant as CorePreciseInterpolantArtifact,
     PreciseInterpolantStoreError as CorePreciseInterpolantStoreError, Sp3 as CoreSp3,
+    Sp3AccuracyRoundingPolicy as CoreSp3AccuracyRoundingPolicy,
+    Sp3AccuracyRoundingReport as CoreSp3AccuracyRoundingReport,
+    Sp3DetailedRoundingReport as CoreSp3DetailedRoundingReport,
     Sp3RoundingReport as CoreSp3RoundingReport, Sp3WriteError as CoreSp3WriteError,
 };
+
+/// Policy required by the accuracy-aware SP3 writer.
+#[wasm_bindgen]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Sp3AccuracyRoundingPolicy {
+    /// Raise finite encoded accuracy standard deviations only as needed.
+    Conservative,
+}
 use sidereon_core::ephemeris::{
     check_continuity, CellSelection, ContinuityDefect, ContinuityOptionRejection,
     ContinuityOptions, ContinuityOptionsError, EpochWindow, InterpolationNodes, MergeCombine,
@@ -1695,6 +1706,41 @@ impl Sp3 {
         .map_err(|error| engine_error(error.to_string()))
     }
 
+    /// Serialize after rounding values and conservatively raising finite
+    /// accuracy standard deviations when required by their SP3 columns.
+    /// `policy` is required and must be
+    /// `Sp3AccuracyRoundingPolicy::Conservative`.
+    #[wasm_bindgen(
+        js_name = toSp3StringWithAccuracyRounding,
+        unchecked_return_type = "Sp3StringWithAccuracyRounding"
+    )]
+    pub fn to_sp3_string_with_accuracy_rounding(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "Sp3AccuracyRoundingPolicy")]
+        policy: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let policy = match policy.as_f64() {
+            Some(value) if value == Sp3AccuracyRoundingPolicy::Conservative as u32 as f64 => {
+                CoreSp3AccuracyRoundingPolicy::Conservative
+            }
+            _ => {
+                return Err(js_sys::TypeError::new(
+                    "policy must be Sp3AccuracyRoundingPolicy.Conservative",
+                )
+                .into())
+            }
+        };
+        let (text, report) = self
+            .inner
+            .to_sp3_string_with_accuracy_rounding(policy)
+            .map_err(sp3_write_error)?;
+        serde_wasm_bindgen::to_value(&Sp3StringWithAccuracyRoundingJs {
+            text,
+            report: report.into(),
+        })
+        .map_err(|error| engine_error(error.to_string()))
+    }
+
     /// Build deterministic precise-interpolant artifact bytes from this SP3 product.
     ///
     /// `gapThresholdFactor` optionally overrides the product's interpolation policy;
@@ -1777,6 +1823,64 @@ impl Sp3 {
 struct Sp3StringWithRoundingJs {
     text: String,
     report: Sp3RoundingReportJs,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sp3StringWithAccuracyRoundingJs {
+    text: String,
+    report: Sp3DetailedRoundingReportJs,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sp3DetailedRoundingReportJs {
+    record_values: Sp3RoundingReportJs,
+    accuracy_sigmas: Sp3AccuracyRoundingReportJs,
+}
+
+impl From<CoreSp3DetailedRoundingReport> for Sp3DetailedRoundingReportJs {
+    fn from(value: CoreSp3DetailedRoundingReport) -> Self {
+        Self {
+            record_values: value.record_values.into(),
+            accuracy_sigmas: value.accuracy_sigmas.into(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct Sp3AccuracyRoundingReportJs {
+    #[serde(rename = "positionSigmaXMaxChangeM")]
+    position_sigma_x_max_change_m: f64,
+    #[serde(rename = "positionSigmaYMaxChangeM")]
+    position_sigma_y_max_change_m: f64,
+    #[serde(rename = "positionSigmaZMaxChangeM")]
+    position_sigma_z_max_change_m: f64,
+    #[serde(rename = "velocitySigmaXMaxChangeMPerS")]
+    velocity_sigma_x_max_change_m_per_s: f64,
+    #[serde(rename = "velocitySigmaYMaxChangeMPerS")]
+    velocity_sigma_y_max_change_m_per_s: f64,
+    #[serde(rename = "velocitySigmaZMaxChangeMPerS")]
+    velocity_sigma_z_max_change_m_per_s: f64,
+    #[serde(rename = "clockSigmaMaxChangeM")]
+    clock_sigma_max_change_m: f64,
+    #[serde(rename = "clockRateSigmaMaxChangeMPerS")]
+    clock_rate_sigma_max_change_m_per_s: f64,
+}
+
+impl From<CoreSp3AccuracyRoundingReport> for Sp3AccuracyRoundingReportJs {
+    fn from(value: CoreSp3AccuracyRoundingReport) -> Self {
+        Self {
+            position_sigma_x_max_change_m: value.position_sigma_x_m,
+            position_sigma_y_max_change_m: value.position_sigma_y_m,
+            position_sigma_z_max_change_m: value.position_sigma_z_m,
+            velocity_sigma_x_max_change_m_per_s: value.velocity_sigma_x_m_s,
+            velocity_sigma_y_max_change_m_per_s: value.velocity_sigma_y_m_s,
+            velocity_sigma_z_max_change_m_per_s: value.velocity_sigma_z_m_s,
+            clock_sigma_max_change_m: value.clock_sigma_m,
+            clock_rate_sigma_max_change_m_per_s: value.clock_rate_sigma_m_s,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -3034,6 +3138,30 @@ export interface Sp3RoundingReport {
 export interface Sp3StringWithRounding {
   text: string;
   report: Sp3RoundingReport;
+}
+
+export interface Sp3AccuracyRoundingReport {
+  /** Maximum absolute change in decoded position standard deviation, meters. */
+  positionSigmaXMaxChangeM: number;
+  positionSigmaYMaxChangeM: number;
+  positionSigmaZMaxChangeM: number;
+  /** Maximum absolute change in decoded velocity standard deviation, m/s. */
+  velocitySigmaXMaxChangeMPerS: number;
+  velocitySigmaYMaxChangeMPerS: number;
+  velocitySigmaZMaxChangeMPerS: number;
+  /** Maximum absolute changes in decoded clock standard deviations. */
+  clockSigmaMaxChangeM: number;
+  clockRateSigmaMaxChangeMPerS: number;
+}
+
+export interface Sp3DetailedRoundingReport {
+  recordValues: Sp3RoundingReport;
+  accuracySigmas: Sp3AccuracyRoundingReport;
+}
+
+export interface Sp3StringWithAccuracyRounding {
+  text: string;
+  report: Sp3DetailedRoundingReport;
 }
 
 export type Sp3SampleInstant = {

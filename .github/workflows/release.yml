@@ -127,6 +127,7 @@ jobs:
           import { checkSp3Consumer } from "./check-sp3-consumer.mjs";
           import {
             Instant,
+            Sp3AccuracyRoundingPolicy,
             dcmToQuaternion,
             gravityEcefMps2,
             loadSp3,
@@ -142,7 +143,7 @@ jobs:
             ),
           );
           assert.equal(packageJson.version, process.env.EXPECTED_VERSION);
-          checkSp3Consumer({ loadSp3, mergeSp3 });
+          checkSp3Consumer({ Sp3AccuracyRoundingPolicy, loadSp3, mergeSp3 });
 
           const bitsBuffer = new ArrayBuffer(8);
           const bitsView = new DataView(bitsBuffer);
