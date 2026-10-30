@@ -1,6 +1,7 @@
-// SP3 and ANTEX writers refuse, with a typed detail, a product whose fixed
-// columns cannot restate a value it holds, instead of rounding or dropping it.
-// Each text is one the core's own tests read and refuse to write the same way.
+// Strict SP3 and ANTEX writers refuse, with a typed detail, a product whose
+// fixed columns cannot restate a value it holds. SP3 also exposes a separate
+// explicit rounding writer, covered below. Each refusal text is read by the
+// core's own tests and refused there in the same way.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -47,6 +48,26 @@ const SP3C_FILE = [
   "EOF",
   "",
 ].join("\n");
+
+test("explicit SP3 rounding reports nonzero clock change without mutating the product", () => {
+  const line = SP3C_FILE.split("\n").find((entry) => entry.startsWith("PG01"));
+  const clockField = "-598.4102354".padStart(14);
+  const clockLine = `${line.slice(0, 46)}${clockField}${line.slice(60)}`;
+  const sp3 = loadSp3(encoder.encode(SP3C_FILE.replace(line, clockLine)));
+  const originalClock = sp3.state("G01", 0).clockS;
+
+  assert.throws(() => sp3.toSp3String(), { name: "Sp3WriteError" });
+  const rounded = sp3.toSp3StringWithRounding();
+  const reparsed = loadSp3(encoder.encode(rounded.text));
+  const reparsedClock = reparsed.state("G01", 0).clockS;
+
+  assert.ok(Math.abs(reparsedClock - originalClock) > 0);
+  assert.equal(rounded.report.clockMaxChangeS, Math.abs(reparsedClock - originalClock));
+  for (const [field, value] of Object.entries(rounded.report)) {
+    if (field !== "clockMaxChangeS") assert.equal(value, 0, field);
+  }
+  assert.equal(sp3.state("G01", 0).clockS, originalClock);
+});
 
 test("an SP3 product the reader kept but its columns cannot restate is refused by name", () => {
   // The fixture itself writes.

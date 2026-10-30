@@ -77,8 +77,11 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions: {}
+    permissions:
+      contents: read
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -96,6 +99,7 @@ jobs:
 
           scratch="$(mktemp -d)"
           trap 'rm -rf "$scratch"' EXIT
+          cp "$GITHUB_WORKSPACE/scripts/check-sp3-consumer.mjs" "$scratch/"
           cd "$scratch"
           npm init -y >/dev/null
 
@@ -120,10 +124,13 @@ jobs:
           import assert from "node:assert/strict";
           import { readFileSync } from "node:fs";
           import { join } from "node:path";
+          import { checkSp3Consumer } from "./check-sp3-consumer.mjs";
           import {
             Instant,
             dcmToQuaternion,
             gravityEcefMps2,
+            loadSp3,
+            mergeSp3,
             sunMoonEci,
             temeToGcrs,
           } from "@neilberkman/sidereon";
@@ -135,6 +142,7 @@ jobs:
             ),
           );
           assert.equal(packageJson.version, process.env.EXPECTED_VERSION);
+          checkSp3Consumer({ loadSp3, mergeSp3 });
 
           const bitsBuffer = new ArrayBuffer(8);
           const bitsView = new DataView(bitsBuffer);

@@ -93,7 +93,10 @@ test("degenerate single source reports single-source cells", () => {
   const epochCount = sp3.epochCount;
   const satellites = sp3.satellites;
 
-  const { sp3: merged, report } = mergeSp3([sp3], { minAgree: 1, clockMinCommon: 1 });
+  const { sp3: merged, report } = mergeSp3([sp3], {
+    minAgree: 1,
+    clockMinCommon: 1,
+  });
 
   assert.equal(merged.epochCount, epochCount);
   assert.deepEqual(merged.satellites, satellites);
@@ -207,7 +210,10 @@ test("merge applies Helmert frame reconciliation and reports table values", () =
   const a = miniSp3("IGS14", [["G01", [14000.0, -19000.0, 4000.0], 100.0]]);
   const b = miniSp3("IGS20", [["G02", [15000.0, -20000.0, 5000.0], 200.0]]);
 
-  const { sp3: merged, report } = mergeSp3([a, b], { minAgree: 1, helmert: true });
+  const { sp3: merged, report } = mergeSp3([a, b], {
+    minAgree: 1,
+    helmert: true,
+  });
 
   const got = merged.state("G02", 0).positionM;
   const analytic = [14_999_999.992_3, -19_999_999.993_048_087, 5_000_000.000_396_175];
@@ -252,7 +258,10 @@ test("merge Helmert identity reconciliation is bit equal", () => {
   const b = miniSp3("IGc20", [["G02", [15000.125, -20000.5, 5000.25], 200.0]]);
   const original = Array.from(b.state("G02", 0).positionM);
 
-  const { sp3: merged, report } = mergeSp3([a, b], { minAgree: 1, helmert: true });
+  const { sp3: merged, report } = mergeSp3([a, b], {
+    minAgree: 1,
+    helmert: true,
+  });
 
   assert.deepEqual(Array.from(merged.state("G02", 0).positionM), original);
   const reconciliation = report.frameReconciliations[0];
@@ -461,7 +470,11 @@ test("an explicit fractional target interval merges on its grid and lists the in
 
   // A target no whole number of ticks states is refused by the engine.
   assert.throws(
-    () => mergeSp3([coverageSp3(0, 2)], { minAgree: 1, targetEpochIntervalS: 1e-9 }),
+    () =>
+      mergeSp3([coverageSp3(0, 2)], {
+        minAgree: 1,
+        targetEpochIntervalS: 1e-9,
+      }),
     /10-nanosecond ticks/,
   );
 });

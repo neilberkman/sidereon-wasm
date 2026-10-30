@@ -8,9 +8,6 @@ on:
         required: true
         type: string
         default: 7970b1a3332ceba70088b64b4849b12b6d2b4874
-  push:
-    branches: [release/3.0.5-sp3]
-
 permissions:
   contents: read
 
