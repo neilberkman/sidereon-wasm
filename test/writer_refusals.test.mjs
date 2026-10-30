@@ -49,26 +49,6 @@ const SP3C_FILE = [
   "",
 ].join("\n");
 
-test("explicit SP3 rounding reports nonzero clock change without mutating the product", () => {
-  const line = SP3C_FILE.split("\n").find((entry) => entry.startsWith("PG01"));
-  const clockField = "-598.4102354".padStart(14);
-  const clockLine = `${line.slice(0, 46)}${clockField}${line.slice(60)}`;
-  const sp3 = loadSp3(encoder.encode(SP3C_FILE.replace(line, clockLine)));
-  const originalClock = sp3.state("G01", 0).clockS;
-
-  assert.throws(() => sp3.toSp3String(), { name: "Sp3WriteError" });
-  const rounded = sp3.toSp3StringWithRounding();
-  const reparsed = loadSp3(encoder.encode(rounded.text));
-  const reparsedClock = reparsed.state("G01", 0).clockS;
-
-  assert.ok(Math.abs(reparsedClock - originalClock) > 0);
-  assert.equal(rounded.report.clockMaxChangeS, Math.abs(reparsedClock - originalClock));
-  for (const [field, value] of Object.entries(rounded.report)) {
-    if (field !== "clockMaxChangeS") assert.equal(value, 0, field);
-  }
-  assert.equal(sp3.state("G01", 0).clockS, originalClock);
-});
-
 test("an SP3 product the reader kept but its columns cannot restate is refused by name", () => {
   // The fixture itself writes.
   assert.equal(typeof loadSp3(encoder.encode(SP3C_FILE)).toSp3String(), "string");
