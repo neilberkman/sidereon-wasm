@@ -210,9 +210,13 @@ test("merge applies Helmert frame reconciliation and reports table values", () =
   const { sp3: merged, report } = mergeSp3([a, b], { minAgree: 1, helmert: true });
 
   const got = merged.state("G02", 0).positionM;
-  const expected = [14_999_999.992_3, -19_999_999.993_048_087, 5_000_000.000_396_175];
+  const analytic = [14_999_999.992_3, -19_999_999.993_048_087, 5_000_000.000_396_175];
+  // The columns are rounded to 1e-6 km and the parser scales those columns by
+  // 1000.0 to get the product's SI coordinates.
+  const parserScaled = [14_999.999_992, -19_999.999_993, 5_000.0].map((km) => km * 1000.0);
+  assert.deepEqual(Array.from(got), parserScaled);
   for (let i = 0; i < 3; i++) {
-    assert.ok(Math.abs(got[i] - expected[i]) <= 2e-9);
+    assert.ok(Math.abs(got[i] - analytic[i]) <= 0.0005);
   }
   const reconciliation = report.frameReconciliations[0];
   assert.equal(reconciliation.method, "helmert");
