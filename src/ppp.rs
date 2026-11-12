@@ -41,6 +41,18 @@ use crate::sp3::Sp3;
 use crate::ssr::SsrCorrectionSizeJs;
 use crate::ssr::SsrCorrectionStore;
 
+/// Maximum number of VMF site samples accepted by the core series.
+#[wasm_bindgen(js_name = VMF_SITE_MAX_SAMPLES)]
+pub fn vmf_site_max_samples() -> usize {
+    sidereon_core::precise_positioning::VMF_SITE_MAX_SAMPLES
+}
+
+/// Half-width in days of the validity window for one VMF site sample.
+#[wasm_bindgen(js_name = VMF_SITE_SINGLE_SAMPLE_CLAMP_DAYS)]
+pub fn vmf_site_single_sample_clamp_days() -> f64 {
+    sidereon_core::precise_positioning::VMF_SITE_SINGLE_SAMPLE_CLAMP_DAYS
+}
+
 // --- input objects ----------------------------------------------------------
 
 /// Civil epoch timestamp for a PPP epoch.
@@ -142,7 +154,7 @@ impl ObservationInput {
 /// One static PPP epoch.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EpochInput {
+pub(crate) struct EpochInput {
     civil: CivilInput,
     jd_whole: f64,
     jd_fraction: f64,
@@ -151,7 +163,7 @@ struct EpochInput {
 }
 
 impl EpochInput {
-    fn to_core(&self) -> Result<FloatEpoch, JsValue> {
+    pub(crate) fn to_core(&self) -> Result<FloatEpoch, JsValue> {
         let observations = self
             .observations
             .iter()
@@ -180,7 +192,7 @@ pub(crate) fn epochs_from_js(value: JsValue) -> Result<Vec<FloatEpoch>, JsValue>
 /// Initial PPP state.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct StateInput {
+pub(crate) struct StateInput {
     #[serde(deserialize_with = "crate::exact::vec3")]
     position_m: [f64; 3],
     clocks_m: Vec<f64>,
@@ -196,7 +208,7 @@ struct StateInput {
 }
 
 impl StateInput {
-    fn to_core(&self) -> FloatState {
+    pub(crate) fn to_core(&self) -> FloatState {
         FloatState {
             position_m: self.position_m,
             clocks_m: self.clocks_m.clone(),
@@ -212,7 +224,7 @@ impl StateInput {
 /// PPP measurement weights.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-struct WeightsInput {
+pub(crate) struct WeightsInput {
     code: f64,
     phase: f64,
     elevation_weighting: bool,
@@ -229,7 +241,7 @@ impl Default for WeightsInput {
 }
 
 impl WeightsInput {
-    fn to_core(&self) -> MeasurementWeights {
+    pub(crate) fn to_core(&self) -> MeasurementWeights {
         MeasurementWeights {
             code: self.code,
             phase: self.phase,
@@ -267,7 +279,7 @@ impl VmfSampleInput {
 /// the climatological Niell (1996) mapping is used (no external data).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-struct TroposphereInput {
+pub(crate) struct TroposphereInput {
     enabled: bool,
     estimate_ztd: bool,
     estimate_tropo_gradients: bool,
@@ -293,7 +305,7 @@ impl Default for TroposphereInput {
 }
 
 impl TroposphereInput {
-    fn to_core(&self) -> Result<TroposphereOptions, JsValue> {
+    pub(crate) fn to_core(&self) -> Result<TroposphereOptions, JsValue> {
         if self.enabled {
             let met = Met::new(
                 self.pressure_hpa,
@@ -358,7 +370,7 @@ impl OptionsInput {
 /// Complete typed configuration for a PPP float solve.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
-struct FloatConfigInput {
+pub(crate) struct FloatConfigInput {
     weights: WeightsInput,
     tropo: TroposphereInput,
     options: OptionsInput,
@@ -368,7 +380,7 @@ struct FloatConfigInput {
 }
 
 impl FloatConfigInput {
-    fn to_core(&self) -> Result<FloatSolveConfig, JsValue> {
+    pub(crate) fn to_core(&self) -> Result<FloatSolveConfig, JsValue> {
         self.to_core_with_corrections(RangeCorrections::disabled())
     }
 
@@ -1030,7 +1042,7 @@ struct PppAmbiguitySearchJs<'a> {
     covariance_inverse_cycles: &'a [Vec<f64>],
 }
 
-fn unplaced_observations(
+pub(crate) fn unplaced_observations(
     rows: &[sidereon_core::precise_positioning::UnplacedObservation],
 ) -> JsValue {
     to_js(
@@ -1108,7 +1120,7 @@ impl From<&sidereon_core::precise_positioning::TemporalCorrelationSummary>
 /// Static float PPP solution.
 #[wasm_bindgen]
 pub struct PppFloatSolution {
-    inner: FloatSolution,
+    pub(crate) inner: FloatSolution,
 }
 
 #[wasm_bindgen]

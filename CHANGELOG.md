@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add precise-positioning dual-frequency TEC estimation, thin-shell mapping,
+  ionospheric pierce points, snapshot PPP RAIM/FDE, and the VMF site-series
+  capacity and single-sample validity constants.
+- Add precise-positioning Melbourne-Wubbena and geometry-free cycle-slip
+  detection, mutable detector statistics/state, wide-lane fixed preparation,
+  and float ambiguity-arc splitting.
+- Add sequential kinematic PPP configuration, motion and process-noise models,
+  mutable predict/correct state, update summaries, and epoch solutions.
 - Add explicit PPP auto-init strategy drivers, single-epoch float PPP, value
   equality and ambiguity-search metadata on PPP solution handles, and typed
   range-rate prediction and velocity solving.

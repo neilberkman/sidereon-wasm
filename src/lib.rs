@@ -81,7 +81,11 @@ mod orbit_fit_error;
 mod positioning_error;
 mod ppp;
 mod ppp_corrections;
+mod ppp_cycle_slip;
+mod ppp_kinematic;
+mod ppp_raim;
 mod ppp_range;
+mod ppp_tec;
 mod ppp_velocity;
 mod precise_samples;
 mod propagation;
@@ -321,10 +325,46 @@ pub use ppp::{
 };
 pub use ppp_corrections::ppp_corrections;
 pub use ppp_corrections::ppp_corrections_with_code_bias;
+pub use ppp_cycle_slip::{
+    default_minimum_arc_length as ppp_default_minimum_arc_length,
+    default_running_statistic_k_factor as ppp_default_running_statistic_k_factor,
+    detect as ppp_detect_cycle_slips, geometry_free as ppp_geometry_free_m,
+    melbourne_wubbena as ppp_melbourne_wubbena_cycles,
+    prepare as prepare_ppp_widelane_fixed_epochs, split as split_ppp_float_cycle_slip_epochs,
+    update_gf as ppp_update_geometry_free, update_mw as ppp_update_melbourne_wubbena,
+    PppCycleSlipConfig, PppCycleSlipFlagEpoch, PppRunningMeanVariance, PppSatelliteCycleSlipState,
+    PppWideLanePrepResult,
+};
+pub use ppp_kinematic::{
+    correct as correct_kinematic_state, predict as predict_kinematic_state,
+    solve as solve_kinematic_ppp, PppKinematicConfig, PppKinematicEpochSolution,
+    PppKinematicMotionModel, PppKinematicPositionProcessNoise, PppKinematicProcessNoise,
+    PppKinematicState, PppKinematicUpdateSummary,
+};
+pub use ppp_raim::{
+    fde_float_epoch as ppp_fde_float_epoch, global_test as ppp_raim_global_test,
+    global_test_with_geometry as ppp_raim_global_test_with_geometry,
+    per_satellite_statistics as ppp_raim_per_satellite_statistics,
+    protection_levels as ppp_raim_protection_levels,
+    solve_float_epoch_with_raim as solve_ppp_float_epoch_with_raim, PppProtectionLevels,
+    PppRaimConfig, PppRaimFdeResult, PppRaimIdentification, PppRaimResult,
+};
 pub use ppp_range::{
     build_ppp_lookup, build_ppp_lookup_with_validity, PppCorrectionLookup, PppPcvSample,
     PppRangeCorrections, PppReceiverAntennaFrequency, PppReceiverAntennaOptions,
     PppSatelliteClockCorrections,
+};
+pub use ppp_tec::{
+    code_geometry_free_m as ppp_code_geometry_free_m,
+    electrons_per_tecu_m2 as ppp_electrons_per_tecu_m2, estimate as ppp_estimate_tec,
+    estimate_code as ppp_estimate_code_slant_tec, estimate_phase as ppp_estimate_phase_slant_tec,
+    level as ppp_level_slant_tec_arc, mapping as ppp_thin_shell_mapping_function,
+    phase_geometry_free_m as ppp_phase_geometry_free_m, pierce as ppp_ionospheric_pierce_point,
+    slant_from_code as ppp_slant_tec_from_code_geometry_free_m,
+    slant_from_phase as ppp_slant_tec_from_phase_geometry_free_m,
+    tec_group_delay_coefficient as ppp_tec_group_delay_coefficient,
+    vertical as ppp_vertical_tec_from_slant_tec, PppIonosphericPiercePoint, PppTecConfig,
+    PppTecEstimate, PppTecLevelingResult,
 };
 pub use ppp_velocity::{
     predict_range_rate_m_s, solve_velocity_least_squares, stationary_receiver_velocity_state,
