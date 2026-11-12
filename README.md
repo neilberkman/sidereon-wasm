@@ -554,6 +554,34 @@ tables for `PppRangeCorrections`; `solvePppFloatWithCorrections` and
 receiver-antenna calibration, external satellite clocks, and satellite-clock
 relativity.
 
+Dual-frequency ionosphere workflows use `PppTecConfig` with
+`pppEstimateTec`, `pppLevelSlantTecArc`, the code/phase slant-TEC helpers,
+`pppThinShellMappingFunction`, and `pppIonosphericPiercePoint`. Result handles
+provide core value equality and `toJSON()` returns their complete typed value.
+`VMF_SITE_MAX_SAMPLES()` and `VMF_SITE_SINGLE_SAMPLE_CLAMP_DAYS()` report the
+core VMF site-series limits.
+
+Snapshot precise-positioning integrity uses `PppRaimConfig` with
+`pppRaimGlobalTest`, `pppRaimGlobalTestWithGeometry`,
+`pppRaimPerSatelliteStatistics`, and `pppRaimProtectionLevels`.
+`pppFdeFloatEpoch` and `solvePppFloatEpochWithRaim` run the core SP3-backed
+float solve and exclusion loop. These names retain the `ppp` prefix to remain
+distinct from the package's range-domain `raim` and `raimFdeDesign` APIs.
+
+Precise-positioning cycle-slip processing uses `PppCycleSlipConfig`,
+`PppRunningMeanVariance`, and `PppSatelliteCycleSlipState` with
+`pppUpdateMelbourneWubbena`, `pppUpdateGeometryFree`, and
+`pppDetectCycleSlips`. The `ppp` prefix distinguishes this detector from the
+released observable-domain `detectCycleSlips`. `preparePppWidelaneFixedEpochs`
+delegates wide-lane fixing, ionosphere-free preparation, and slip policy to the
+core; `splitPppFloatCycleSlipEpochs` returns the corresponding float ambiguity
+arc identifiers. Exact gap epochs remain `ExactEpoch` values throughout.
+
+Sequential precise positioning uses `PppKinematicConfig`, motion and
+process-noise value classes, and a mutable `PppKinematicState`.
+`predictKinematicState` and `correctKinematicState` drive that owned state
+through the core filter; `solveKinematicPpp` returns per-epoch solutions.
+
 ## Live demo
 
 The interactive demo at [sidereon.dev](https://sidereon.dev) runs on this exact
