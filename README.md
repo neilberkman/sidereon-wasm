@@ -503,6 +503,10 @@ The wasm surface mirrors the full breadth of the engine:
   RINEX observation/navigation/clock, CRINEX (Hatanaka), SP3, IONEX, ANTEX,
   Bias-SINEX, RTCM.
 
+The TDM surface preserves unknown unit labels with `TdmUnit`, supports
+core-validated range-unit editing, and exposes core value equality through
+`equals` on TDM class instances. See [docs/tdm.md](docs/tdm.md).
+
 The binding adds no modeling of its own: every result is exactly what the engine
 computes. Failures surface as the JS exception you would expect (`Error` for
 engine rejections such as parse failures, non-converging solves, and SGP4 error

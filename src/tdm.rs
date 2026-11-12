@@ -19,7 +19,7 @@ use sidereon_core::astro::tdm::{
     TdmError as CoreTdmError, TdmField as CoreTdmField, TdmInputErrorKind, TdmLeniency,
     TdmMetadata as CoreTdmMetadata, TdmObservable, TdmParticipant as CoreTdmParticipant,
     TdmPath as CoreTdmPath, TdmPolicy, TdmScalar as CoreTdmScalar, TdmSegment as CoreTdmSegment,
-    TdmWarning as CoreTdmWarning, TdmWritePolicy,
+    TdmUnit as CoreTdmUnit, TdmWarning as CoreTdmWarning, TdmWritePolicy,
 };
 
 use crate::error::{
@@ -910,6 +910,69 @@ impl TdmField {
     pub fn value(&self) -> String {
         self.inner.value.clone()
     }
+
+    /// Whether this field has the same core value as `other`.
+    pub fn equals(&self, other: &TdmField) -> bool {
+        self.inner == other.inner
+    }
+}
+
+fn unit_from_label(label: String) -> CoreTdmUnit {
+    match label.as_str() {
+        "km" => CoreTdmUnit::Kilometers,
+        "s" => CoreTdmUnit::Seconds,
+        "RU" => CoreTdmUnit::RangeUnits,
+        "km/s" => CoreTdmUnit::KilometersPerSecond,
+        "Hz" => CoreTdmUnit::Hertz,
+        "Hz/s" => CoreTdmUnit::HertzPerSecond,
+        "deg" => CoreTdmUnit::Degrees,
+        "dBW" => CoreTdmUnit::DecibelWatts,
+        "dBHz" => CoreTdmUnit::DecibelHertz,
+        "m**2" => CoreTdmUnit::SquareMeters,
+        "m" => CoreTdmUnit::Meters,
+        "s/s" => CoreTdmUnit::SecondsPerSecond,
+        "%" => CoreTdmUnit::Percent,
+        "K" => CoreTdmUnit::Kelvin,
+        "hPa" => CoreTdmUnit::Hectopascals,
+        "TECU" => CoreTdmUnit::TotalElectronContentUnits,
+        "n/a" => CoreTdmUnit::Dimensionless,
+        _ => CoreTdmUnit::Unknown(label),
+    }
+}
+
+/// A TDM unit, including an unknown label preserved exactly.
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct TdmUnit {
+    inner: CoreTdmUnit,
+}
+
+impl From<CoreTdmUnit> for TdmUnit {
+    fn from(inner: CoreTdmUnit) -> Self {
+        Self { inner }
+    }
+}
+
+#[wasm_bindgen]
+impl TdmUnit {
+    /// Build a unit from its canonical or unknown label without changing it.
+    #[wasm_bindgen(constructor)]
+    pub fn new(label: String) -> TdmUnit {
+        TdmUnit {
+            inner: unit_from_label(label),
+        }
+    }
+
+    /// The canonical or unknown unit label.
+    #[wasm_bindgen(getter)]
+    pub fn label(&self) -> String {
+        self.inner.as_str().to_owned()
+    }
+
+    /// Whether this unit has the same core value as `other`.
+    pub fn equals(&self, other: &TdmUnit) -> bool {
+        self.inner == other.inner
+    }
 }
 
 /// One named TDM tracking participant.
@@ -937,6 +1000,11 @@ impl TdmParticipant {
     #[wasm_bindgen(getter)]
     pub fn name(&self) -> String {
         self.inner.name.clone()
+    }
+
+    /// Whether this participant has the same core value as `other`.
+    pub fn equals(&self, other: &TdmParticipant) -> bool {
+        self.inner == other.inner
     }
 }
 
@@ -972,6 +1040,11 @@ impl TdmPath {
     pub fn participants(&self) -> Vec<u8> {
         self.inner.participants.clone()
     }
+
+    /// Whether this path has the same core value as `other`.
+    pub fn equals(&self, other: &TdmPath) -> bool {
+        self.inner == other.inner
+    }
 }
 
 /// A numeric TDM record value plus its exact decimal token.
@@ -999,6 +1072,11 @@ impl TdmScalar {
     #[wasm_bindgen(getter)]
     pub fn value(&self) -> f64 {
         self.inner.value
+    }
+
+    /// Whether this scalar has the same core value as `other`.
+    pub fn equals(&self, other: &TdmScalar) -> bool {
+        self.inner == other.inner
     }
 }
 
@@ -1100,6 +1178,17 @@ impl TdmDataRecord {
     pub fn unit(&self) -> String {
         self.inner.unit.as_str().to_string()
     }
+
+    /// Unit value, including an unknown label preserved exactly.
+    #[wasm_bindgen(getter, js_name = unitValue)]
+    pub fn unit_value(&self) -> TdmUnit {
+        self.inner.unit.clone().into()
+    }
+
+    /// Whether this record has the same core value as `other`.
+    pub fn equals(&self, other: &TdmDataRecord) -> bool {
+        self.inner == other.inner
+    }
 }
 
 /// A TDM data block.
@@ -1134,6 +1223,11 @@ impl TdmDataSection {
             .cloned()
             .map(TdmDataRecord::from)
             .collect()
+    }
+
+    /// Whether this data section has the same core value as `other`.
+    pub fn equals(&self, other: &TdmDataSection) -> bool {
+        self.inner == other.inner
     }
 }
 
@@ -1393,10 +1487,27 @@ impl TdmMetadata {
         self.inner.range_units.as_str().to_string()
     }
 
+    /// Range unit value, including an unknown label preserved exactly.
+    #[wasm_bindgen(getter, js_name = rangeUnitValue)]
+    pub fn range_unit_value(&self) -> TdmUnit {
+        self.inner.range_units.clone().into()
+    }
+
+    /// Set `RANGE_UNITS` from a unit under the strict write policy.
+    #[wasm_bindgen(js_name = setRangeUnits)]
+    pub fn set_range_units(&mut self, range_units: &TdmUnit) -> Result<(), JsValue> {
+        self.set_field("RANGE_UNITS", range_units.inner.as_str())
+    }
+
     /// Return the last metadata value for `key`, or `undefined`.
     #[wasm_bindgen(js_name = getLast)]
     pub fn get_last(&self, key: &str) -> Option<String> {
         self.inner.get_last(key).map(str::to_owned)
+    }
+
+    /// Whether this metadata has the same core value as `other`.
+    pub fn equals(&self, other: &TdmMetadata) -> bool {
+        self.inner == other.inner
     }
 }
 
@@ -1426,6 +1537,11 @@ impl TdmSegment {
     pub fn data(&self) -> TdmDataSection {
         self.inner.data.clone().into()
     }
+
+    /// Whether this segment has the same core value as `other`.
+    pub fn equals(&self, other: &TdmSegment) -> bool {
+        self.inner == other.inner
+    }
 }
 
 /// A parsed CCSDS Tracking Data Message.
@@ -1437,6 +1553,11 @@ pub struct Tdm {
 
 #[wasm_bindgen]
 impl Tdm {
+    /// Whether this message has the same core value as `other`.
+    pub fn equals(&self, other: &Tdm) -> bool {
+        self.inner == other.inner
+    }
+
     /// The `CCSDS_TDM_VERS` header value.
     #[wasm_bindgen(getter)]
     pub fn version(&self) -> String {
