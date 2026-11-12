@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Adds `TdmUnit` and `TdmUnit.label` for lossless known and unknown unit labels,
+  `TdmDataRecord.unitValue`, `TdmMetadata.rangeUnitValue`, and the
+  core-validated `TdmMetadata.setRangeUnits(unit)` editor. Adds `equals(other)`
+  to `Tdm`, `TdmSegment`, `TdmMetadata`, `TdmField`, `TdmParticipant`,
+  `TdmPath`, `TdmDataSection`, `TdmDataRecord`, `TdmScalar`, and `TdmUnit`.
+  Plain TDM policy, warning, departure, comment, and input-error-kind data
+  compares structurally.
+
 ## 3.0.6 - 2026-10-30
 
 ### Added

@@ -448,7 +448,7 @@ pub use tca::{
 };
 pub use tdm::{
     parse_tdm_kvn, parse_tdm_kvn_with_policy, Tdm, TdmDataRecord, TdmDataSection, TdmField,
-    TdmMetadata, TdmParticipant, TdmPath, TdmScalar, TdmSegment,
+    TdmMetadata, TdmParticipant, TdmPath, TdmScalar, TdmSegment, TdmUnit,
 };
 pub use terrain::DtedTerrain;
 pub use terrain_store::{

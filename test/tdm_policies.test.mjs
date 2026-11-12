@@ -6,7 +6,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { TdmField, TdmMetadata, parseTdmKvn, parseTdmKvnWithPolicy } from "../pkg-node/sidereon.js";
+import {
+  TdmField,
+  TdmMetadata,
+  TdmUnit,
+  parseTdmKvn,
+  parseTdmKvnWithPolicy,
+} from "../pkg-node/sidereon.js";
 
 import { fixtureText } from "./helpers.mjs";
 
@@ -29,6 +35,159 @@ function thrown(fn, name) {
 
 const plainFields = (metadata) =>
   metadata.fields.map((field) => ({ key: field.key, value: field.value }));
+
+test("TDM units preserve unknown labels and edit supported range units through the core", () => {
+  const label = "vendor-unit/X";
+  const unit = new TdmUnit(label);
+  assert.equal(unit.label, label);
+  assert.equal(unit.equals(new TdmUnit(label)), true);
+  assert.equal(unit.equals(new TdmUnit("RU")), false);
+
+  const tdm = parseTdmKvn(fixtureText(ANNEX));
+  const metadata = tdm.segments[0].metadata;
+  const mismatchLeft = thrown(() => metadata.setRangeUnits(unit), "TdmValidationError");
+  const mismatchRight = thrown(
+    () => metadata.setRangeUnits(new TdmUnit(label)),
+    "TdmValidationError",
+  );
+  assert.equal(mismatchLeft.detail.inputErrorKind, mismatchRight.detail.inputErrorKind);
+  assert.equal(mismatchLeft.detail.inputErrorKind, "UNIT_MISMATCH");
+  assert.deepEqual(mismatchLeft.detail, {
+    kind: "INVALID_FIELD",
+    keyword: "RANGE_UNITS",
+    inputErrorKind: "UNIT_MISMATCH",
+    message: mismatchLeft.message,
+  });
+  assert.equal(metadata.rangeUnits, "km");
+
+  const rangeUnits = new TdmUnit("RU");
+  metadata.setRangeUnits(rangeUnits);
+  assert.equal(metadata.rangeUnits, "RU");
+  assert.equal(metadata.rangeUnitValue.label, "RU");
+  assert.equal(metadata.rangeUnitValue.equals(rangeUnits), true);
+  tdm.setSegmentMetadata(0, metadata);
+
+  const encoded = tdm.toKvnString();
+  assert.match(encoded, /^RANGE_UNITS = RU$/mu);
+  const reparsed = parseTdmKvn(encoded);
+  assert.equal(reparsed.segments[0].metadata.rangeUnitValue.label, "RU");
+  const frequency = reparsed.segments[0].data.records[0];
+  assert.equal(frequency.unit, "Hz");
+  assert.equal(frequency.unitValue.label, "Hz");
+});
+
+test("TDM classes use core value equality and plain data uses structural equality", () => {
+  const text = fixtureText(ANNEX);
+  const left = parseTdmKvn(text);
+  const right = parseTdmKvn(text);
+  const changed = parseTdmKvn(text);
+  const changedMetadata = changed.segments[0].metadata;
+  changedMetadata.setField("MODE", "SINGLE_DIRECTION");
+  changedMetadata.setField("PATH", "1,2");
+  changed.setSegmentMetadata(0, changedMetadata);
+
+  assert.equal(left.equals(right), true);
+  assert.equal(left.equals(changed), false);
+  assert.equal(left.segments[0].equals(right.segments[0]), true);
+  assert.equal(left.segments[0].equals(changed.segments[0]), false);
+  assert.equal(left.segments[0].metadata.equals(right.segments[0].metadata), true);
+  assert.equal(left.segments[0].metadata.equals(changed.segments[0].metadata), false);
+  assert.equal(left.segments[0].data.equals(right.segments[0].data), true);
+  assert.equal(left.segments[0].data.equals(changed.segments[0].data), true);
+  assert.equal(
+    left.segments[0].metadata.participants[0].equals(right.segments[0].metadata.participants[0]),
+    true,
+  );
+  assert.equal(
+    left.segments[0].metadata.participants[0].equals(left.segments[0].metadata.participants[1]),
+    false,
+  );
+  assert.equal(
+    left.segments[0].metadata.paths[0].equals(right.segments[0].metadata.paths[0]),
+    true,
+  );
+  assert.equal(
+    left.segments[0].metadata.paths[0].equals(changed.segments[0].metadata.paths[0]),
+    false,
+  );
+  assert.equal(left.segments[0].data.records[0].equals(right.segments[0].data.records[0]), true);
+  assert.equal(left.segments[0].data.records[0].equals(left.segments[0].data.records[1]), false);
+  assert.equal(
+    left.segments[0].data.records[0].scalar.equals(right.segments[0].data.records[0].scalar),
+    true,
+  );
+  assert.equal(
+    left.segments[0].data.records[0].scalar.equals(left.segments[0].data.records[1].scalar),
+    false,
+  );
+  assert.equal(
+    left.segments[0].metadata.fields[0].equals(right.segments[0].metadata.fields[0]),
+    true,
+  );
+  assert.equal(
+    left.segments[0].metadata.fields[0].equals(left.segments[0].metadata.fields[1]),
+    false,
+  );
+
+  const warningLeft = parseTdmKvnWithPolicy(text.slice(0, -1), {
+    finalTerminator: "forgive",
+  }).warnings[0];
+  const warningRight = parseTdmKvnWithPolicy(text.slice(0, -1), {
+    finalTerminator: "forgive",
+  }).warnings[0];
+  assert.deepEqual(warningLeft, warningRight);
+  assert.deepEqual(warningLeft, {
+    kind: "UNTERMINATED_FINAL_LINE",
+    line: 54,
+    message: "TDM line 54 carries no terminator",
+  });
+  assert.notDeepEqual(warningLeft, { ...warningRight, line: warningRight.line + 1 });
+
+  const invalidIndex = thrown(
+    () =>
+      TdmMetadata.fromRaw([
+        { key: "TIME_SYSTEM", value: "UTC" },
+        { key: "PARTICIPANT_0", value: "DSS-14" },
+      ]),
+    "TdmValidationError",
+  );
+  assert.notEqual(invalidIndex.detail.inputErrorKind, "UNIT_MISMATCH");
+  assert.equal(invalidIndex.detail.inputErrorKind, "INVALID_INDEX");
+
+  const departingLeft = parseTdmKvnWithPolicy(text.slice(0, -1), {
+    finalTerminator: "forgive",
+  }).tdm;
+  const departingRight = parseTdmKvnWithPolicy(text.slice(0, -1), {
+    finalTerminator: "forgive",
+  }).tdm;
+  const leftDepartures = departingLeft.toKvnStringWithPolicy({
+    finalTerminator: "forgive",
+  }).departures;
+  const rightDepartures = departingRight.toKvnStringWithPolicy({
+    finalTerminator: "forgive",
+  }).departures;
+  assert.deepEqual(leftDepartures, rightDepartures);
+  assert.deepEqual(leftDepartures[0], {
+    kind: "UNTERMINATED_FINAL_LINE",
+    message: "TDM is written with no terminator on its last line",
+  });
+
+  const changedDeparting = parseTdmKvnWithPolicy(text.slice(0, -1), {
+    finalTerminator: "forgive",
+  }).tdm;
+  const changedDepartingMetadata = changedDeparting.segments[0].metadata;
+  const changedFields = plainFields(changedDepartingMetadata);
+  changedFields.find((field) => field.key === "MODE").value += "\u0007";
+  changedDepartingMetadata.replaceRawWithPolicy(changedFields, changedDepartingMetadata.comments, {
+    nonPrintable: "forgive",
+  });
+  changedDeparting.setSegmentMetadata(0, changedDepartingMetadata);
+  const changedDepartures = changedDeparting.toKvnStringWithPolicy({
+    nonPrintable: "forgive",
+    finalTerminator: "forgive",
+  }).departures;
+  assert.notDeepEqual(leftDepartures, changedDepartures);
+});
 
 test("comments carry their positions and are written back where they were read", () => {
   const tdm = parseTdmKvn(fixtureText(ANNEX));

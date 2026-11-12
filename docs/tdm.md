@@ -5,6 +5,19 @@ form through `sidereon-core`. Every rule the reader and writer apply is the
 engine's; this module converts representations, and returns each departure a
 policy forgave or emitted.
 
+`TdmUnit(label)` preserves any unknown label exactly; `label` reads it back.
+The existing string properties `record.unit` and `metadata.rangeUnits` remain
+available, while `record.unitValue` and `metadata.rangeUnitValue` return the
+unit object. `metadata.setRangeUnits(unit)` edits `RANGE_UNITS` through the
+core's strict metadata validator; the engine accepts the CCSDS range-unit
+labels `km`, `s`, and `RU` and reports `UNIT_MISMATCH` for another label.
+
+TDM class instances compare by core value with `equals(other)`. This includes
+messages, segments, metadata, fields, participants, paths, data sections,
+records, scalars, and units. Comments, policies, warnings, departures, and
+input-error-kind labels are plain JavaScript data; compare these structurally
+(for example with `assert.deepEqual`), not with object identity (`===`).
+
 This document describes the settled 3.0 surface. It does not move the package
 version pin.
 
