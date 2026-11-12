@@ -81,6 +81,8 @@ mod orbit_fit_error;
 mod positioning_error;
 mod ppp;
 mod ppp_corrections;
+mod ppp_range;
+mod ppp_velocity;
 mod precise_samples;
 mod propagation;
 mod qc;
@@ -311,12 +313,22 @@ pub use orbit_determination::{
     fit_sp3_ecef_precise_orbit, fit_sp3_ecef_precise_orbits, fit_sp3_precise_orbit,
 };
 pub use ppp::{
-    solve_ppp_auto_init_fixed_js, solve_ppp_auto_init_float_js, solve_ppp_fixed,
-    solve_ppp_fixed_with_ssr, solve_ppp_float, solve_ppp_float_with_ssr, PppFixedSolution,
-    PppFloatSolution,
+    default_ppp_auto_init_strategy, solve_ppp_auto_init_fixed_js,
+    solve_ppp_auto_init_fixed_with_strategy_js, solve_ppp_auto_init_float_js,
+    solve_ppp_auto_init_float_with_strategy_js, solve_ppp_fixed, solve_ppp_fixed_with_corrections,
+    solve_ppp_fixed_with_ssr, solve_ppp_float, solve_ppp_float_epoch,
+    solve_ppp_float_with_corrections, solve_ppp_float_with_ssr, PppFixedSolution, PppFloatSolution,
 };
 pub use ppp_corrections::ppp_corrections;
 pub use ppp_corrections::ppp_corrections_with_code_bias;
+pub use ppp_range::{
+    build_ppp_lookup, build_ppp_lookup_with_validity, PppCorrectionLookup, PppPcvSample,
+    PppRangeCorrections, PppReceiverAntennaFrequency, PppReceiverAntennaOptions,
+    PppSatelliteClockCorrections,
+};
+pub use ppp_velocity::{
+    predict_range_rate_m_s, solve_velocity_least_squares, stationary_receiver_velocity_state,
+};
 pub use precise_samples::{
     observable_state_missing_position_ecef_m, precise_ephemeris_samples_from_samples,
     precise_ephemeris_samples_from_samples_with_accuracy, sample_broadcast_ephemeris,

@@ -542,6 +542,18 @@ checksums cross as JavaScript `bigint` values. Their attested Node path-open
 methods require a `bigint` in the unsigned 64-bit range; `digestProvenance`
 reports `"attested"` until `verify()` succeeds, then reports `"verified"`.
 
+PPP also exposes `solvePppFloatEpoch`, the explicit-strategy
+`solvePppAutoInitFloatWithStrategy` / `solvePppAutoInitFixedWithStrategy`
+drivers, and `PppFloatSolution.equals` / `PppFixedSolution.equals`. Doppler
+range-rate workflows use `predictRangeRateMS`,
+`stationaryReceiverVelocityState`, and `solveVelocityLeastSquares`; their
+inputs and results are plain structurally comparable TypeScript data.
+`buildPppLookup` and `buildPppLookupWithValidity` create owned correction
+tables for `PppRangeCorrections`; `solvePppFloatWithCorrections` and
+`solvePppFixedWithCorrections` apply those tables together with optional
+receiver-antenna calibration, external satellite clocks, and satellite-clock
+relativity.
+
 ## Live demo
 
 The interactive demo at [sidereon.dev](https://sidereon.dev) runs on this exact

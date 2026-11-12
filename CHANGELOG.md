@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit PPP auto-init strategy drivers, single-epoch float PPP, value
+  equality and ambiguity-search metadata on PPP solution handles, and typed
+  range-rate prediction and velocity solving.
+- Add owned PPP correction lookups, receiver-antenna and satellite-clock
+  values, lookup builders, and correction-aware float and fixed solves.
+
 ### Added
 
 - Adds `TdmUnit` and `TdmUnit.label` for lossless known and unknown unit labels,
