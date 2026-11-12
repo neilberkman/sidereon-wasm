@@ -9,10 +9,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  defaultPppAutoInitStrategy,
   loadSp3,
   solvePppFloat,
   solvePppAutoInitFloat,
   solvePppAutoInitFixed,
+  solvePppAutoInitFixedWithStrategy,
+  solvePppAutoInitFloatWithStrategy,
 } from "../pkg-node/sidereon.js";
 import { fixture, fixtureJson } from "./helpers.mjs";
 
@@ -110,6 +113,23 @@ test("solvePppAutoInitFloat (SPP seed) matches the engine float reference", () =
   assertVecClose(sol.positionM, seeded.positionM, POS_TOL, "auto vs seeded float");
 });
 
+test("explicit reference strategy and core default preserve auto-init results", () => {
+  assert.equal(defaultPppAutoInitStrategy(), "reference");
+  const implicit = solvePppAutoInitFloat(sp3, epochs, undefined, floatConfig);
+  const explicit = solvePppAutoInitFloatWithStrategy(
+    sp3,
+    epochs,
+    undefined,
+    floatConfig,
+    "reference",
+  );
+  assert.ok(explicit.equals(implicit));
+  assert.throws(
+    () => solvePppAutoInitFloatWithStrategy(sp3, epochs, undefined, floatConfig, "unknown"),
+    /strategy must be "reference" or "canonical"/,
+  );
+});
+
 test("solvePppAutoInitFloat honours an explicit initial guess", () => {
   const guess = {
     positionM: fx.initial_state.position_m,
@@ -145,4 +165,18 @@ test("solvePppAutoInitFixed (SPP seed) matches the engine fixed reference", () =
   assertVecClose(sol.positionM, fx.expected.fixed_position_m, POS_TOL, "auto fixed position");
   assert.equal(sol.integerStatus, fx.expected.fixed_integer_status);
   assert.ok(sol.usedSats.length > 0);
+  const explicit = solvePppAutoInitFixedWithStrategy(
+    sp3,
+    epochs,
+    undefined,
+    floatConfig,
+    fixedConfig,
+    "reference",
+  );
+  assert.ok(explicit.equals(sol));
+  assert.deepEqual(explicit.ambiguitySearch.order, Object.keys(explicit.fixedAmbiguitiesCycles));
+  assert.equal(
+    explicit.ambiguitySearch.covarianceCycles.length,
+    explicit.ambiguitySearch.order.length,
+  );
 });

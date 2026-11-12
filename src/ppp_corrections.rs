@@ -32,7 +32,7 @@ use crate::tides::StationTideConstants;
 
 /// Preserve the core failure's complete typed cause while retaining the old
 /// JavaScript Error versus RangeError class and message.
-fn ppp_err(err: PppCorrectionsError) -> JsValue {
+pub(crate) fn ppp_err(err: PppCorrectionsError) -> JsValue {
     let message = err.to_string();
     let name = match &err {
         PppCorrectionsError::InvalidInput { .. }
@@ -356,7 +356,7 @@ impl OceanLoadingInput {
 /// PPP correction precompute switches.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
-struct OptionsInput {
+pub(crate) struct OptionsInput {
     solid_earth_tide: bool,
     phase_windup: bool,
     satellite_antenna: Option<SatelliteAntennaOptionsInput>,
@@ -446,7 +446,7 @@ impl CodeBiasInput {
 }
 
 impl OptionsInput {
-    fn to_core(&self) -> Result<PppCorrectionsOptions, JsValue> {
+    pub(crate) fn to_core(&self) -> Result<PppCorrectionsOptions, JsValue> {
         let mut options = PppCorrectionsOptions::new();
         options.solid_earth_tide = self.solid_earth_tide;
         options.pole_tide = self

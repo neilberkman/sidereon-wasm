@@ -20,11 +20,12 @@ use sidereon_core::precise_positioning::{
         AMBIGUITY_TOLERANCE_M, CLOCK_TOLERANCE_M, MAX_ITERATIONS, POSITION_TOLERANCE_M,
         RATIO_THRESHOLD, ZTD_TOLERANCE_M,
     },
-    solve_ppp_auto_init_fixed, solve_ppp_auto_init_float, FixedAmbiguityOptions, FixedSolution,
+    solve_ppp_auto_init_fixed, solve_ppp_auto_init_fixed_with_strategy, solve_ppp_auto_init_float,
+    solve_ppp_auto_init_float_with_strategy, FixedAmbiguityOptions, FixedSolution,
     FixedSolveConfig, FloatEpoch, FloatObservation, FloatObservationSignals, FloatSolution,
     FloatSolveConfig, FloatSolveOptions, FloatState, FloatStatus, IntegerStatus,
-    MeasurementWeights, PppAutoInitOptions, PppInitialGuess, RangeCorrections, TropoMapping,
-    TroposphereOptions, VmfSiteSample, VmfSiteSeries,
+    MeasurementWeights, PppAutoInitOptions, PppAutoInitStrategy, PppInitialGuess, RangeCorrections,
+    TropoMapping, TroposphereOptions, VmfSiteSample, VmfSiteSeries,
 };
 use sidereon_core::ssr::{
     MissingCorrectionAction, SignalCode, SsrCorrectedEphemeris, SsrFallbackPolicy,
@@ -34,6 +35,7 @@ use sidereon_core::GnssSatelliteId;
 use crate::error::{engine_error, type_error};
 use crate::label::{lower_camel_variant, Label};
 use crate::marshal::mat3_flat;
+use crate::ppp_range::PppRangeCorrections;
 use crate::rinex_nav::BroadcastEphemeris;
 use crate::sp3::Sp3;
 use crate::ssr::SsrCorrectionSizeJs;
@@ -167,6 +169,12 @@ impl EpochInput {
 
 fn epochs_to_core(epochs: &[EpochInput]) -> Result<Vec<FloatEpoch>, JsValue> {
     epochs.iter().map(EpochInput::to_core).collect()
+}
+
+pub(crate) fn epochs_from_js(value: JsValue) -> Result<Vec<FloatEpoch>, JsValue> {
+    let epochs: Vec<EpochInput> = serde_wasm_bindgen::from_value(value)
+        .map_err(|error| type_error(&format!("invalid PPP epochs: {error}")))?;
+    epochs_to_core(&epochs)
 }
 
 /// Initial PPP state.
@@ -361,10 +369,17 @@ struct FloatConfigInput {
 
 impl FloatConfigInput {
     fn to_core(&self) -> Result<FloatSolveConfig, JsValue> {
+        self.to_core_with_corrections(RangeCorrections::disabled())
+    }
+
+    fn to_core_with_corrections(
+        &self,
+        corrections: RangeCorrections,
+    ) -> Result<FloatSolveConfig, JsValue> {
         Ok(FloatSolveConfig::new(
             self.weights.to_core(),
             self.tropo.to_core()?,
-            RangeCorrections::disabled(),
+            corrections,
             self.options.to_core(),
             self.elevation_cutoff_deg,
             self.residual_screen,
@@ -415,10 +430,17 @@ struct FixedConfigInput {
 
 impl FixedConfigInput {
     fn to_core(&self) -> Result<FixedSolveConfig, JsValue> {
+        self.to_core_with_corrections(RangeCorrections::disabled())
+    }
+
+    fn to_core_with_corrections(
+        &self,
+        corrections: RangeCorrections,
+    ) -> Result<FixedSolveConfig, JsValue> {
         Ok(FixedSolveConfig::new(
             self.weights.to_core(),
             self.tropo.to_core()?,
-            RangeCorrections::disabled(),
+            corrections,
             self.options.to_core(),
             self.elevation_cutoff_deg,
             self.ambiguity.to_core(),
@@ -510,6 +532,26 @@ fn auto_init_options(options: JsValue) -> Result<PppAutoInitOptions, JsValue> {
     Ok(input.to_core())
 }
 
+fn auto_init_strategy(strategy: &str) -> Result<PppAutoInitStrategy, JsValue> {
+    match strategy {
+        "reference" => Ok(PppAutoInitStrategy::Reference),
+        "canonical" => Ok(PppAutoInitStrategy::Canonical),
+        other => Err(type_error(&format!(
+            "strategy must be \"reference\" or \"canonical\", got {other:?}"
+        ))),
+    }
+}
+
+/// Return the core default PPP auto-initialization strategy label.
+#[wasm_bindgen(js_name = defaultPppAutoInitStrategy)]
+pub fn default_ppp_auto_init_strategy() -> String {
+    match PppAutoInitStrategy::default() {
+        PppAutoInitStrategy::Reference => "reference",
+        PppAutoInitStrategy::Canonical => "canonical",
+    }
+    .to_string()
+}
+
 // --- solve entry points -----------------------------------------------------
 
 /// Solve a static multi-epoch float PPP arc from raw epochs, auto-initializing
@@ -543,6 +585,35 @@ pub fn solve_ppp_auto_init_float_js(
     )
     .map_err(engine_error)?;
 
+    Ok(PppFloatSolution { inner })
+}
+
+/// Solve auto-initialized float PPP with an explicit engine strategy.
+///
+/// `strategy` is `"reference"` (the default path used by
+/// [`solvePppAutoInitFloat`]) or `"canonical"`. The selected operation is
+/// delegated to the core strategy driver.
+#[wasm_bindgen(js_name = solvePppAutoInitFloatWithStrategy)]
+pub fn solve_ppp_auto_init_float_with_strategy_js(
+    sp3: &Sp3,
+    epochs: JsValue,
+    options: JsValue,
+    config: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "PppAutoInitStrategy")] strategy: String,
+) -> Result<PppFloatSolution, JsValue> {
+    let epochs: Vec<EpochInput> = serde_wasm_bindgen::from_value(epochs)
+        .map_err(|e| type_error(&format!("invalid PPP epochs: {e}")))?;
+    let cfg: FloatConfigInput = serde_wasm_bindgen::from_value(config)
+        .map_err(|e| type_error(&format!("invalid PPP float config: {e}")))?;
+    let epochs = epochs_to_core(&epochs)?;
+    let inner = solve_ppp_auto_init_float_with_strategy(
+        &sp3.inner,
+        &epochs,
+        auto_init_options(options)?,
+        cfg.to_core()?,
+        auto_init_strategy(&strategy)?,
+    )
+    .map_err(engine_error)?;
     Ok(PppFloatSolution { inner })
 }
 
@@ -582,6 +653,35 @@ pub fn solve_ppp_auto_init_fixed_js(
     Ok(PppFixedSolution { inner })
 }
 
+/// Solve auto-initialized integer-fixed PPP with an explicit engine strategy.
+#[wasm_bindgen(js_name = solvePppAutoInitFixedWithStrategy)]
+pub fn solve_ppp_auto_init_fixed_with_strategy_js(
+    sp3: &Sp3,
+    epochs: JsValue,
+    options: JsValue,
+    float_config: JsValue,
+    fixed_config: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "PppAutoInitStrategy")] strategy: String,
+) -> Result<PppFixedSolution, JsValue> {
+    let epochs: Vec<EpochInput> = serde_wasm_bindgen::from_value(epochs)
+        .map_err(|e| type_error(&format!("invalid PPP epochs: {e}")))?;
+    let float_cfg: FloatConfigInput = serde_wasm_bindgen::from_value(float_config)
+        .map_err(|e| type_error(&format!("invalid PPP float config: {e}")))?;
+    let fixed_cfg: FixedConfigInput = serde_wasm_bindgen::from_value(fixed_config)
+        .map_err(|e| type_error(&format!("invalid PPP fixed config: {e}")))?;
+    let epochs = epochs_to_core(&epochs)?;
+    let inner = solve_ppp_auto_init_fixed_with_strategy(
+        &sp3.inner,
+        &epochs,
+        auto_init_options(options)?,
+        float_cfg.to_core()?,
+        fixed_cfg.to_core()?,
+        auto_init_strategy(&strategy)?,
+    )
+    .map_err(engine_error)?;
+    Ok(PppFixedSolution { inner })
+}
+
 /// Solve a static multi-epoch float PPP arc against an SP3 product.
 ///
 /// `epochs`, `initialState`, and `config` are plain objects; see the
@@ -610,6 +710,57 @@ pub fn solve_ppp_float(
     )
     .map_err(engine_error)?;
 
+    Ok(PppFloatSolution { inner })
+}
+
+/// Solve float PPP with an owned range-correction selection.
+#[wasm_bindgen(js_name = solvePppFloatWithCorrections)]
+pub fn solve_ppp_float_with_corrections(
+    sp3: &Sp3,
+    epochs: JsValue,
+    initial_state: JsValue,
+    config: JsValue,
+    corrections: &PppRangeCorrections,
+) -> Result<PppFloatSolution, JsValue> {
+    let epochs = epochs_from_js(epochs)?;
+    let state: StateInput = serde_wasm_bindgen::from_value(initial_state)
+        .map_err(|error| type_error(&format!("invalid PPP initial state: {error}")))?;
+    let config: FloatConfigInput = serde_wasm_bindgen::from_value(config)
+        .map_err(|error| type_error(&format!("invalid PPP float config: {error}")))?;
+    let inner = sidereon::solve_ppp_float(
+        &sp3.inner as &dyn ObservableEphemerisSource,
+        &epochs,
+        state.to_core(),
+        config.to_core_with_corrections(corrections.inner.clone())?,
+    )
+    .map_err(engine_error)?;
+    Ok(PppFloatSolution { inner })
+}
+
+/// Solve one float PPP epoch with one receiver clock and one ambiguity per row.
+///
+/// This delegates to the core single-epoch operation. `initialState.clocksM`
+/// must contain exactly one clock.
+#[wasm_bindgen(js_name = solvePppFloatEpoch)]
+pub fn solve_ppp_float_epoch(
+    sp3: &Sp3,
+    epoch: JsValue,
+    initial_state: JsValue,
+    config: JsValue,
+) -> Result<PppFloatSolution, JsValue> {
+    let epoch: EpochInput = serde_wasm_bindgen::from_value(epoch)
+        .map_err(|e| type_error(&format!("invalid PPP epoch: {e}")))?;
+    let state: StateInput = serde_wasm_bindgen::from_value(initial_state)
+        .map_err(|e| type_error(&format!("invalid PPP initial state: {e}")))?;
+    let cfg: FloatConfigInput = serde_wasm_bindgen::from_value(config)
+        .map_err(|e| type_error(&format!("invalid PPP float config: {e}")))?;
+    let inner = sidereon_core::precise_positioning::solve_float_epoch(
+        &sp3.inner,
+        epoch.to_core()?,
+        state.to_core(),
+        cfg.to_core()?,
+    )
+    .map_err(engine_error)?;
     Ok(PppFloatSolution { inner })
 }
 
@@ -696,6 +847,28 @@ pub fn solve_ppp_fixed(
     )
     .map_err(engine_error)?;
 
+    Ok(PppFixedSolution { inner })
+}
+
+/// Re-solve fixed PPP with an owned range-correction selection.
+#[wasm_bindgen(js_name = solvePppFixedWithCorrections)]
+pub fn solve_ppp_fixed_with_corrections(
+    sp3: &Sp3,
+    epochs: JsValue,
+    float_solution: &PppFloatSolution,
+    config: JsValue,
+    corrections: &PppRangeCorrections,
+) -> Result<PppFixedSolution, JsValue> {
+    let epochs = epochs_from_js(epochs)?;
+    let config: FixedConfigInput = serde_wasm_bindgen::from_value(config)
+        .map_err(|error| type_error(&format!("invalid PPP fixed config: {error}")))?;
+    let inner = sidereon::solve_ppp_fixed(
+        &sp3.inner as &dyn ObservableEphemerisSource,
+        &epochs,
+        float_solution.inner.clone(),
+        config.to_core_with_corrections(corrections.inner.clone())?,
+    )
+    .map_err(engine_error)?;
     Ok(PppFixedSolution { inner })
 }
 
@@ -848,6 +1021,15 @@ struct PppSolveOptionsJs {
     ztd_tolerance_m: f64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PppAmbiguitySearchJs<'a> {
+    order: &'a [String],
+    float_cycles: &'a BTreeMap<String, f64>,
+    covariance_cycles: &'a [Vec<f64>],
+    covariance_inverse_cycles: &'a [Vec<f64>],
+}
+
 fn unplaced_observations(
     rows: &[sidereon_core::precise_positioning::UnplacedObservation],
 ) -> JsValue {
@@ -931,6 +1113,10 @@ pub struct PppFloatSolution {
 
 #[wasm_bindgen]
 impl PppFloatSolution {
+    /// Value equality delegated to the core `FloatSolution` implementation.
+    pub fn equals(&self, other: &PppFloatSolution) -> bool {
+        self.inner == other.inner
+    }
     /// ECEF position as a `Float64Array` `[x, y, z]`, metres.
     #[wasm_bindgen(getter, js_name = positionM)]
     pub fn position_m(&self) -> Vec<f64> {
@@ -1154,6 +1340,22 @@ pub struct PppFixedSolution {
 
 #[wasm_bindgen]
 impl PppFixedSolution {
+    /// Value equality delegated to the core `FixedSolution` implementation.
+    pub fn equals(&self, other: &PppFixedSolution) -> bool {
+        self.inner == other.inner
+    }
+
+    /// Frozen ambiguity-search order, float cycles, and covariance matrices.
+    #[wasm_bindgen(getter, js_name = ambiguitySearch, unchecked_return_type = "PppAmbiguitySearch")]
+    pub fn ambiguity_search(&self) -> JsValue {
+        let search = &self.inner.integer.ambiguity_search;
+        to_js(&PppAmbiguitySearchJs {
+            order: &search.order,
+            float_cycles: &search.float_cycles,
+            covariance_cycles: &search.covariance_cycles,
+            covariance_inverse_cycles: &search.covariance_inverse_cycles,
+        })
+    }
     /// ECEF position as a `Float64Array` `[x, y, z]`, metres.
     #[wasm_bindgen(getter, js_name = positionM)]
     pub fn position_m(&self) -> Vec<f64> {
@@ -1370,6 +1572,19 @@ impl PppFixedSolution {
 
 #[wasm_bindgen(typescript_custom_section)]
 const TS_PPP_UNPLACED_DEFINITIONS: &str = r#"
+/** Runtime implementation selected by the auto-initialized PPP drivers. */
+export type PppAutoInitStrategy = "reference" | "canonical";
+/** Frozen inputs and matrices used by the integer ambiguity search. */
+export interface PppAmbiguitySearch {
+  /** Ambiguity ids in lattice-search order. */
+  order: string[];
+  /** Float ambiguity estimates in cycles, keyed by ambiguity id. */
+  floatCycles: Record<string, number>;
+  /** Ambiguity covariance in cycles squared, in `order`. */
+  covarianceCycles: number[][];
+  /** Inverse ambiguity covariance in `order`. */
+  covarianceInverseCycles: number[][];
+}
 /** Or, for a reason this binding does not name yet, the engine variant's name. */
 export type PppUnplacedObservationReason = "codeNotPositive" | "ssrCorrectionExceedsLimit" | (string & {});
 export interface PppUnplacedObservation {
