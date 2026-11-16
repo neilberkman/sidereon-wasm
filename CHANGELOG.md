@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Apply the joint innovation gate to tight EKF updates and report acceptance or coasting.
+- Preserve tight cross-covariance when a loose update is rejected.
+- Coast when IGG III removes every loose measurement row, with row-gate rejection counts or no joint-gate report.
+- Reject incompatible filter options, invalid joint-gate probabilities, and simultaneous row and joint gates.
+
 - Forward FDE GDOP validation, reject ignored GDOP policies on unsupported solve paths, and correct combined RTK metadata and update-option declarations.
 
 - Add precise-positioning dual-frequency TEC estimation, thin-shell mapping,

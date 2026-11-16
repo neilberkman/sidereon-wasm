@@ -537,3 +537,155 @@ test("joint robust gate uses raw rather than tapered measurement covariance", ()
   assert.equal(update.applied, false);
   assert.ok(update.ekf.innovationCovariance[0][0] > 2);
 });
+
+test("tight joint gates apply to EKF and UKF observations", () => {
+  const product = fixture("GRG0MGXFIN_20201760000_01D_15M_ORB.SP3")
+    .toString()
+    .replace(/^PG08.*$/gm, "PG08  -7385.701131  20983.278657  14326.711553    -38.591721");
+  const sp3 = loadSp3(Buffer.from(product));
+  const receiver = [4484128, 550582, 4487561];
+  const satellite = [-7385701.131, 20983278.657, 14326711.553];
+  const range = Math.hypot(...satellite.map((x, i) => x - receiver[i]));
+  const prediction = range - 299792458 * -38.591721e-6;
+  // H = [1], P = [2], R = [1], so S = 3 and NIS = innovation² / 3.
+  for (const kind of ["ekf", "ukf"]) {
+    for (const innovation of [1, 8]) {
+      const config = baseConfig(kind);
+      config.initialState.tJ2000S = 646228800;
+      config.initialState.positionEcefM = receiver;
+      config.covarianceDiagonal = Array(15).fill(0);
+      config.tight = { lightTime: false, sagnac: false, initialClockBiasVarianceM2: 2 };
+      if (kind === "ekf") config.tight.updateOptions = { jointInnovationGateProbability: 0.01 };
+      else config.ukf = { jointInnovationGateProbability: 0.01 };
+      const filter = new GnssInsFilter(config);
+      const before = filter.state();
+      const clock = filter.tightClockState();
+      const report = filter.updateTightSp3(sp3, {
+        tJ2000S: 646228800,
+        observations: [
+          { satelliteId: "G08", pseudorangeM: prediction + innovation, pseudorangeSigmaM: 1 },
+        ],
+      });
+      const gate = report.ekf.jointInnovationGate;
+      assert.equal(gate.degreesOfFreedom, 1);
+      assert.equal(gate.falseAlarmProbability, 0.01);
+      assert.ok(Math.abs(gate.threshold - 6.6348966010212145) < 1e-12);
+      assert.ok(
+        Math.abs(gate.statistic - innovation ** 2 / 3) < 1e-5,
+        `${kind} ${innovation} ${gate.statistic}`,
+      );
+      assert.ok(Math.abs(report.ekf.innovationCovariance[0][0] - 3) < 1e-6);
+      assert.equal(gate.accepted, innovation === 1);
+      assert.equal(report.applied, innovation === 1);
+      if (innovation === 8) {
+        assert.deepEqual(filter.state(), before);
+        assert.deepEqual(filter.tightClockState(), clock);
+      }
+    }
+  }
+});
+
+test("filter kind and innovation gate options are validated", () => {
+  const gate = { jointInnovationGateProbability: 0.05 };
+  for (const [kind, section, field] of [
+    ["ekf", "ukf", "ukf_update_options"],
+    ["ukf", "loose", "loose.update_options"],
+    ["ukf", "tight", "tight.update_options"],
+  ]) {
+    const config = baseConfig(kind);
+    config[section] = section === "ukf" ? gate : { updateOptions: gate };
+    assert.throws(
+      () => new GnssInsFilter(config),
+      (error) => error instanceof RangeError && error.message.includes(field),
+    );
+  }
+  for (const [kind, section, field] of [
+    ["ekf", "ukf", "ukf_update_options"],
+    ["ukf", "loose", "loose.update_options"],
+    ["ukf", "tight", "tight.update_options"],
+  ]) {
+    const config = baseConfig(kind);
+    const rowGate = { innovationGate: { thresholdSigma: 3, minRows: 1 } };
+    config[section] = section === "ukf" ? rowGate : { updateOptions: rowGate };
+    assert.throws(
+      () => new GnssInsFilter(config),
+      (error) => error instanceof RangeError && error.message.includes(field),
+    );
+  }
+  const wrongTransform = baseConfig("ekf");
+  wrongTransform.ukf = { transform: { alpha: 0.25 } };
+  assert.throws(() => new GnssInsFilter(wrongTransform), /ukf_update_options/);
+  for (const [kind, section] of [
+    ["ekf", "loose"],
+    ["ekf", "tight"],
+    ["ukf", "ukf"],
+  ]) {
+    for (const probability of [0, 1, -0.1, NaN, Infinity]) {
+      const config = baseConfig(kind);
+      config[section] =
+        section === "ukf"
+          ? { jointInnovationGateProbability: probability }
+          : { updateOptions: { jointInnovationGateProbability: probability } };
+      assert.throws(() => new GnssInsFilter(config), RangeError);
+    }
+    const config = baseConfig(kind);
+    const both = { ...gate, innovationGate: { thresholdSigma: 3, minRows: 1 } };
+    config[section] = section === "ukf" ? both : { updateOptions: both };
+    assert.throws(() => new GnssInsFilter(config), /mutually exclusive/);
+  }
+});
+
+test("IGG removes all loose rows and coasts with either gate", () => {
+  for (const kind of ["ekf", "ukf"]) {
+    for (const gate of [
+      { jointInnovationGateProbability: 0.01 },
+      { innovationGate: { thresholdSigma: 3, minRows: 1 } },
+    ]) {
+      const config = baseConfig(kind);
+      config.loose = { measurementReweighting: {} };
+      if (kind === "ekf") config.loose.updateOptions = gate;
+      else config.ukf = gate;
+      const filter = new GnssInsFilter(config);
+      const before = filter.state();
+      const fix = loosePositionVelocityFix();
+      fix.positionEcefM = [WGS84_A_M + 50, 50, 50];
+      fix.velocityEcefMps = [50, 50, 50];
+      const update = filter.updateLoose(fix);
+      assert.equal(update.applied, false);
+      assert.equal(update.ekf.acceptedRows, 0);
+      assert.equal(update.ekf.rejectedRows, 6);
+      assert.equal(update.ekf.jointInnovationGate, null);
+      if (gate.innovationGate) {
+        assert.equal(update.ekf.innovationGate.inputRows, 6);
+        assert.equal(update.ekf.innovationGate.rejectedRows, 6);
+        assert.equal(update.ekf.innovationGate.coasted, true);
+      }
+      assert.deepEqual(filter.state(), before);
+    }
+  }
+});
+
+test("rejected loose update preserves tight cross covariance", () => {
+  const sp3 = loadSp3(fixture("GRG0MGXFIN_20201760000_01D_15M_ORB.SP3"));
+  const config = baseConfig();
+  config.initialState.tJ2000S = 646272000;
+  config.initialState.positionEcefM = [4484128, 550582, 4487561];
+  config.loose = { updateOptions: { jointInnovationGateProbability: 0.05 } };
+  const a = new GnssInsFilter(config);
+  const b = new GnssInsFilter(config);
+  const epoch = {
+    tJ2000S: 646272000,
+    observations: [{ satelliteId: "G08", pseudorangeM: 23825519.8, pseudorangeSigmaM: 3 }],
+  };
+  a.updateTightSp3(sp3, epoch);
+  b.updateTightSp3(sp3, epoch);
+  a.propagate(zeroIncrement(646272001, 1));
+  b.propagate(zeroIncrement(646272001, 1));
+  assert.equal(a.updateLoose(looseFix(646272001, [4485128, 550582, 4487561])).applied, false);
+  a.propagate(zeroIncrement(646272002, 1));
+  b.propagate(zeroIncrement(646272002, 1));
+  epoch.tJ2000S = 646272002;
+  assert.deepEqual(a.updateTightSp3(sp3, epoch), b.updateTightSp3(sp3, epoch));
+  assert.deepEqual(a.state(), b.state());
+  assert.deepEqual(a.tightClockState(), b.tightClockState());
+});
