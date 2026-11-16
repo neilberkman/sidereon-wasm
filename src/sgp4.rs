@@ -162,6 +162,21 @@ pub struct ChecksumWarning {
 
 #[wasm_bindgen]
 impl ChecksumWarning {
+    /// Compare checksum findings.
+    pub fn equals(&self, other: &ChecksumWarning) -> bool {
+        let left = CoreChecksumWarning {
+            line_label: self.line_label,
+            kind: self.kind,
+            computed: self.computed,
+        };
+        let right = CoreChecksumWarning {
+            line_label: other.line_label,
+            kind: other.kind,
+            computed: other.computed,
+        };
+        left == right
+    }
+
     /// Which line the discrepancy is on: `"line 1"` or `"line 2"`.
     #[wasm_bindgen(getter, js_name = lineLabel)]
     pub fn line_label(&self) -> String {
@@ -514,6 +529,7 @@ fn loss(label: Option<&str>) -> Result<Loss, JsValue> {
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct FitConfigInput {
+    omm_header: Option<FitOmmHeaderInput>,
     epoch: Option<String>,
     epoch_sample_index: Option<usize>,
     epoch_jd: Option<Vec<f64>>,
@@ -531,6 +547,13 @@ struct FitConfigInput {
     loss: Option<String>,
     f_scale: Option<f64>,
     metadata: Option<FitMetadataInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FitOmmHeaderInput {
+    creation_date: String,
+    originator: String,
 }
 
 fn fit_epoch(input: &FitConfigInput) -> Result<FitEpoch, JsValue> {
@@ -576,6 +599,13 @@ fn fit_config(value: JsValue) -> Result<FitConfig, JsValue> {
     options.x_scale = x_scale(input.x_scale)?;
     options.loss = loss(input.loss.as_deref())?;
     options.f_scale = input.f_scale.unwrap_or(defaults.f_scale);
+    options.omm_header =
+        input
+            .omm_header
+            .map(|header| sidereon_core::astro::sgp4::fit::FitOmmHeader {
+                creation_date: header.creation_date,
+                originator: header.originator,
+            });
     options.metadata = input
         .metadata
         .map(|metadata| metadata.to_core())
@@ -624,7 +654,10 @@ impl TleFit {
 
 /// Fit SGP4 mean elements and optional B* to TEME state samples.
 #[wasm_bindgen(js_name = fitTle)]
-pub fn fit_tle(samples: JsValue, config: JsValue) -> Result<TleFit, JsValue> {
+pub fn fit_tle(
+    #[wasm_bindgen(unchecked_param_type = "TleFitSample[]")] samples: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "TleFitConfig | null | undefined")] config: JsValue,
+) -> Result<TleFit, JsValue> {
     let sample_inputs: Vec<FitSampleInput> = serde_wasm_bindgen::from_value(samples)
         .map_err(|e| type_error(&format!("invalid TLE fit samples: {e}")))?;
     let core_samples: Vec<_> = sample_inputs
@@ -638,6 +671,12 @@ pub fn fit_tle(samples: JsValue, config: JsValue) -> Result<TleFit, JsValue> {
 
 #[wasm_bindgen]
 impl Tle {
+    /// Parsed fixed-column element fields.
+    #[wasm_bindgen(getter, unchecked_return_type = "TleElements")]
+    pub fn elements(&self) -> Result<JsValue, JsValue> {
+        crate::celestrak::tle_elements_value(&self.elements)
+    }
+
     /// Parse two TLE lines and initialize SGP4. `opsMode` is `"improved"`
     /// (default) or `"afspc"`. `policy` is `"strict"` (default), which refuses
     /// a column-69 checksum digit that disagrees and a column 69 that is not a

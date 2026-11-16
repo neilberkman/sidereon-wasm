@@ -24,6 +24,7 @@ mod bias;
 mod bodies;
 mod broadcast_comparison;
 mod cdm;
+mod celestrak;
 mod clock_stability;
 mod conjunction;
 mod constellation;

@@ -36,7 +36,7 @@ fn exact_float(value: f64) -> serde_json::Value {
     })
 }
 
-fn sgp4_cause(error: &CoreSgp4Error) -> serde_json::Value {
+pub(crate) fn sgp4_cause(error: &CoreSgp4Error) -> serde_json::Value {
     use CoreSgp4Error as E;
     match error {
         E::InvalidInput { field, kind } => serde_json::json!({
@@ -74,7 +74,7 @@ pub(crate) fn sgp4_error(error: CoreSgp4Error) -> JsValue {
     detail("sgp4", &error.to_string(), sgp4_cause(&error))
 }
 
-fn tle_cause(error: &TleError) -> serde_json::Value {
+pub(crate) fn tle_cause(error: &TleError) -> serde_json::Value {
     use TleError as E;
     match error {
         E::NonAscii => serde_json::json!({"kind":"nonAscii"}),
@@ -383,6 +383,9 @@ fn fit_result_value(result: &CoreTleFit) -> serde_json::Value {
 fn fit_cause(error: &sidereon::sgp4::TleFitError) -> serde_json::Value {
     use sidereon::sgp4::TleFitError as E;
     match error {
+        E::OmmHeader(source) => {
+            serde_json::json!({"kind":"ommHeader", "message":source.to_string(), "cause":crate::ndm_error::omm_detail(source)})
+        }
         E::ArcTooShort { samples, needed } => {
             serde_json::json!({"kind":"arcTooShort", "samples":samples, "needed":needed})
         }
