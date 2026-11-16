@@ -5,8 +5,7 @@ JavaScript/TypeScript and `sidereon-core`: every record the format defines,
 the phase-center lookups, and the writer. Every reading, lookup and writing
 rule is the engine's; this module converts representations.
 
-This document describes the settled 3.0 surface. It does not move the package
-version pin. The writer's refusals are in `writers.md`.
+The writer's refusals are in `writers.md`.
 
 ## 1. Absent records stay absent
 

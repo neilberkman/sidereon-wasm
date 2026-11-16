@@ -90,12 +90,9 @@ test("scenario simulator returns pinned arrays", () => {
   const fromJson = simulateScenarioJson(text);
   const fromObject = simulateScenario(SCENARIO);
 
-  // The fingerprint stamps the engine version by design, so it changes each
-  // release; the invariant is cross-entry-point agreement, and the value pins
-  // below anchor the actual numbers.
-  assert.equal(fromObject.determinismFingerprintHex, fromJson.determinismFingerprintHex);
-  // The same scenario simulated natively by test/golden-gen.
   const ref = coreGoldens().scenario;
+  assert.equal(fromObject.determinismFingerprintHex, ref.determinismFingerprintHex);
+  assert.equal(fromJson.determinismFingerprintHex, ref.determinismFingerprintHex);
   assert.equal(fromJson.observationCount, ref.observationCount);
   assert.deepEqual(fromJson.observations.epochOffsets, ref.epochOffsets);
   assert.equal(fromJson.observations.satelliteId[0], ref.firstSatellite);
@@ -116,7 +113,7 @@ test("scenario simulator is byte-deterministic for the same schema and seed", ()
   assert.deepEqual(Buffer.from(first), Buffer.from(second));
   const payload = JSON.parse(Buffer.from(first).toString("utf8"));
   assert.equal(payload.schemaVersion, 1);
-  assert.match(payload.engineVersion, /^\d+\.\d+\.\d+:scenario-observables-v1$/);
+  assert.equal(payload.engineVersion, "4.0.0:scenario-observables-v1");
 });
 
 test("the simulation set writes the engine's RINEX text and SPP observations", () => {

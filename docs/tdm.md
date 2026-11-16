@@ -18,9 +18,6 @@ records, scalars, and units. Comments, policies, warnings, departures, and
 input-error-kind labels are plain JavaScript data; compare these structurally
 (for example with `assert.deepEqual`), not with object identity (`===`).
 
-This document describes the settled 3.0 surface. It does not move the package
-version pin.
-
 ## 1. Positioned comments
 
 `Tdm.comments`, `TdmMetadata.comments` and `TdmDataSection.comments` are

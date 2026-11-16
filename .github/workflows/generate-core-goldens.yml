@@ -2,12 +2,7 @@ name: generate-core-goldens
 
 on:
   workflow_dispatch:
-    inputs:
-      core_rev:
-        description: sidereon commit to reproduce goldens against
-        required: true
-        type: string
-        default: 39e5f3d67866c24f08b01d51db7fc09b0d06cd88
+
 permissions:
   contents: read
 
@@ -17,65 +12,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/checkout@v4
-        with:
-          repository: neilberkman/sidereon
-          ref: ${{ github.event.inputs.core_rev || '39e5f3d67866c24f08b01d51db7fc09b0d06cd88' }}
-          path: sidereon-at-rev
-
       - uses: dtolnay/rust-toolchain@1.98.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
 
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: core-golden-generator
 
-      - name: Match generator crate versions to the checked-out core
-        shell: bash
-        id: core
-        run: |
-          core_rev="$(git -C sidereon-at-rev rev-parse HEAD)"
-          echo "core_rev=$core_rev" >> "$GITHUB_OUTPUT"
-          core_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' sidereon-at-rev/crates/sidereon-core/Cargo.toml | head -n 1)"
-          test -n "$core_version"
-          python3 - "$core_version" test/golden-gen/Cargo.toml <<'PY'
-          from pathlib import Path
-          import re
-          import sys
-
-          version, manifest = sys.argv[1:]
-          path = Path(manifest)
-          text = path.read_text()
-          # A prepublication candidate uses full-revision Git pins. Normalize
-          # either source form to exact versions, then patch both crates to the
-          # explicitly checked-out revision in the generation step below.
-          for crate in ("sidereon", "sidereon-core"):
-              pattern = rf'^{re.escape(crate)}\s*=\s*\{{[^\n]*\}}$'
-              text, count = re.subn(
-                  pattern,
-                  f'{crate} = {{ version = "={version}" }}',
-                  text,
-                  flags=re.MULTILINE,
-              )
-              if count != 1:
-                  raise SystemExit(f"expected one {crate} dependency to bind to the checked-out core, found {count}")
-          path.write_text(text)
-          PY
+      - name: Verify published core source
+        run: npm run check:core
 
       - name: Generate golden fixture
-        env:
-          CORE_REV: ${{ steps.core.outputs.core_rev }}
         shell: bash
         run: |
           set -euo pipefail
-          SIDEREON_CORE_REV="$CORE_REV" cargo run --release \
+          cargo run --locked --release \
             --manifest-path test/golden-gen/Cargo.toml \
-            --config 'patch.crates-io.sidereon-core.path="sidereon-at-rev/crates/sidereon-core"' \
-            --config 'patch.crates-io.sidereon.path="sidereon-at-rev/crates/sidereon"' \
             > "$RUNNER_TEMP/core_goldens.json"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: core-goldens-${{ steps.core.outputs.core_rev }}
+          name: core-goldens-4.0.0
           path: |
             ${{ runner.temp }}/core_goldens.json
             test/golden-gen/Cargo.toml

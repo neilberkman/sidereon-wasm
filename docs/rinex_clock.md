@@ -7,9 +7,6 @@ defines, and the writer with its policy. Every reading, editing and writing
 rule is the engine's; this module converts representations and hands back
 what the engine holds.
 
-This document describes the settled 3.0 surface. It does not move the package
-version pin.
-
 ## 1. The text is the authority
 
 A product read from text keeps every line: header records with their exact

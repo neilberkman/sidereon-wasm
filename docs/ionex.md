@@ -9,9 +9,6 @@ spatial interpolation, linear-in-time blending between map epochs, the obliquity
 factor, and the dispersive group-delay scaling. This module validates inputs,
 converts representations, and hands the result back with its status intact.
 
-This document describes the settled 3.0 surface. It does not move the package
-version pin.
-
 ## 1. Nullable grid cells, no validity masks
 
 - `tecMaps`, `rmsMaps` and `heightMaps` are nested arrays `(number | null)[][][]`

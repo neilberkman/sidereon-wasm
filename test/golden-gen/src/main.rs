@@ -1,37 +1,10 @@
-//! Reproduce the WASM test scenarios natively against sidereon-core and print
-//! their inputs and expected values as JSON (`test/fixtures/core_goldens.json`).
+//! Core scenario inputs and expected values.
 //!
-//! Each section builds the same inputs the corresponding test hands the binding,
-//! through the same core entry point the binding delegates to, so a test that
-//! reads its expected values from this file checks the binding's marshalling
-//! against the engine. Where a test synthesizes observations, the synthesis is
-//! done here and its output is part of the section, so the test and the engine
-//! see identical inputs. Floating-point values are written as their IEEE-754
-//! bit patterns (`"0x..."`).
-//!
-//! # Running it against a core commit
-//!
-//! The goldens belong to one sidereon-core commit. The generator refuses to run
-//! unless `SIDEREON_CORE_REV` names that commit (7 to 40 hexadecimal digits),
-//! and records it in the output's `source`. It does not check the name against
-//! the code it was built with, so build it against a checkout of that commit:
-//!
-//! 1. Check out sidereon at the commit, say in `../sidereon-at-rev`.
-//! 2. Set the `sidereon` and `sidereon-core` requirements in this crate's
-//!    `Cargo.toml` to the version that checkout's `crates/sidereon-core/Cargo.toml`
-//!    states, so the patch below applies.
-//! 3. Run from the repository root, patching both crates to the checkout:
-//!
-//! ```text
-//! SIDEREON_CORE_REV=<commit> cargo run --release \
-//!     --manifest-path test/golden-gen/Cargo.toml \
-//!     --config 'patch.crates-io.sidereon-core.path="../sidereon-at-rev/crates/sidereon-core"' \
-//!     --config 'patch.crates-io.sidereon.path="../sidereon-at-rev/crates/sidereon"' \
-//!     > test/fixtures/core_goldens.json
-//! ```
-//!
-//! `Cargo.lock` pins every other dependency. Rerun after an engine change that
-//! moves these values; never edit the output by hand.
+//! Each section specifies the inputs and expected output of one API scenario.
+//! Floating-point values use hexadecimal IEEE-754 binary64 bit patterns;
+//! comparisons against those values require exact bits, without a tolerance.
+//! `coreRev` identifies the published crate's source revision. The static
+//! reference-station section records its elevation-weighting convention.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -1123,6 +1096,8 @@ fn rtk_static_reference_section() -> Value {
         solve_static_reference_station_rinex(&sp3, &base_obs, &rover_obs, reference, &options)
             .expect("static reference solve");
     json!({
+        "provenance": "Core 4.0.0 uses RTKLIB ecef2pos/satazel arithmetic for elevation-weighted RTK results.",
+        "integerRatio": solution.carrier_solution.as_ref().expect("carrier").integer_ratio.map(hex),
         "referencePositionM": hexes(&reference),
         "positionM": hexes(&solution.position.as_array()),
         "baselineVectorM": hexes(&solution.baseline_vector_m),
@@ -1400,33 +1375,14 @@ fn precise_artifact_section() -> Value {
     })
 }
 
-/// The sidereon-core commit `SIDEREON_CORE_REV` names. Exits with a message
-/// when it is unset or not 7 to 40 hexadecimal digits.
-fn core_rev() -> String {
-    let rev = match std::env::var("SIDEREON_CORE_REV") {
-        Ok(rev) => rev,
-        Err(_) => {
-            eprintln!(
-                "golden-gen: set SIDEREON_CORE_REV to the sidereon-core commit this build is \
-                 patched to (see the crate documentation)"
-            );
-            std::process::exit(2);
-        }
-    };
-    let valid = (7..=40).contains(&rev.len()) && rev.bytes().all(|b| b.is_ascii_hexdigit());
-    if !valid {
-        eprintln!("golden-gen: SIDEREON_CORE_REV={rev:?} is not a 7 to 40 digit commit id");
-        std::process::exit(2);
-    }
-    rev
-}
+const CORE_REV: &str = "3132eeac13ebf30f63766fc608aa9aae9258dd3d";
 
 fn main() {
-    let rev = core_rev();
+    let rev = CORE_REV;
     let (velocity, range_rates) = velocity_section();
     let doc = json!({
         "source": format!(
-            "test/golden-gen: the test scenarios reproduced natively against sidereon-core {rev}"
+            "sidereon-core 4.0.0 ({rev})"
         ),
         "coreRev": rev,
         "velocity": velocity,

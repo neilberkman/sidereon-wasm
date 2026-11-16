@@ -6,9 +6,6 @@ product, the header in effect at each epoch, the strict writer and the version
 writing and downgrade rule is the engine's; this module converts
 representations and hands back what the engine holds.
 
-This document describes the settled 3.0 surface. It does not move the package
-version pin.
-
 ## 1. Absence conventions
 
 - A scalar getter on a class (`markerName`, `intervalS`, `ObsPhaseShift.code`,

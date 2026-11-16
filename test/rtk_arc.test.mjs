@@ -479,8 +479,6 @@ test("buildRinexRtkArc and solveStaticRinexRtkBaseline solve the real WTZR/WTZZ 
 
 test("solveStaticReferenceStationRinex solves the real WTZR/WTZZ static coordinate", () => {
   const { sp3, baseObs, roverObs, baseArpM, truthBaselineM } = wettzellRinexInputs();
-  // The golden generator (test/golden-gen) solved this configuration natively
-  // from the same ARP, formed with the same operations.
   const golden = coreGoldens().rtkStaticReference;
   assert.deepEqual(
     baseArpM.map(f64Bits),
@@ -521,30 +519,18 @@ test("solveStaticReferenceStationRinex solves the real WTZR/WTZZ static coordina
   assert.equal(sol.modeReports[0].skippedEpochs, 0);
   assert.equal(sol.modeReports[0].usedMeasurements, golden.usedMeasurements);
   assert.ok(vectorErrorM(sol.baselineVectorM, truthBaselineM) < 0.005);
-  assert.ok(sol.carrierSolution.integerRatio > 3.0);
-  // The core changed satazel from the Skyfield geodetic conversion to RTKLIB
-  // ecef2pos. This solve enables elevation weighting, so that changes the
-  // weights and shifts one position component by one ulp. A native A/B using
-  // the old satazel frame restores these original golden bits. Keep the old
-  // independent golden and compare coordinates within 10 nm.
-  const numberFromBits = (text) => {
-    const bytes = new ArrayBuffer(8);
-    const view = new DataView(bytes);
-    view.setBigUint64(0, BigInt(text));
-    return view.getFloat64(0);
-  };
+  assert.equal(f64Bits(sol.carrierSolution.integerRatio), BigInt(golden.integerRatio));
   for (const [actual, expected] of [
     [sol.positionM, golden.positionM],
     [sol.baselineVectorM, golden.baselineVectorM],
   ]) {
-    actual.forEach((value, i) => assert.ok(Math.abs(value - numberFromBits(expected[i])) < 1e-8));
+    assert.deepEqual(actual.map(f64Bits), expected.map(BigInt));
   }
-  sol.covariance.positionEcefM2.forEach((row, i) =>
-    row.forEach((value, j) =>
-      assert.ok(Math.abs(value - numberFromBits(golden.positionCovarianceEcefM2[i][j])) < 1e-10),
-    ),
+  assert.deepEqual(
+    sol.covariance.positionEcefM2.map((row) => row.map(f64Bits)),
+    golden.positionCovarianceEcefM2.map((row) => row.map(BigInt)),
   );
-  assert.ok(Math.abs(sol.geodetic.heightM - numberFromBits(golden.heightM)) < 1e-8);
+  assert.equal(f64Bits(sol.geodetic.heightM), BigInt(golden.heightM));
 });
 
 test("buildDualFrequencyRinexRtkArc and solveWideLaneFixedRinexRtkBaseline fix the real WTZR/WTZZ arc", () => {

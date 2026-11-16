@@ -1,8 +1,7 @@
 # SP3 and ANTEX writers, SP3 merge agreement
 
-This document describes the settled 3.0 surface of the SP3 writer, the ANTEX
-writer and the SP3 merge agreement metrics. It does not move the package
-version pin.
+SP3 and ANTEX writers preserve representable records and report refusals.
+SP3 merge metrics describe agreement between contributing products.
 
 ## 1. SP3 writer
 

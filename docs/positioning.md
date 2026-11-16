@@ -1,16 +1,17 @@
-# Positioning, RTCM and SBAS changes in the 3.0 surface
+# Positioning, RTCM and SBAS
 
-This document describes the settled 3.0 surface for satellites left out of a
-solve, RTK arcs built from RINEX, the RTCM encoder's refusals, the SBAS
-correction store, transmission-epoch placement and UT1 coverage. It does not move the package version pin.
+SPP and RTK positioning provide satellite rejection details, RINEX arc inputs,
+RTCM encoding, SBAS corrections, transmission-epoch placement and UT1 coverage.
 
 ## 1. Satellites left out of a solve
 
 `SppSolution.rejectedSats` lists each satellite left out of the solve as
 `{ satelliteId, reason }`, in observation order; `StaticSolution.rejectedSats`
 lists them per input epoch. Selection reports the first reason that applies,
-tested in RTKLIB `rescode` order: `"noEphemeris"`, `"lowElevation"`,
-`"sbasIonoUncovered"`, `"ionosphereCarrierUnresolved"`. `"sbasWithdrawn"`
+with invalid inputs reported as `"nonFinitePseudorange"` or
+`"nonPositivePseudorange"`. Other reasons follow RTKLIB `rescode` order:
+`"noEphemeris"`, `"lowElevation"`, `"sbasIonoUncovered"`, and
+`"ionosphereCarrierUnresolved"`. `"sbasWithdrawn"`
 comes from the augmentation paths.
 
 With the ionosphere correction on, a satellite whose carrier the delay cannot be
@@ -38,8 +39,10 @@ outside `1..=64`, a signal id outside `1..=32`, a satellite or satellite/signal
 cell listed twice, a signal whose satellite is not listed, and an ephemeris
 satellite id wider than the message's field (four bits for QZSS 1044, six
 otherwise). The refusal is an `Error` named `RtcmEncodeError` whose `detail` is
-`{ kind: "INVALID_INPUT", reason, message }`, or `{ kind: "UNKNOWN", message }`
-for any other engine error.
+`{ kind: "INVALID_INPUT", reason, message }` for input validation,
+`{ kind: "RTCM_ENCODE", core, message }` for a wire-encoding refusal, or
+`{ kind: "RTCM_CONVERSION", core, message }` for a conversion refusal.
+Other engine errors use `{ kind: "UNKNOWN", message }`.
 
 ## 4. SBAS
 
@@ -103,10 +106,8 @@ refused epoch as the mode error `"ut1OutsideCoverage"`.
 
 ## 8. TypeScript
 
-`SppRejectionReason` and `SppRejectedSatellite` (`src/spp.rs`),
-`RtcmEncodeErrorDetail` (`src/rtcm.rs`) and `SbasUnassignedMaskCorrections`
-(`src/sbas.rs`) are declared in `typescript_custom_section` blocks and
-re-exported from `@neilberkman/sidereon/types`. `PppUnplacedObservation`,
-`PppObservationSignals`, `Ut1Validated<T>` and `Ut1DegradeReason` are declared
-in the typed overlay of `scripts/postbuild.mjs`. The SP3 writer's
-`SATELLITE_NOT_REPRESENTABLE` refusal is in `writers.md`.
+`SppRejectionReason`, `SppRejectedSatellite`, `RtcmEncodeErrorDetail`,
+`SbasUnassignedMaskCorrections`, `PppUnplacedObservation`,
+`PppObservationSignals`, `Ut1Validated<T>` and `Ut1DegradeReason` are
+available from the package declarations and `@neilberkman/sidereon/types`.
+The SP3 writer's `SATELLITE_NOT_REPRESENTABLE` refusal is in `writers.md`.

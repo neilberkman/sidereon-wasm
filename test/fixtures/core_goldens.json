@@ -1,6 +1,6 @@
 {
-  "source": "test/golden-gen: the test scenarios reproduced natively against sidereon-core 39e5f3d67866c24f08b01d51db7fc09b0d06cd88",
-  "coreRev": "39e5f3d67866c24f08b01d51db7fc09b0d06cd88",
+  "source": "sidereon-core 4.0.0 (3132eeac13ebf30f63766fc608aa9aae9258dd3d)",
+  "coreRev": "3132eeac13ebf30f63766fc608aa9aae9258dd3d",
   "velocity": {
     "tRxJ2000S": "0x41c342aa00000000",
     "receiverEcefM": [
@@ -582,7 +582,7 @@
     "geometricRangeM0": "0x41733f3670013e3d",
     "thermalNoiseM0": "0x3fd7711c52a2af5b",
     "receiverTruth1PositionEcefM0": "0x415854a640000000",
-    "determinismFingerprintHex": "0xe3645f00a3ef1679",
+    "determinismFingerprintHex": "0xceea65601159e5ec",
     "rinexText": "3.05                OBSERVATION DATA    M (MIXED)           RINEX VERSION / TYPE\nSIDEREON-SCENARIO   sidereon-core       SCENARIO-V1         PGM / RUN BY / DATE\nSynthetic observations from sidereon-core scenario engine   COMMENT\nSYNTHETIC                                                   MARKER NAME\nSIMULATED                                                   MARKER TYPE\n  6378137.0000        0.0000        0.0000                  APPROX POSITION XYZ\nG    3 C1C L1C D1C                                          SYS / # / OBS TYPES\n    30.000                                                  INTERVAL\n  2026     1     1     0     0    0.0000000     GPS         TIME OF FIRST OBS\n  2026     1     1     0     0   30.0000000     GPS         TIME OF LAST OBS\n     5                                                      # OF SATELLITES\n                                                            END OF HEADER\n> 2026 01 01 00 00  0.0000000  0  5\nG01  20181893.405   106056575.667          -0.125\nG02  24014764.773   126198452.626       -2341.612\nG03  24014907.414   126199202.796        2341.310\nG04  24014764.960   126198452.614       -4682.605\nG05  24014907.578   126199202.795        4682.330\n> 2026 01 01 00 00 30.0000000  0  5\nG01  20181913.983   106056685.098          -7.188\nG02  24028137.277   126268725.839       -2343.279\nG03  24001546.254   126128987.801        2339.659\nG04  24041523.888   126339073.482       -4692.113\nG05  23988204.104   126058876.770        4672.685\n",
     "sppObservationsEpoch0": [
       {
@@ -678,6 +678,8 @@
     }
   },
   "rtkStaticReference": {
+    "provenance": "Core 4.0.0 uses RTKLIB ecef2pos/satazel arithmetic for elevation-weighted RTK results.",
+    "integerRatio": "0x4055ce66346584ff",
     "referencePositionM": [
       "0x414f181e2da372f7",
       "0x412c701c211f4e38",
@@ -685,29 +687,29 @@
     ],
     "positionM": [
       "0x414f181daf5f86cc",
-      "0x412c701ad35a97cf",
+      "0x412c701ad35a97d0",
       "0x4152510859bc8a81"
     ],
     "baselineVectorM": [
-      "0xbfef90fb0ac567c9",
-      "0xbfe4dc4b6688b506",
-      "0x3ff115a6aa24c512"
+      "0xbfef90fb0ac538bc",
+      "0xbfe4dc4b66851386",
+      "0x3ff115a6aa247f7f"
     ],
     "positionCovarianceEcefM2": [
       [
-        "0x3f04714c22717de7",
-        "0x3eded47420268df8",
-        "0x3ef2f6943b05405f"
+        "0x3f04714c2259df93",
+        "0x3eded4741ff020e6",
+        "0x3ef2f6943aef19b9"
       ],
       [
-        "0x3eded47420268df6",
-        "0x3eec2a218bb40a65",
-        "0x3ed80783fb505d72"
+        "0x3eded4741ff020e5",
+        "0x3eec2a218ba73146",
+        "0x3ed80783fb1f3ad5"
       ],
       [
-        "0x3ef2f6943b05405d",
-        "0x3ed80783fb505d72",
-        "0x3f090f65270bcd58"
+        "0x3ef2f6943aef19b9",
+        "0x3ed80783fb1f3ad7",
+        "0x3f090f6527135014"
       ]
     ],
     "heightM": "0x4084d166d76c4df4",
