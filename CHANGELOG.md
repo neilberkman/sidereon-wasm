@@ -2,50 +2,42 @@
 
 ## Unreleased
 
-- Apply the joint innovation gate to tight EKF updates and report acceptance or coasting.
-- Preserve tight cross-covariance when a loose update is rejected.
-- Coast when IGG III removes every loose measurement row, with row-gate rejection counts or no joint-gate report.
-- Reject incompatible filter options, invalid joint-gate probabilities, and simultaneous row and joint gates.
-
-- Forward FDE GDOP validation, reject ignored GDOP policies on unsupported solve paths, and correct combined RTK metadata and update-option declarations.
-
-- Add precise-positioning dual-frequency TEC estimation, thin-shell mapping,
-  ionospheric pierce points, snapshot PPP RAIM/FDE, and the VMF site-series
-  capacity and single-sample validity constants.
-- Add precise-positioning Melbourne-Wubbena and geometry-free cycle-slip
-  detection, mutable detector statistics/state, wide-lane fixed preparation,
-  and float ambiguity-arc splitting.
-- Add sequential kinematic PPP configuration, motion and process-noise models,
-  mutable predict/correct state, update summaries, and epoch solutions.
-- Add explicit PPP auto-init strategy drivers, single-epoch float PPP, value
-  equality and ambiguity-search metadata on PPP solution handles, and typed
-  range-rate prediction and velocity solving.
-- Add owned PPP correction lookups, receiver-antenna and satellite-clock
-  values, lookup builders, and correction-aware float and fixed solves.
+## 4.0.0 - 2026-11-16
 
 ### Added
 
-- Add CelesTrak GP and NAVCEN source metadata, URL builders, GP response parsing, and TLE-to-OMM conversion.
-- Add source spans to parsed OMM arrays.
-- Add `Omm.toKvnStringLenient`, `Omm.toXmlStringLenient`, `Omm.withCcsdsHeader`, and `TleFitConfig.ommHeader`.
-
-- Adds `TdmUnit` and `TdmUnit.label` for lossless known and unknown unit labels,
-  `TdmDataRecord.unitValue`, `TdmMetadata.rangeUnitValue`, and the
-  core-validated `TdmMetadata.setRangeUnits(unit)` editor. Adds `equals(other)`
-  to `Tdm`, `TdmSegment`, `TdmMetadata`, `TdmField`, `TdmParticipant`,
-  `TdmPath`, `TdmDataSection`, `TdmDataRecord`, `TdmScalar`, and `TdmUnit`.
-  Plain TDM policy, warning, departure, comment, and input-error-kind data
-  compares structurally.
-
-- Add `Tle.elements` and value comparison with `Omm.equals`, `OmmEpoch.equals`,
-  `ChecksumWarning.equals`, `CelestrakGpResponse.equals`, `CelestrakGpRecord.equals`,
-  `CelestrakTleRecord.equals`, `CelestrakGpRejectedRecord.equals`, and
-  `CelestrakGpRejectionReason.equals`.
+- Add CelesTrak GP and NAVCEN source metadata, validated URL builders, GP response parsing, and TLE-to-OMM conversion.
+- Add OMM source spans, explicit lenient KVN/XML writers, validated CCSDS headers, and `TleFitConfig.ommHeader`.
+- Add `Tle.elements` and core value equality for OMM, TLE catalog records, checksum warnings, and GP response handles.
+- Add `TdmUnit`, typed unit getters, core-validated range-unit editing, and value equality for TDM handles.
+- Add precise-positioning dual-frequency TEC estimation, thin-shell mapping, ionospheric pierce points, snapshot PPP RAIM/FDE, and VMF site-series limits.
+- Add precise-positioning Melbourne-Wubbena and geometry-free cycle-slip detection, mutable detector state, wide-lane fixed preparation, and ambiguity-arc splitting.
+- Add sequential kinematic PPP configuration, motion and process-noise models, predict/correct state, and epoch solutions.
+- Add explicit PPP auto-init strategy drivers, single-epoch float PPP, solution equality, ambiguity-search metadata, and typed range-rate prediction and velocity solving.
+- Add owned PPP correction lookups, receiver-antenna and satellite-clock values, and correction-aware float and fixed solves.
+- Add `chi2Isf`, checked `tryVisibleMask` and `tryAccessCounts`, the ADD v3.0 ARAIM local-error model, and optional SPP/FDE `maxGdop` validation.
+- Add multi-constellation combined wide-lane/ionosphere-free RTK arc solving, per-epoch reference and elevation-mask reports, and released integer-hold details.
 
 ### Changed
 
-- `Omm.toKvnString` and `Omm.toXmlString` require the mandatory CCSDS fields.
-- Every `NdmErrorDetail` now includes `format`, `byteOffset`, and `fields` keys.
+- **Breaking:** PPP RAIM protection levels now return Brown snapshot fault protection levels and require positive redundancy. Use `pppRaimFaultFreeAccuracyBounds` for the former fault-free K × sigma × DOP quantity.
+- **Breaking:** PPP FDE reports `untested` when a successful solve has no positive redundancy. RAIM errors distinguish unsupported noncentrality, unsupported degrees of freedom, and numerical protection-level failure.
+- **Breaking:** OMM KVN and XML writers require the mandatory CCSDS fields. Use the explicit lenient writers for partial records.
+- **Breaking:** Non-default UKF options on EKF filters and non-default loose/tight EKF options on UKF filters are refused. Joint-gate probabilities must be finite in `(0, 1)`; joint and per-row gates are mutually exclusive.
+- **Breaking:** Correction reports include separate `jointInnovationGate` diagnostics. Tight EKF updates apply the joint gate and coast without changing state or covariance on rejection.
+- **Breaking:** Invalid SPP pseudoranges report `nonFinitePseudorange` or `nonPositivePseudorange`; GDOP validation and unsupported ARAIM constellations have distinct error details.
+- **Breaking:** RTK reports released holds and mask convergence. Missing ambiguity columns and carried states without required fixed-cycle values are refused explicitly.
+- PPP float and fixed solutions expose `posteriorVarianceFactorEstimated`, distinguishing a residual variance estimate from an a-priori unit scale.
+- Every `NdmErrorDetail` includes `format`, `byteOffset`, and `fields`.
+- Deprecate unchecked coverage mask and access-count helpers in favor of their checked forms.
+- Evaluate elevation-weighted RTK geometry with RTKLIB `ecef2pos`/`satazel` arithmetic.
+
+### Fixed
+
+- Preserve tight cross-covariance when a loose update is rejected.
+- Coast when IGG III removes every loose measurement row, reporting all rows rejected for a per-row gate and no joint report for a joint gate.
+- Apply FDE GDOP validation to every candidate; reject unsupported GDOP policy placements and `coarseSearchSeeds` on FDE requests.
+- Correct combined RTK metadata, measurement-model, and update-option TypeScript declarations.
 
 ## 3.0.6 - 2026-10-30
 

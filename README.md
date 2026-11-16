@@ -15,7 +15,7 @@ checked against IGS products.
 ## Install
 
 ```sh
-npm install @neilberkman/sidereon
+npm install @neilberkman/sidereon@4.0.0
 ```
 
 The package is dual ESM/CJS and ships prebuilt wasm with bundled TypeScript
@@ -264,8 +264,7 @@ returns successfully. For SP3 observed/predicted timing, use
 fields.
 
 Browser and Node callers retain control of `fetch`, Earthdata credentials,
-retries, and product-format validation. The browser cache uses the same WASM
-commit builder/verifier as the other interfaces:
+retries, and product-format validation. The browser cache validates commit records through WASM:
 
 ```js
 import { BrowserExactProductCache } from "@neilberkman/sidereon/exact-cache";
@@ -431,7 +430,7 @@ as `undefined`.
 
 ## Capabilities
 
-The wasm surface mirrors the full breadth of the engine:
+The package provides these APIs:
 
 - **Orbit propagation:** SGP4 from TLE and OMM, numerical propagation with a
   composable force model (spherical-harmonic geopotential to selectable degree
@@ -596,6 +595,18 @@ process-noise value classes, and a mutable `PppKinematicState`.
 `predictKinematicState` and `correctKinematicState` drive that owned state
 through the core filter; `solveKinematicPpp` returns per-epoch solutions.
 
+### Integrity, RTK and fusion options
+
+PPP snapshot RAIM protection levels are Brown fault-mode levels and require positive redundancy. `pppRaimProtectionLevelsWithWeights` accepts inverse-standard-deviation weights; `pppRaimFaultFreeAccuracyBounds` exposes the separate fault-free K × sigma × DOP bounds. `chi2Isf` accepts an upper-tail probability directly. Coverage grids provide checked `tryVisibleMask` and `tryAccessCounts`; the legacy methods are deprecated.
+
+`araimSatelliteIsmModelAddV30` constructs the ADD v3.0 local-error model for supported constellations and reports `unsupportedConstellation` in the error detail when Appendix A does not cover a system. Joint innovation gating is available through `jointInnovationGateProbability` in `loose.updateOptions` and `tight.updateOptions` for EKF filters, and in `ukf` for UKF filters; correction reports include `jointInnovationGate`. The probability must be finite and strictly between zero and one, and a joint gate cannot be combined with a per-row `innovationGate`. Options for a different filter kind are refused.
+
+`solveWideLaneFixedRtkArc` accepts dual-frequency arc epochs directly and supports one reference per constellation. `solveRtkArc` attaches an `RtkArcErrorDetail` to thrown errors; an update failure carries its specific `RtkUpdateErrorDetail`, including `missingAmbiguityColumn` and the ambiguity ID. RTK epoch results report `referenceSatelliteIds`, `elevationMaskedSatelliteIds`, `elevationMaskConverged`, and `releasedHolds`; hold reasons are `unheldReference` and `incompatibleWavelengths`.
+
+PPP FDE status `untested` means a solve succeeded without positive redundancy. PPP RAIM error details distinguish `UNSUPPORTED_NONCENTRALITY` (the bias root exceeds the supported noncentrality), `UNSUPPORTED_DOF` (with `dof` and `max`), and `NUMERICAL_PROTECTION_LEVEL` (failure of the numerical probability calculation). SPP reports invalid measurements as `nonFinitePseudorange` or `nonPositivePseudorange`; GDOP validation failures use `DEGENERATE_GEOMETRY_GDOP`. A PPP posterior variance factor is an estimate only when `posteriorVarianceFactorEstimated` is true.
+
+FDE applies `maxGdop` to every candidate solution. Batch SPP accepts it in the shared options; per-epoch values, and values supplied to static, Doppler, broadcast-only, SBAS, or fallback paths without that policy, are rejected. FDE rejects the unsupported `coarseSearchSeeds` option.
+
 ## Live demo
 
 The interactive demo at [sidereon.dev](https://sidereon.dev) runs on this exact
@@ -612,13 +623,3 @@ build.
 ## License
 
 MIT
-
-PPP snapshot RAIM protection levels are Brown fault-mode levels and require positive redundancy. `pppRaimProtectionLevelsWithWeights` accepts inverse-standard-deviation weights; `pppRaimFaultFreeAccuracyBounds` exposes the separate fault-free K × sigma × DOP bounds. `chi2Isf` accepts an upper-tail probability directly. Coverage grids provide checked `tryVisibleMask` and `tryAccessCounts`; the legacy methods are deprecated.
-
-`araimSatelliteIsmModelAddV30` constructs the ADD v3.0 local-error model for supported constellations and reports `unsupportedConstellation` in the error detail when Appendix A does not cover a system. Joint innovation gating is available through `jointInnovationGateProbability` in `loose.updateOptions` and `tight.updateOptions` for EKF filters, and in `ukf` for UKF filters; correction reports include `jointInnovationGate`. The probability must be finite and strictly between zero and one, and a joint gate cannot be combined with a per-row `innovationGate`. Options for a different filter kind are refused.
-
-`solveWideLaneFixedRtkArc` accepts dual-frequency arc epochs directly and supports one reference per constellation. `solveRtkArc` attaches an `RtkArcErrorDetail` to thrown errors; an update failure carries its specific `RtkUpdateErrorDetail`, including `missingAmbiguityColumn` and the ambiguity ID. RTK epoch results report `referenceSatelliteIds`, `elevationMaskedSatelliteIds`, `elevationMaskConverged`, and `releasedHolds`; hold reasons are `unheldReference` and `incompatibleWavelengths`.
-
-PPP FDE status `untested` means a solve succeeded without positive redundancy. PPP RAIM error details distinguish `UNSUPPORTED_NONCENTRALITY` (the bias root exceeds the supported noncentrality), `UNSUPPORTED_DOF` (with `dof` and `max`), and `NUMERICAL_PROTECTION_LEVEL` (failure of the numerical probability calculation). SPP reports invalid measurements as `nonFinitePseudorange` or `nonPositivePseudorange`; GDOP validation failures use `DEGENERATE_GEOMETRY_GDOP`. A PPP posterior variance factor is an estimate only when `posteriorVarianceFactorEstimated` is true.
-
-FDE applies `maxGdop` to every candidate solution. Batch SPP accepts it in the shared options; per-epoch values, and values supplied to static, Doppler, broadcast-only, SBAS, or fallback paths without that policy, are rejected. FDE rejects the unsupported `coarseSearchSeeds` option.

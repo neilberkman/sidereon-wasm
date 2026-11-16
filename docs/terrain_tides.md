@@ -4,9 +4,6 @@ The terrain bindings answer orthometric heights from DTED tiles and terrain
 stores; the BLQ bindings read and write ocean-loading coefficient blocks. Every
 rule is the engine's; this module converts representations.
 
-This document describes the settled 3.0 surface. It does not move the package
-version pin.
-
 ## 1. Unknown elevations
 
 A DTED posting holding the null value (all bits set, MIL-PRF-89020B 3.11.3.1)
