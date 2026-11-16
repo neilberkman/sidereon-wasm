@@ -8,7 +8,7 @@ import globals from "globals";
 
 export default [
   {
-    ignores: ["pkg/", "pkg-node/", "target/", "node_modules/"],
+    ignores: ["pkg/", "pkg-node/", "target/", "node_modules/", ".cache/"],
   },
   js.configs.recommended,
   {

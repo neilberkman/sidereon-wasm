@@ -53,6 +53,20 @@ console.log(look.azimuthDeg[0], look.elevationDeg[0], look.rangeKm[0]);
 `BigInt64Array` of unix-microsecond epochs) and `findPasses(station, start, end,
 minElevationDeg)` for visibility windows.
 
+CelesTrak GP and NAVCEN source entries, URL builders, and the GP response parser are available without network access. Callers fetch the URL themselves and pass the response bytes to `parseCelestrakGpResponse`. Accepted and rejected records retain their source bytes and typed details. The `records` and `rejected` getters each clone their full collection; retain the returned array when iterating. GP records convert to OMM or SGP4 element sets. Response, record, TLE payload, rejection, rejection reason, checksum warning, OMM, and OMM epoch handles provide `equals` for value comparison; source entries, spans, and element data are plain objects whose fields can be compared structurally. Fitted OMMs can receive their creation date and originator through `fitTle`'s `ommHeader` option.
+
+```js
+import { CelestrakGpFormat, celestrakGpUrl, parseCelestrakGpResponse } from "@neilberkman/sidereon";
+
+const url = celestrakGpUrl({ kind: "catalogNumber", value: 25544 }, CelestrakGpFormat.Tle);
+const response = await fetch(url);
+const catalog = parseCelestrakGpResponse(new Uint8Array(await response.arrayBuffer()), CelestrakGpFormat.Tle);
+for (const record of catalog.records) console.log(record.objectName, record.toOmm());
+for (const rejected of catalog.rejected) console.log(rejected.lineNumber, rejected.reason.detail);
+```
+
+OMM KVN and XML writers require the mandatory CCSDS fields. Use `toKvnStringLenient()` or `toXmlStringLenient()` for partial records, and `withCcsdsHeader(version, creationDate, originator)` to set a validated header.
+
 An OMM uses the same SGP4 kernel through its canonical mean-element bridge:
 
 ```js

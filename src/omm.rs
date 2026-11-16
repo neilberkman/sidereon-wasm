@@ -7,10 +7,11 @@ use wasm_bindgen::prelude::*;
 
 use sidereon_core::astro::omm::{
     encode_csv, encode_csv_discarding_comments, encode_json, encode_json_discarding_comments,
-    encode_kvn, encode_xml, parse_csv, parse_csv_array, parse_json, parse_json_array, parse_kvn,
-    parse_xml, parse_xml_all, Omm as CoreOmm, OmmArray as CoreOmmArray,
-    OmmComments as CoreOmmComments, OmmCovariance as CoreOmmCovariance, OmmEpoch as CoreOmmEpoch,
-    OmmSpacecraft as CoreOmmSpacecraft, OmmUserDefined as CoreOmmUserDefined,
+    encode_kvn, encode_kvn_lenient, encode_xml, encode_xml_lenient, parse_csv, parse_csv_array,
+    parse_json, parse_json_array, parse_kvn, parse_xml, parse_xml_all, Omm as CoreOmm,
+    OmmArray as CoreOmmArray, OmmComments as CoreOmmComments, OmmCovariance as CoreOmmCovariance,
+    OmmEpoch as CoreOmmEpoch, OmmSpacecraft as CoreOmmSpacecraft,
+    OmmUserDefined as CoreOmmUserDefined,
 };
 
 use crate::error::{range_error, result_object, to_plain_js, type_error};
@@ -52,6 +53,11 @@ impl OmmEpoch {
 
 #[wasm_bindgen]
 impl OmmEpoch {
+    /// Compare epoch values.
+    pub fn equals(&self, other: &OmmEpoch) -> bool {
+        self.inner == other.inner
+    }
+
     /// Build an OMM epoch from UTC calendar fields. Throws a `RangeError` on an
     /// out-of-range field.
     #[wasm_bindgen(constructor)]
@@ -357,6 +363,22 @@ impl Omm {
 
 #[wasm_bindgen]
 impl Omm {
+    /// Compare OMM values.
+    pub fn equals(&self, other: &Omm) -> bool {
+        self.inner == other.inner
+    }
+
+    /// Convert parsed TLE elements to an OMM.
+    #[wasm_bindgen(js_name = fromTle)]
+    pub fn from_tle(
+        #[wasm_bindgen(unchecked_param_type = "TleElements")] elements: JsValue,
+        object_name: Option<String>,
+    ) -> Result<Omm, JsValue> {
+        CoreOmm::from_tle(&crate::celestrak::tle_elements(elements)?, object_name)
+            .map(Omm::from_core)
+            .map_err(crate::sgp4_error::tle_error)
+    }
+
     /// Build an OMM. `meanMotion` and `noradCatId` may be `undefined`: an OMM
     /// states `MEAN_MOTION` or `SEMI_MAJOR_AXIS` (`meta.semiMajorAxisKm`), and
     /// the TLE related parameters only for SGP/SGP4 theories. `meta` carries
@@ -680,6 +702,33 @@ impl Omm {
         encode_kvn(&self.inner).map_err(omm_error)
     }
 
+    /// Encode an OMM without requiring a complete CCSDS header and metadata.
+    #[wasm_bindgen(js_name = toKvnStringLenient)]
+    pub fn to_kvn_string_lenient(&self) -> Result<String, JsValue> {
+        encode_kvn_lenient(&self.inner).map_err(omm_error)
+    }
+
+    /// Encode an OMM as XML without requiring a complete CCSDS header and metadata.
+    #[wasm_bindgen(js_name = toXmlStringLenient)]
+    pub fn to_xml_string_lenient(&self) -> Result<String, JsValue> {
+        encode_xml_lenient(&self.inner).map_err(omm_error)
+    }
+
+    /// Return a copy with a validated CCSDS header.
+    #[wasm_bindgen(js_name = withCcsdsHeader)]
+    pub fn with_ccsds_header(
+        &self,
+        version: &str,
+        creation_date: &str,
+        originator: &str,
+    ) -> Result<Omm, JsValue> {
+        self.inner
+            .clone()
+            .with_ccsds_header(version, creation_date, originator)
+            .map(|inner| Omm { inner })
+            .map_err(omm_error)
+    }
+
     /// Encode this OMM to CCSDS OMM XML text. Throws an `OmmError` for what
     /// the XML reader would not return unchanged.
     #[wasm_bindgen(js_name = toXmlString)]
@@ -768,6 +817,8 @@ struct OmmSkippedRecordJs {
 /// `{ omms, skipped }`: every OMM read, and each record skipped with its
 /// zero-based `index` and the `reason` it was not read.
 fn omm_array_js(array: CoreOmmArray) -> Result<JsValue, JsValue> {
+    let spans: Vec<_> = array.spans.iter().map(|span| serde_json::json!({"index": span.index, "byteStart": span.byte_start, "byteEnd": span.byte_end, "line": span.line})).collect();
+    let spans = to_plain_js(&spans, "OMM spans")?;
     let omms = js_sys::Array::new();
     for inner in array.omms {
         omms.push(&JsValue::from(Omm { inner }));
@@ -782,7 +833,11 @@ fn omm_array_js(array: CoreOmmArray) -> Result<JsValue, JsValue> {
         .collect();
     let skipped = to_plain_js(&skipped, "skipped OMM records")?;
     result_object(
-        &[("omms", &omms.into()), ("skipped", &skipped)],
+        &[
+            ("omms", &omms.into()),
+            ("skipped", &skipped),
+            ("spans", &spans),
+        ],
         "OMM array",
     )
 }

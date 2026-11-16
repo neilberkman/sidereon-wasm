@@ -97,8 +97,8 @@ test("parse OMM KVN/XML/JSON match reference fields and re-encode", () => {
     assertOmm(xml, fx.from_xml);
     assertOmm(json, fx.from_json);
 
-    assert.equal(kvn.toKvnString(), fx.encoded_kvn);
-    assert.equal(xml.toXmlString(), fx.encoded_xml);
+    assert.equal(kvn.toKvnStringLenient(), fx.encoded_kvn);
+    assert.equal(xml.toXmlStringLenient(), fx.encoded_xml);
     assert.deepEqual(JSON.parse(json.toJsonString()), JSON.parse(fx.encoded_json));
   }
 });
@@ -149,7 +149,7 @@ test("constructed OMM matches parsed KVN encoding", () => {
       meanMotionDdot: hexToF64(ref.mean_motion_ddot_hex),
     },
   );
-  assert.equal(omm.toKvnString(), FX.fixtures[0].encoded_kvn);
+  assert.equal(omm.toKvnStringLenient(), FX.fixtures[0].encoded_kvn);
 });
 
 test("constructed OMM retains every public metadata field", () => {
@@ -497,6 +497,9 @@ test("the array readers keep every record they can read and report the rest", ()
       index: records.length,
       reason: {
         kind: "MISSING_FIELD",
+        format: null,
+        byteOffset: null,
+        fields: null,
         message: "OMM missing required field EPOCH",
         field: "EPOCH",
         value: null,
@@ -518,8 +521,8 @@ test("the array readers keep every record they can read and report the rest", ()
   assert.equal(xml.omms.length, 1);
   assert.deepEqual(xml.skipped, []);
   assert.equal(
-    xml.omms[0].toXmlString(),
-    parseOmmXml(load(FX.fixtures[0].xml_fixture)).toXmlString(),
+    xml.omms[0].toXmlStringLenient(),
+    parseOmmXml(load(FX.fixtures[0].xml_fixture)).toXmlStringLenient(),
   );
 });
 

@@ -38,12 +38,19 @@ pub(crate) fn text_issue_label(issue: TextIssue) -> &'static str {
 pub(crate) struct NdmErrorDetail {
     /// The engine variant, in upper snake case (`UNWRITABLE_TEXT`).
     kind: &'static str,
+    /// Encoding named by a malformed-document error.
+    format: Option<String>,
+    /// Zero-based parser byte offset for a malformed document, when known.
+    byte_offset: Option<usize>,
+    /// Alternative keywords required by a missing-one-of error.
+    fields: Option<Vec<String>>,
     /// The engine's message.
     message: String,
     /// The keyword, element, block or record field the error names.
     field: Option<String>,
     /// The text the error names: a refused value, an unknown object, a
-    /// malformed line or comment, or a structural message.
+    /// malformed line or comment, a structural message, or the parser diagnostic
+    /// for a malformed document.
     value: Option<String>,
     /// For `INVALID_FIELD`, the validation category; for `UNWRITABLE_TEXT`,
     /// why the text would not read back (`lineBreak`, ...).
@@ -152,6 +159,20 @@ fn invalid_field(message: String, field: &str, kind: String) -> NdmErrorDetail {
 pub(crate) fn omm_detail(err: &OmmError) -> NdmErrorDetail {
     let message = err.to_string();
     match err {
+        OmmError::MalformedDocument {
+            format,
+            message: diagnostic,
+            byte_offset,
+        } => NdmErrorDetail {
+            format: Some((*format).to_owned()),
+            value: Some(diagnostic.clone()),
+            byte_offset: *byte_offset,
+            ..NdmErrorDetail::new("MALFORMED_DOCUMENT", message)
+        },
+        OmmError::MissingOneOf(fields) => NdmErrorDetail {
+            fields: Some(fields.iter().map(|s| (*s).to_owned()).collect()),
+            ..NdmErrorDetail::new("MISSING_ONE_OF", message)
+        },
         OmmError::MissingField(field) => with_field("MISSING_FIELD", message, field),
         OmmError::InvalidField { field, kind } => invalid_field(message, field, kind.to_string()),
         OmmError::Field(text) => with_value("FIELD", message, text),

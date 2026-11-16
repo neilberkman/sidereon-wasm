@@ -3429,3 +3429,31 @@ const staticRtkConfig: WebBindings.RtkStaticArcConfig = {
   },
 };
 void staticRtkConfig;
+
+type _GpQueryValue = Assert<
+  Equal<Extract<WebBindings.CelestrakGpQuery, { kind: "catalogNumber" }>["value"], number>
+>;
+type _GpRaw = Assert<Equal<WebBindings.CelestrakGpRecord["raw"], Uint8Array>>;
+type _GpSpans = Assert<Equal<WebBindings.OmmArray["spans"][number]["byteStart"], number>>;
+type _GpFitHeader = Assert<
+  Equal<NonNullable<WebBindings.TleFitConfig["ommHeader"]>["originator"], string>
+>;
+type _GpCatalogError = Assert<
+  Equal<
+    Extract<WebBindings.DataCatalogErrorDetail, { kind: "invalidCelestrakGpSelector" }>["value"],
+    string
+  >
+>;
+
+type _GpPayload = Assert<
+  Equal<WebBindings.CelestrakGpRecord["payload"], WebBindings.CelestrakTleRecord | WebBindings.Omm>
+>;
+type _GpReason = Assert<
+  Equal<WebBindings.CelestrakGpRejectedRecord["reason"], WebBindings.CelestrakGpRejectionReason>
+>;
+type _GpTleConversion = Assert<
+  Equal<Parameters<typeof WebBindings.Omm.fromTle>[0], WebBindings.TleElements>
+>;
+
+// @ts-expect-error Both CCSDS header values must be strings.
+WebBindings.fitTle([], { ommHeader: { creationDate: "2026-06-17T05:00:00", originator: 42 } });

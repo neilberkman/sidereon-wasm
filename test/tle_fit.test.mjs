@@ -68,6 +68,7 @@ test("fitTle reproduces the engine fit of propagated samples as a TLE and an OMM
     fScale: 1,
     xScale: "jac",
     maxNfev: 80,
+    ommHeader: { creationDate: "2026-06-17T05:00:00", originator: "TEST" },
     metadata: {
       catalogNumber: 25544,
       classification: "U",
@@ -81,6 +82,8 @@ test("fitTle reproduces the engine fit of propagated samples as a TLE and an OMM
   assert.equal(fit.line1, golden.line1);
   assert.equal(fit.line2, golden.line2);
   assert.deepEqual(fit.toLines(), [fit.line1, fit.line2]);
+  assert.equal(fit.omm.creationDate, "2026-06-17T05:00:00");
+  assert.equal(fit.omm.originator, "TEST");
   assert.equal(fit.omm.noradCatId, 25544);
   assert.equal(fit.omm.classificationType, "U");
   assert.equal(fit.omm.revAtEpoch, 12047n);

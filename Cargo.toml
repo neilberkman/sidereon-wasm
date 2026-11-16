@@ -41,3 +41,8 @@ nalgebra = "0.33"
 [profile.release]
 opt-level = "s"
 lto = true
+
+# The release version bump replaces these local patches.
+[patch.crates-io]
+sidereon-core = { path = "/Volumes/ExternalSSD/sidereon-oracle-20261114/sidereon-fetch/crates/sidereon-core" }
+trust-region-least-squares = { path = "/Volumes/ExternalSSD/sidereon-oracle-20261114/sidereon-fetch/crates/trust-region-least-squares" }

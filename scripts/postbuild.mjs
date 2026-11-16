@@ -1009,6 +1009,8 @@ export type NdmTextIssue =
 /** The detail of an OmmError, OpmError, OemError or CdmError. Fields the kind does not carry are null. */
 export interface NdmErrorDetail {
     kind:
+        | "MALFORMED_DOCUMENT"
+        | "MISSING_ONE_OF"
         | "MISSING_FIELD"
         | "INVALID_FIELD"
         | "FIELD"
@@ -1031,7 +1033,14 @@ export interface NdmErrorDetail {
         | "REPEATED_OBJECT"
         | "HARD_BODY_RADIUS_COMMENT";
     message: string;
+    /** Encoding named by MALFORMED_DOCUMENT. */
+    format: string | null;
+    /** Zero-based parser byte offset, when known. */
+    byteOffset: number | null;
+    /** Alternative keywords named by MISSING_ONE_OF. */
+    fields: string[] | null;
     field: string | null;
+    /** Refused text or parser diagnostic for MALFORMED_DOCUMENT. */
     value: string | null;
     /** The validation category of INVALID_FIELD, or an NdmTextIssue for UNWRITABLE_TEXT. */
     issue: string | null;
@@ -1105,7 +1114,173 @@ export interface OmmMeta {
     comments?: OmmComments;
 }
 
+/** A TEME state sample for TLE fitting. */
+export interface TleFitSample {
+    /** Split Julian date. */
+    epoch: [number, number];
+    /** TEME position in kilometres. */
+    positionTemeKm: [number, number, number];
+    /** TEME velocity in kilometres per second. */
+    velocityTemeKmS?: [number, number, number];
+}
+/** Options for fitting TLE elements to samples. */
+export interface TleFitConfig {
+    /** Epoch selection. */
+    epoch?: "midpoint" | "first" | "last" | "sample";
+    /** Index for sample epoch selection. */
+    epochSampleIndex?: number;
+    /** Explicit split Julian date. */
+    epochJd?: [number, number];
+    /** Estimate B*. */
+    fitBstar?: boolean;
+    /** Initial B* value. */
+    bstarSeed?: number;
+    /** Include velocities in the fit. */
+    useVelocity?: boolean;
+    /** Velocity residual weight in seconds. */
+    velocityWeightS?: number;
+    /** Sample weights. */
+    weights?: number[];
+    /** SGP4 operations mode. */
+    opsMode?: string;
+    /** Cost convergence tolerance. */
+    ftol?: number;
+    /** Step convergence tolerance. */
+    xtol?: number;
+    /** Gradient convergence tolerance. */
+    gtol?: number;
+    /** Maximum function evaluations. */
+    maxNfev?: number;
+    /** Parameter scaling. */
+    xScale?: "unit" | "jac" | number[];
+    /** Robust loss. */
+    loss?: string;
+    /** Loss scale. */
+    fScale?: number;
+    /** Metadata for the fitted record. */
+    metadata?: {
+        catalogNumber?: number;
+        classification?: string;
+        internationalDesignator?: string;
+        elementSetNumber?: number;
+        revAtEpoch?: number;
+        objectName?: string;
+    };
+    /** CCSDS creation date and originator for the fitted OMM. */
+    ommHeader?: {
+        creationDate: string;
+        originator: string;
+    };
+}
+/** CelesTrak GP endpoint metadata. */
+export interface CelestrakGpSourceEntry {
+    /** URI scheme. */
+    protocol: string;
+    /** Source host. */
+    host: string;
+    /** Endpoint URL. */
+    rootUrl: string;
+}
+/** NAVCEN constellation page metadata. */
+export interface NavcenSourceEntry {
+    /** URI scheme. */
+    protocol: string;
+    /** Source host. */
+    host: string;
+    /** Page URL. */
+    rootUrl: string;
+}
+/** GP endpoint selector. */
+export type CelestrakGpQuery =
+    | { kind: "group" | "internationalDesignator" | "name"; value: string }
+    | { kind: "catalogNumber"; value: number }
+    | { kind: "special"; value: CelestrakGpSpecial };
+/** Fixed-column TLE values. */
+export interface TleElements {
+    /** Catalog field as written. */
+    catalogNumber: string;
+    /** Classification field. */
+    classification: string;
+    /** Launch designator. */
+    internationalDesignator: string;
+    /** Full epoch year. */
+    epochYear: number;
+    /** Fractional day of year. */
+    epochDayOfYear: number;
+    /** First mean-motion derivative field. */
+    meanMotionDot: number;
+    /** Second mean-motion derivative field. */
+    meanMotionDoubleDot: number;
+    /** Original second-derivative text. */
+    meanMotionDoubleDotText: string | null;
+    /** B* drag term. */
+    bstar: number;
+    /** Original B* text. */
+    bstarText: string | null;
+    /** Ephemeris type. */
+    ephemerisType: number | null;
+    /** Element-set number. */
+    elsetNumber: number | null;
+    /** Inclination in degrees. */
+    inclinationDeg: number;
+    /** Right ascension of the ascending node in degrees. */
+    raanDeg: number;
+    /** Eccentricity. */
+    eccentricity: number;
+    /** Argument of perigee in degrees. */
+    argPerigeeDeg: number;
+    /** Mean anomaly in degrees. */
+    meanAnomalyDeg: number;
+    /** Mean motion in revolutions per day. */
+    meanMotion: number;
+    /** Revolution number. */
+    revNumber: number | null;
+}
+/** Canonical SGP4 element set. */
+export interface ElementSet {
+    /** Split Julian date. */
+    epoch: [number, number];
+    /** B* drag term. */
+    bstar: number;
+    /** First mean-motion derivative field. */
+    meanMotionDot: number | null;
+    /** Second mean-motion derivative field. */
+    meanMotionDoubleDot: number | null;
+    /** Eccentricity. */
+    eccentricity: number;
+    /** Argument of perigee in degrees. */
+    argumentOfPerigeeDeg: number;
+    /** Inclination in degrees. */
+    inclinationDeg: number;
+    /** Mean anomaly in degrees. */
+    meanAnomalyDeg: number;
+    /** Mean motion in revolutions per day. */
+    meanMotionRevPerDay: number;
+    /** Right ascension of the ascending node in degrees. */
+    rightAscensionDeg: number;
+    /** Numeric catalog number. */
+    catalogNumber: number | null;
+    /** OMM epoch days used for SGP4 initialization. */
+    ommEpochDays: number | null;
+}
+/** Nested detail of a GP rejection. */
+export type CelestrakGpRejectionDetail =
+    | { message: string; cause: TleErrorCause | NdmErrorDetail }
+    | { kind: "unexpectedContent" | "incompleteRecord" | "invalidTleStructure" }
+    | { kind: "invalidElementSet"; message: string; cause: Sgp4ErrorCause };
+/** Exact source range of one OMM record. */
+export interface OmmRecordSpan {
+    /** Zero-based record index. */
+    index: number;
+    /** Starting byte offset. */
+    byteStart: number;
+    /** Exclusive ending byte offset. */
+    byteEnd: number;
+    /** One-based source line. */
+    line: number;
+}
 export interface OmmArray {
+    spans: OmmRecordSpan[];
     omms: Omm[];
     skipped: Array<{ index: number; reason: NdmErrorDetail }>;
 }
@@ -1536,6 +1711,7 @@ export type TrfErrorCause =
     | { kind: "invalidSvdOutput"; message: string }
     | { kind: "backend"; cause: TrfBackendErrorCause };
 export type TleFitErrorCause =
+    | { kind: "ommHeader"; message: string; cause: NdmErrorDetail }
     | { kind: "arcTooShort"; samples: number; needed: number }
     | { kind: "invalidInput"; field: string; reason: string }
     | { kind: "epochsNotIncreasing"; index: number }

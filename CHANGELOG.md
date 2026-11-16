@@ -18,6 +18,10 @@
 
 ### Added
 
+- Add CelesTrak GP and NAVCEN source metadata, URL builders, GP response parsing, and TLE-to-OMM conversion.
+- Add source spans to parsed OMM arrays.
+- Add `Omm.toKvnStringLenient`, `Omm.toXmlStringLenient`, `Omm.withCcsdsHeader`, and `TleFitConfig.ommHeader`.
+
 - Adds `TdmUnit` and `TdmUnit.label` for lossless known and unknown unit labels,
   `TdmDataRecord.unitValue`, `TdmMetadata.rangeUnitValue`, and the
   core-validated `TdmMetadata.setRangeUnits(unit)` editor. Adds `equals(other)`
@@ -25,6 +29,16 @@
   `TdmPath`, `TdmDataSection`, `TdmDataRecord`, `TdmScalar`, and `TdmUnit`.
   Plain TDM policy, warning, departure, comment, and input-error-kind data
   compares structurally.
+
+- Add `Tle.elements` and value comparison with `Omm.equals`, `OmmEpoch.equals`,
+  `ChecksumWarning.equals`, `CelestrakGpResponse.equals`, `CelestrakGpRecord.equals`,
+  `CelestrakTleRecord.equals`, `CelestrakGpRejectedRecord.equals`, and
+  `CelestrakGpRejectionReason.equals`.
+
+### Changed
+
+- `Omm.toKvnString` and `Omm.toXmlString` require the mandatory CCSDS fields.
+- Every `NdmErrorDetail` now includes `format`, `byteOffset`, and `fields` keys.
 
 ## 3.0.6 - 2026-10-30
 

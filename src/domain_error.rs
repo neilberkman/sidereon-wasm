@@ -202,9 +202,28 @@ fn product_date(date: sidereon_core::data::ProductDate) -> serde_json::Value {
     serde_json::json!({"year":date.year,"month":date.month,"day":date.day})
 }
 
-fn catalog_error(error: &sidereon_core::data::DataCatalogError) -> serde_json::Value {
+pub(crate) fn catalog_error(error: &sidereon_core::data::DataCatalogError) -> serde_json::Value {
     use sidereon_core::data::DataCatalogError as E;
     match error {
+        E::InvalidCelestrakGpSelector { selector, value } => {
+            serde_json::json!({"kind":"invalidCelestrakGpSelector","selector":selector,"value":value})
+        }
+        E::EmptyCelestrakGpResponse => serde_json::json!({"kind":"emptyCelestrakGpResponse"}),
+        E::CelestrakGpDataNotFound => serde_json::json!({"kind":"celestrakGpDataNotFound"}),
+        E::CelestrakGpNotModified {
+            query,
+            last_successful_download,
+        } => {
+            serde_json::json!({"kind":"celestrakGpNotModified","query":query,"lastSuccessfulDownload":last_successful_download})
+        }
+        E::CelestrakGpHtmlResponse => serde_json::json!({"kind":"celestrakGpHtmlResponse"}),
+        E::InvalidCelestrakGpResponse {
+            reason,
+            line,
+            column,
+        } => {
+            serde_json::json!({"kind":"invalidCelestrakGpResponse","reason":reason,"line":line,"column":column})
+        }
         E::UnknownCenter(value) => serde_json::json!({"kind":"unknownCenter","value":value}),
         E::UnknownProductType(value) => {
             serde_json::json!({"kind":"unknownProductType","value":value})
@@ -636,6 +655,10 @@ export type ExactCacheErrorDetail = { family: "exactCache"; cause:
   | { kind: "singleFlightTimeout" } | { kind: "singleFlightOwnershipLost" }
   | { kind: "invalidSingleFlightOptions" } | { kind: "unsupportedPlatform" } };
 export type DataCatalogErrorDetail =
+  | { kind: "invalidCelestrakGpSelector"; selector: string; value: string }
+  | { kind: "emptyCelestrakGpResponse" | "celestrakGpDataNotFound" | "celestrakGpHtmlResponse" }
+  | { kind: "celestrakGpNotModified"; query: string | null; lastSuccessfulDownload: string | null }
+  | { kind: "invalidCelestrakGpResponse"; reason: string; line: number | null; column: number | null }
   | { kind: "unknownCenter" | "unknownProductType" | "invalidOfficialFilename" | "invalidSample" | "invalidSpan" | "invalidIssue" | "invalidStation" | "invalidTileId"; value: string }
   | { kind: "unsupportedProduct"; center: string; productType: string }
   | { kind: "unsupportedDistribution"; source: string; productType: string }
