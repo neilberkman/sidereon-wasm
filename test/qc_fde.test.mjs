@@ -170,3 +170,24 @@ test("FDE accepts an empty explicit BySatellite map", async () => {
   const fde = sp3.fde({ ...request, weightsMode: "bySatellite", weights: [] });
   assert.equal(fde.raim.faultDetected, false);
 });
+
+test("FDE applies maxGdop on every candidate, including the robust driver", async () => {
+  const sp3 = await loadFixtureSp3();
+  const { request } = scenario(sp3);
+  assert.equal(sp3.fde({ ...request, maxGdop: 100 }).raim.faultDetected, false);
+  for (const solve of [
+    (input) => sp3.fde(input),
+    (input) => sp3.sppRobustFdeDriver({ ...input, robust: {} }),
+  ]) {
+    assert.throws(
+      () => solve({ ...request, maxGdop: 0.1 }),
+      (error) =>
+        error.detail?.kind === "SOLUTION_REJECTED" &&
+        error.detail.validation.kind === "DEGENERATE_GEOMETRY_GDOP",
+    );
+  }
+  assert.throws(
+    () => sp3.fde({ ...request, coarseSearchSeeds: 2 }),
+    /coarseSearchSeeds is unsupported/,
+  );
+});

@@ -662,6 +662,25 @@ pub fn chi2_inv(p: f64, dof: f64) -> Result<f64, JsValue> {
     quality::chi2_inv(p, dof).map_err(crate::positioning_error::quality_error)
 }
 
+/// Chi-square inverse survival function for upper-tail probability `p` and degrees of freedom `dof`.
+#[wasm_bindgen(js_name = chi2Isf)]
+pub fn chi2_isf(p: f64, dof: f64) -> Result<f64, JsValue> {
+    let max_exact_dof = (usize::MAX as f64).min(9_007_199_254_740_991.0);
+    if !dof.is_finite() || dof.fract() != 0.0 || dof < 0.0 || dof > max_exact_dof {
+        // Let core validate probability first, preserving its error ordering.
+        return match quality::chi2_isf(p, 0) {
+            Err(error) => Err(crate::positioning_error::quality_error(error)),
+            Ok(_) => unreachable!("zero degrees of freedom is rejected by core"),
+        };
+    }
+    let Ok(dof) = usize::try_from(dof as u64) else {
+        return Err(crate::positioning_error::quality_error(
+            QualityError::InvalidDof,
+        ));
+    };
+    quality::chi2_isf(p, dof).map_err(crate::positioning_error::quality_error)
+}
+
 /// Satellite-keyed measurement sigmas (metres) or inverse-variance weights.
 #[wasm_bindgen]
 pub struct SatelliteVector {

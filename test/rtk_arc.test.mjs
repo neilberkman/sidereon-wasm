@@ -21,6 +21,7 @@ import {
   solveStaticRinexRtkBaseline,
   solveStaticRtkArc,
   solveWideLaneFixedRinexRtkBaseline,
+  solveWideLaneFixedRtkArc,
 } from "../pkg-node/sidereon.js";
 import { coreGoldens, f64Bits, fixture, fixtureJson, norm } from "./helpers.mjs";
 
@@ -288,6 +289,10 @@ test("solveRtkArc reports one solution per epoch and carries the filter state", 
   assert.equal(sol.references.G, "G30");
 
   const last = sol.epochs[sol.epochs.length - 1];
+  assert.deepEqual(last.referenceSatelliteIds, ["G30"]);
+  assert.deepEqual(last.elevationMaskedSatelliteIds, []);
+  assert.equal(last.elevationMaskConverged, true);
+  assert.deepEqual(last.releasedHolds, []);
   for (const v of last.reportedBaselineM) assert.ok(Number.isFinite(v));
   for (const v of last.floatBaselineM) assert.ok(Number.isFinite(v));
   assert.ok(["Weak", "Nominal"].includes(last.geometryQuality.tier));
@@ -517,14 +522,29 @@ test("solveStaticReferenceStationRinex solves the real WTZR/WTZZ static coordina
   assert.equal(sol.modeReports[0].usedMeasurements, golden.usedMeasurements);
   assert.ok(vectorErrorM(sol.baselineVectorM, truthBaselineM) < 0.005);
   assert.ok(sol.carrierSolution.integerRatio > 3.0);
-  const bits = (values) => values.map((text) => BigInt(text));
-  assert.deepEqual(sol.positionM.map(f64Bits), bits(golden.positionM));
-  assert.deepEqual(sol.baselineVectorM.map(f64Bits), bits(golden.baselineVectorM));
-  assert.deepEqual(
-    sol.covariance.positionEcefM2.map((row) => row.map(f64Bits)),
-    golden.positionCovarianceEcefM2.map(bits),
+  // The core changed satazel from the Skyfield geodetic conversion to RTKLIB
+  // ecef2pos. This solve enables elevation weighting, so that changes the
+  // weights and shifts one position component by one ulp. A native A/B using
+  // the old satazel frame restores these original golden bits. Keep the old
+  // independent golden and compare coordinates within 10 nm.
+  const numberFromBits = (text) => {
+    const bytes = new ArrayBuffer(8);
+    const view = new DataView(bytes);
+    view.setBigUint64(0, BigInt(text));
+    return view.getFloat64(0);
+  };
+  for (const [actual, expected] of [
+    [sol.positionM, golden.positionM],
+    [sol.baselineVectorM, golden.baselineVectorM],
+  ]) {
+    actual.forEach((value, i) => assert.ok(Math.abs(value - numberFromBits(expected[i])) < 1e-8));
+  }
+  sol.covariance.positionEcefM2.forEach((row, i) =>
+    row.forEach((value, j) =>
+      assert.ok(Math.abs(value - numberFromBits(golden.positionCovarianceEcefM2[i][j])) < 1e-10),
+    ),
   );
-  assert.equal(f64Bits(sol.geodetic.heightM), BigInt(golden.heightM));
+  assert.ok(Math.abs(sol.geodetic.heightM - numberFromBits(golden.heightM)) < 1e-8);
 });
 
 test("buildDualFrequencyRinexRtkArc and solveWideLaneFixedRinexRtkBaseline fix the real WTZR/WTZZ arc", () => {
@@ -587,7 +607,10 @@ test("prepareIonosphereFreeRtkArc prepares single-frequency RTK arc inputs", () 
 });
 
 test("solveRtkArc rejects an empty arc", () => {
-  assert.throws(() => solveRtkArc([], config));
+  assert.throws(
+    () => solveRtkArc([], config),
+    (error) => error.detail.kind === "emptyEpochs",
+  );
 });
 
 test("solveRtkArc rejects a base vector with trailing components", () => {
@@ -651,4 +674,114 @@ test("buildRinexRtkArc reports a GLONASS slot with no carrier and builds the res
       "other GLONASS kept",
     );
   }
+});
+
+test("combined wide-lane and ionosphere-free driver accepts per-system references", () => {
+  const multi = dualArcEpochs.map((epoch) => ({
+    ...epoch,
+    observations: [
+      ...epoch.observations,
+      ...epoch.observations.map((obs) => ({
+        ...obs,
+        satelliteId: obs.satelliteId.replace("G", "E"),
+        base: { ...obs.base, ambiguityId: obs.base.ambiguityId.replace("G", "E") },
+        rover: { ...obs.rover, ambiguityId: obs.rover.ambiguityId.replace("G", "E") },
+      })),
+    ],
+    satellitePositionsM: {
+      ...epoch.satellitePositionsM,
+      ...Object.fromEntries(
+        Object.entries(epoch.satellitePositionsM).map(([id, position]) => [
+          id.replace("G", "E"),
+          position,
+        ]),
+      ),
+    },
+  }));
+  const result = solveWideLaneFixedRtkArc(multi, { baseM: dualBaseM, applyTroposphere: false });
+  assert.deepEqual(Object.keys(result.wideLane.references).sort(), ["E", "G"]);
+  assert.deepEqual(Object.keys(result.ionosphereFree.references).sort(), ["E", "G"]);
+  assert.equal(result.solution.elevationMaskConverged, true);
+  assert.equal(result.metadata.integerMethod, "wideLaneNarrowLaneLambda");
+  assert.equal(result.metadata.wideLaneFixed, true);
+  assert.ok(Array.isArray(result.metadata.droppedCycleSlipSats));
+  assert.ok(Array.isArray(result.metadata.splitCycleSlipArcs));
+  assert.ok(
+    Object.values(result.metadata.wideLaneAmbiguitiesCycles).every(
+      (value) => typeof value === "number",
+    ),
+  );
+});
+
+// The source fixture supplies independent high-precision ranges and expected
+// reference changes (core tests/fixtures/rtk_hold_transport.json).
+function holdTransportCase(scenario) {
+  const f = fixtureJson("rtk_hold_transport.json");
+  const epochs = scenario.epochs.map((row, index) => {
+    const ids = row.observations.map((_, i) => `G${String(i + 1).padStart(2, "0")}`);
+    const observation = (id, row, side) => ({
+      satelliteId: id,
+      ambiguityId: id,
+      codeM: row[`${side}_code`],
+      phaseM: row[`${side}_phase`],
+    });
+    return {
+      base: row.observations.map((obs, i) => observation(ids[i], obs, "base")),
+      rover: row.observations.map((obs, i) => observation(ids[i], obs, "rover")),
+      satellitePositionsM: Object.fromEntries(ids.map((id, i) => [id, row.positions[i]])),
+      velocityMps: row.rover.map((v, axis) =>
+        index ? (v - scenario.epochs[index - 1].rover[axis]) / 30 : 0,
+      ),
+      predictionTimeS: 30 * index,
+    };
+  });
+  const wavelengthsM = Object.fromEntries(
+    Array.from({ length: 5 }, (_, i) => [`G0${i + 2}`, scenario.wavelength_m]),
+  );
+  const offsetsM = Object.fromEntries(
+    Array.from({ length: 5 }, (_, i) => [`G0${i + 2}`, scenario.offset_m]),
+  );
+  return {
+    epochs,
+    config: {
+      baseM: f.base_m,
+      reference: { mode: "perSystem", references: { G: "G01" } },
+      initialBaselineM: scenario.epochs[0].rover.map((v, i) => v - f.base_m[i]),
+      model: { codeSigmaM: 1, phaseSigmaM: 0.01, sagnac: false },
+      baselinePriorSigmaM: 100,
+      ambiguityPriorSigmaM: 1000,
+      wavelengthsM,
+      offsetsM,
+      updateOpts: { dynamicsModel: "velocityPropagated" },
+      preprocessing: { elevationMaskDeg: f.mask_deg },
+    },
+  };
+}
+
+test("RTK hold release distinguishes unheld references and incompatible wavelengths", () => {
+  const f = fixtureJson("rtk_hold_transport.json");
+  const unheld = holdTransportCase(f.scenarios[0]);
+  const reference = f.scenarios[0].epochs[1].reference;
+  unheld.epochs[0].base = unheld.epochs[0].base.filter((row) => row.satelliteId !== reference);
+  unheld.epochs[0].rover = unheld.epochs[0].rover.filter((row) => row.satelliteId !== reference);
+  const promoted = solveRtkArc(unheld.epochs.slice(0, 2), unheld.config).epochs[1];
+  assert.deepEqual(promoted.referenceSatelliteIds, [reference]);
+  assert.ok(promoted.releasedHolds.length >= 2);
+  assert.ok(promoted.releasedHolds.every((hold) => hold.reason === "unheldReference"));
+  const fdma = holdTransportCase(f.fdma_scenario);
+  fdma.config.wavelengthsM = f.fdma_scenario.wavelengths_m;
+  const changed = solveRtkArc(fdma.epochs.slice(0, 2), fdma.config).epochs[1];
+  assert.deepEqual(changed.referenceSatelliteIds, [f.fdma_scenario.epochs[1].reference]);
+  assert.ok(changed.releasedHolds.length >= 2);
+  assert.ok(changed.releasedHolds.every((hold) => hold.reason === "incompatibleWavelengths"));
+});
+
+test("RTK arc update errors retain their typed cause", () => {
+  assert.throws(
+    () => solveRtkArc(arcEpochs, { ...config, updateOpts: { holdSigmaM: 0 } }),
+    (error) =>
+      error.detail?.kind === "update" &&
+      error.detail.cause.kind === "invalidInput" &&
+      error.detail.cause.reason === "NotPositive",
+  );
 });

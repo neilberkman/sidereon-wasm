@@ -325,6 +325,7 @@ export interface SppRequest {
     robust?: RobustOptions;
     coarseSearchSeeds?: number;
     maxPdop?: number;
+    maxGdop?: number;
     /** Defaults to "singleFrequency"; the broadcast group delay applies to single-frequency code only. */
     pseudorangeCode?: PseudorangeCode;
     qzssClock?: QzssClock;
@@ -335,7 +336,7 @@ export type PseudorangeCode = "singleFrequency" | "ionosphereFree";
 export type QzssClock = "gps" | "separate";
 export type TroposphereModel = "rtklib" | "saastamoinenNiell";
 
-export interface FdeRequest extends SppRequest {
+export interface FdeRequest extends Omit<SppRequest, "coarseSearchSeeds"> {
     pFa?: number;
     weights?: RaimWeightsInput | RaimWeights | RaimWeightsMode | {
         mode: "solution" | "unit" | "bySatellite";
@@ -367,10 +368,14 @@ export interface FdeSolution {
     readonly raim: FdeRaimResult;
 }
 
+/** Inputs for paths that do not apply an individual GDOP policy. */
+export type SppInputRequest = Omit<SppRequest, "maxGdop">;
+
 export interface SppBatchOptions {
     withGeodetic?: boolean;
     coarseSearchSeeds?: number;
     maxPdop?: number;
+    maxGdop?: number;
 }
 
 export interface RinexSppOptions {
@@ -548,6 +553,12 @@ export interface RangeFdeResult {
     iterations: number;
 }
 
+/** Typed ARAIM failure attached as Error.detail. */
+export type AraimErrorDetail =
+    | { kind: "unsupportedConstellation"; system: string }
+    | { kind: "insufficientGeometry" | "unmonitorableFaultMass" | "numericalFailure" | "invalidIsm" | "invalidAllocation" }
+    | { kind: "ut1OutsideCoverage"; reason: "beforeCoverage" | "afterCoverage" };
+
 export interface AraimReceiver {
     latRad: number;
     lonRad: number;
@@ -675,22 +686,23 @@ export interface RtkArcEpoch {
 }
 
 export interface RtkMeasModel {
-    codeSigmaM?: number;
-    phaseSigmaM?: number;
+    codeSigmaM: number;
+    phaseSigmaM: number;
     sagnac?: boolean;
-    stochastic?: string | { kind: string; elevationWeighting?: boolean };
+    stochastic?: "simple" | "rtklib";
+    elevationWeighting?: boolean;
 }
 
 export interface RtkArcConfig {
     baseM: Vec3;
-    reference?: string | { kind: string; satelliteId?: string };
-    model?: RtkMeasModel;
-    baselinePriorSigmaM?: number;
-    ambiguityPriorSigmaM?: number;
+    reference?: { mode?: "auto" | "satellite" | "perSystem"; satellite?: string; references?: Record<string, string> };
+    model: RtkMeasModel;
+    baselinePriorSigmaM: number;
+    ambiguityPriorSigmaM: number;
     initialBaselineM?: Vec3;
     wavelengthsM?: Record<string, number>;
     offsetsM?: Record<string, number>;
-    updateOpts?: Record<string, number | boolean>;
+    updateOpts?: RtkUpdateOptions;
     preprocessing?: Record<string, number | boolean | string[]>;
 }
 
@@ -722,10 +734,34 @@ export interface RtkStaticArcConfig {
     opts?: RtkValidatedFixedOptions;
 }
 
+/** RTK arc failure. An update failure includes the core update cause. */
+export type RtkArcErrorDetail =
+    | { kind: "emptyEpochs" }
+    | { kind: "tooFewSatellites"; count: number; minimum: number }
+    | { kind: "reference" | "filterState" | "cycleSlipPrep" | "codeSmoothing" | "elevationMask"; cause: string }
+    | { kind: "invalidEpochTime"; epochIndex: number }
+    | { kind: "missingPosition"; epochIndex: number; satelliteId: string }
+    | { kind: "update"; epochIndex: number; cause: RtkUpdateErrorDetail };
+export type RtkUpdateErrorDetail =
+    | { kind: "missingAmbiguityColumn" | "missingWavelength" | "missingOffset"; ambiguityId: string }
+    | { kind: "invalidInput" | "invalidState"; field: string; reason: string }
+    | { kind: "referenceChanged"; system: string; expected: string; actual: string }
+    | { kind: "unknownReferenceSystem" | "missingSystemReference"; system: string }
+    | { kind: "singularGeometry" }
+    | { kind: "receiverAntenna" | "ils"; cause: string };
+
 export interface RtkArcSolution {
-    epochs: Array<Record<string, number | string | boolean | string[] | number[] | null>>;
+    epochs: RtkArcEpochSolution[];
     finalState: Record<string, number | number[] | Record<string, number>>;
     references: Record<string, string>;
+}
+
+export interface RtkArcEpochSolution {
+    [key: string]: unknown;
+    referenceSatelliteIds: string[];
+    elevationMaskedSatelliteIds: string[];
+    elevationMaskConverged: boolean;
+    releasedHolds: Array<{ ambiguityId: string; reason: "unheldReference" | "incompatibleWavelengths" }>;
 }
 
 export interface RtkStaticArcSolution {
@@ -738,6 +774,7 @@ export interface RtkStaticArcSolution {
     droppedSats: string[];
     splitCycleSlipArcs: RtkCycleSlipSplitArc[];
     elevationMaskedSats: string[];
+    elevationMaskConverged: boolean;
 }
 
 export interface RtkGeometryQuality {
@@ -796,8 +833,67 @@ export interface RtkDualFrequencyArcEpoch {
     predictionEpoch?: ExactEpoch | null;
 }
 
-export interface RtkWideLaneArcConfig extends RtkArcConfig {
-    options?: Record<string, number | boolean>;
+export interface RtkWideLaneArcConfig {
+    baseM: Vec3;
+    reference?: { mode?: "auto" | "satellite" | "perSystem"; satellite?: string; references?: Record<string, string> };
+    options: { minEpochs: number; toleranceCycles: number; skipShortFragments: boolean };
+    cycleSlip?: { policy: "error" | "dropSatellite" | "splitArc"; options?: { gfThresholdM?: number; mwThresholdCycles?: number; minArcGapS?: number } } | null;
+}
+
+export interface RtkUpdateOptions {
+    holdSigmaM?: number;
+    positionTolM?: number;
+    ambiguityTolM?: number;
+    maxIterations?: number;
+    processNoiseBaselineSigmaM?: number;
+    dynamicsModel?: "constantPosition" | "velocityPropagated";
+    floatOnlySystems?: string[];
+    reportResiduals?: boolean;
+    arArmingSigmaM?: number | null;
+    ratioThreshold?: number;
+}
+
+export interface RtkWideLaneCombinedConfig {
+    baseM: Vec3;
+    reference?: { mode?: "auto" | "satellite" | "perSystem"; satellite?: string; references?: Record<string, string> };
+    model?: RtkMeasModel;
+    initialBaselineM?: Vec3;
+    baselinePriorSigmaM?: number;
+    ambiguityPriorSigmaM?: number;
+    applyTroposphere?: boolean;
+    updateOpts?: RtkUpdateOptions;
+    opts?: RtkValidatedFixedOptions;
+}
+
+export interface RtkWideLaneCombinedMetadata {
+    integerMethod: "wideLaneNarrowLaneLambda";
+    wideLaneFixed: boolean;
+    wideLaneAmbiguitiesCycles: Record<string, number>;
+    droppedCycleSlipSats: string[];
+    splitCycleSlipArcs: RtkCycleSlipSplitArc[];
+}
+
+export interface RtkWideLaneArcResult {
+    geometryQuality: RtkGeometryQuality;
+    references: Record<string, string>;
+    wideLaneCycles: Record<string, number>;
+    epochs: RtkDualFrequencyArcEpoch[];
+    droppedSats: string[];
+    splitCycleSlipArcs: RtkCycleSlipSplitArc[];
+}
+
+/** A static combined wide-lane / ionosphere-free solution. */
+export interface RtkWideLaneCombinedResult {
+    wideLane: RtkWideLaneArcResult;
+    ionosphereFree: RtkIonosphereFreeArcResult & { references: Record<string, string> };
+    solution: RtkStaticArcSolution;
+    metadata: RtkWideLaneCombinedMetadata;
+    floatBaselineM: Vec3;
+    fixedBaselineM: Vec3;
+    integerStatus: "Fixed" | "NotFixed";
+    integerRatio: number | undefined;
+    wideLaneFixed: boolean;
+    wideLaneAmbiguitiesCycles: Record<string, number>;
 }
 
 export interface RtkWideLaneFixedResult {
@@ -806,8 +902,11 @@ export interface RtkWideLaneFixedResult {
     solutions?: Array<Record<string, number | string | boolean | number[] | Record<string, number>>>;
 }
 
-export interface RtkIonosphereFreeArcConfig extends RtkArcConfig {
-    options?: Record<string, number | boolean>;
+export interface RtkIonosphereFreeArcConfig {
+    baseM: Vec3;
+    initialBaselineM?: Vec3;
+    reference?: { mode?: "auto" | "satellite" | "perSystem"; satellite?: string; references?: Record<string, string> };
+    applyTroposphere?: boolean;
 }
 
 export interface RtkIonosphereFreeArcResult {
@@ -958,8 +1057,15 @@ export type PppScalarMap = Record<string, number>;
  * Fusion serde contracts are intentionally unrefined until their complete
  * current input and serialized-output surfaces are audited together.
  */
+export interface FusionUpdateOptions {
+    innovationGate?: { thresholdSigma: number; minRows: number };
+    jointInnovationGateProbability?: number;
+}
+
 export interface FusionConfig {
     [key: string]: any;
+    loose?: { [key: string]: any; updateOptions?: FusionUpdateOptions };
+    tight?: { [key: string]: any; updateOptions?: FusionUpdateOptions };
     ukf?: UkfUpdateOptions;
 }
 
@@ -979,8 +1085,17 @@ export interface FusionTightEpoch {
     [key: string]: any;
 }
 
+export interface JointInnovationGateReport {
+    statistic: number;
+    degreesOfFreedom: number;
+    threshold: number;
+    falseAlarmProbability: number;
+    accepted: boolean;
+}
+
 export interface FusionUpdate {
     [key: string]: any;
+    ekf: { [key: string]: any; jointInnovationGate: JointInnovationGateReport | null };
 }
 
 export interface FusionState {
@@ -1959,7 +2074,7 @@ const topLevelReplacements = [
   ],
   [
     "export function solveStatic(sp3: Sp3, epochs: any, options: any): StaticSolution;",
-    "export function solveStatic(sp3: Sp3, epochs: SppRequest[], options?: StaticSolveOptions | null): StaticSolution;",
+    "export function solveStatic(sp3: Sp3, epochs: SppInputRequest[], options?: StaticSolveOptions | null): StaticSolution;",
   ],
   [
     "export function pppCorrections(sp3: Sp3, epochs: any, receiver_ecef_m: Float64Array, options: any): any;",
@@ -1986,12 +2101,28 @@ const topLevelReplacements = [
     "export function solveStaticRtkArc(epochs: RtkArcEpoch[], config: RtkStaticArcConfig): RtkStaticArcSolution;",
   ],
   [
+    "export function solveWideLaneFixedRtkArc(epochs: any, config: any): any;",
+    "export function solveWideLaneFixedRtkArc(epochs: RtkDualFrequencyArcEpoch[], config: RtkWideLaneCombinedConfig): RtkWideLaneCombinedResult;",
+  ],
+  [
     "export function fixWideLaneRtkArc(epochs: any, config: any): any;",
     "export function fixWideLaneRtkArc(epochs: RtkDualFrequencyArcEpoch[], config: RtkWideLaneArcConfig): RtkWideLaneFixedResult;",
   ],
   [
     "export function prepareIonosphereFreeRtkArc(epochs: any, wide_lane_cycles: any, config: any): any;",
     "export function prepareIonosphereFreeRtkArc(epochs: RtkDualFrequencyArcEpoch[], wide_lane_cycles: Record<string, number>, config: RtkIonosphereFreeArcConfig): RtkIonosphereFreeArcResult;",
+  ],
+  [
+    "export function pppRaimProtectionLevels(geometry_values: any, receiver_latitude_rad: number, receiver_longitude_rad: number, receiver_height_m: number, config?: PppRaimConfig | null): PppProtectionLevels;",
+    "export function pppRaimProtectionLevels(geometry_values: PppRaimGeometryRow[], receiver_latitude_rad: number, receiver_longitude_rad: number, receiver_height_m: number, config?: PppRaimConfig | null): PppProtectionLevels;",
+  ],
+  [
+    "export function pppRaimProtectionLevelsWithWeights(geometry_values: any, weights: Float64Array, latitude_rad: number, longitude_rad: number, height_m: number, config?: PppRaimConfig | null): PppProtectionLevels;",
+    "export function pppRaimProtectionLevelsWithWeights(geometry_values: PppRaimGeometryRow[], weights: Float64Array, latitude_rad: number, longitude_rad: number, height_m: number, config?: PppRaimConfig | null): PppProtectionLevels;",
+  ],
+  [
+    "export function pppRaimFaultFreeAccuracyBounds(geometry_values: any, weights: Float64Array, latitude_rad: number, longitude_rad: number, height_m: number, config?: PppRaimConfig | null): PppProtectionLevels;",
+    "export function pppRaimFaultFreeAccuracyBounds(geometry_values: PppRaimGeometryRow[], weights: Float64Array, latitude_rad: number, longitude_rad: number, height_m: number, config?: PppRaimConfig | null): PppProtectionLevels;",
   ],
   [
     "export function solvePppAutoInitFixed(sp3: Sp3, epochs: any, options: any, float_config: any, fixed_config: any): PppFixedSolution;",
@@ -2028,7 +2159,7 @@ const classMemberReplacements = [
       ["fde(request: any): FdeSolution;", "fde(request: FdeRequest): FdeSolution;"],
       [
         "solveBroadcast(request: any): SppSolution;",
-        "solveBroadcast(request: SppRequest): SppSolution;",
+        "solveBroadcast(request: SppInputRequest): SppSolution;",
       ],
     ],
   ],
@@ -2060,11 +2191,11 @@ const classMemberReplacements = [
       ["solveSpp(request: any): SppSolution;", "solveSpp(request: SppRequest): SppSolution;"],
       [
         "solveSppBatch(epochs: any, options: any): SppBatchSolution;",
-        "solveSppBatch(epochs: SppRequest[], options?: SppBatchOptions | null): SppBatchSolution;",
+        "solveSppBatch(epochs: SppInputRequest[], options?: SppBatchOptions | null): SppBatchSolution;",
       ],
       [
         "solveStatic(epochs: any, options: any): StaticSolution;",
-        "solveStatic(epochs: SppRequest[], options?: StaticSolveOptions | null): StaticSolution;",
+        "solveStatic(epochs: SppInputRequest[], options?: StaticSolveOptions | null): StaticSolution;",
       ],
       [
         "sppRobustFdeDriver(request: any): FdeSolution;",

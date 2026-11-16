@@ -102,13 +102,15 @@ fn parse_update_options(
     input: Option<UpdateOptionsInput>,
 ) -> Result<core_fusion::EkfUpdateOptions, JsValue> {
     let mut options = core_fusion::EkfUpdateOptions::default();
-    options.innovation_gate =
-        input
-            .and_then(|value| value.innovation_gate)
+    if let Some(input) = input {
+        options.innovation_gate = input
+            .innovation_gate
             .map(|gate| core_fusion::InnovationGate {
                 threshold_sigma: gate.threshold_sigma,
                 min_rows: gate.min_rows,
             });
+        options.joint_innovation_gate_probability = input.joint_innovation_gate_probability;
+    }
     Ok(options)
 }
 
@@ -157,6 +159,7 @@ fn parse_ukf_options(
             tr.kappa = transform.kappa.unwrap_or(out.transform.kappa);
             out.transform = tr;
         }
+        out.joint_innovation_gate_probability = input.joint_innovation_gate_probability;
         out.innovation_gate = input
             .innovation_gate
             .map(|gate| core_fusion::InnovationGate {
@@ -1168,6 +1171,7 @@ struct TightConfigInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateOptionsInput {
+    joint_innovation_gate_probability: Option<f64>,
     innovation_gate: Option<InnovationGateInput>,
 }
 
@@ -1181,6 +1185,7 @@ struct InnovationGateInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UkfUpdateOptionsInput {
+    joint_innovation_gate_probability: Option<f64>,
     transform: Option<UnscentedTransformInput>,
     innovation_gate: Option<InnovationGateInput>,
 }
@@ -1202,6 +1207,7 @@ export interface UnscentedTransformOptions {
 }
 
 export interface UkfUpdateOptions {
+  jointInnovationGateProbability?: number;
   transform?: UnscentedTransformOptions;
   innovationGate?: { thresholdSigma: number; minRows: number };
 }
@@ -1389,6 +1395,7 @@ struct EkfReportJs {
     accepted_rows: usize,
     rejected_rows: usize,
     innovation_gate: Option<InnovationGateReportJs>,
+    joint_innovation_gate: Option<JointInnovationGateReportJs>,
     innovation_covariance: Vec<Vec<f64>>,
     kalman_gain: Vec<Vec<f64>>,
     dx: Vec<f64>,
@@ -1402,9 +1409,33 @@ impl From<core_fusion::EkfCorrectionReport> for EkfReportJs {
             accepted_rows: value.accepted_rows,
             rejected_rows: value.rejected_rows,
             innovation_gate: value.innovation_gate.map(InnovationGateReportJs::from),
+            joint_innovation_gate: value
+                .joint_innovation_gate
+                .map(JointInnovationGateReportJs::from),
             innovation_covariance: value.innovation_covariance,
             kalman_gain: value.kalman_gain,
             dx: value.dx,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JointInnovationGateReportJs {
+    statistic: f64,
+    degrees_of_freedom: usize,
+    threshold: f64,
+    false_alarm_probability: f64,
+    accepted: bool,
+}
+impl From<core_fusion::JointInnovationGateReport> for JointInnovationGateReportJs {
+    fn from(value: core_fusion::JointInnovationGateReport) -> Self {
+        Self {
+            statistic: value.statistic,
+            degrees_of_freedom: value.degrees_of_freedom,
+            threshold: value.threshold,
+            false_alarm_probability: value.false_alarm_probability,
+            accepted: value.accepted,
         }
     }
 }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Forward FDE GDOP validation, reject ignored GDOP policies on unsupported solve paths, and correct combined RTK metadata and update-option declarations.
+
 - Add precise-positioning dual-frequency TEC estimation, thin-shell mapping,
   ionospheric pierce points, snapshot PPP RAIM/FDE, and the VMF site-series
   capacity and single-sample validity constants.

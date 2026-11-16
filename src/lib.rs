@@ -138,7 +138,7 @@ pub use anomaly::{
     solve_kepler, true_to_eccentric, true_to_mean,
 };
 pub use antex::{load_antex, Antenna, Antex, AntexDateTime};
-pub use araim::{araim, araim_fault_modes, araim_lpv_200_allocation};
+pub use araim::{araim, araim_fault_modes, araim_lpv_200_allocation, satellite_ism_model_add_v3_0};
 pub use atmosphere::{atmosphere_density, AtmosphereDensity};
 pub use bias::{
     load_bias_sinex, load_bias_sinex_lossy, load_code_dcb, load_code_dcb_lossy, BiasSet,
@@ -281,21 +281,21 @@ pub use ntrip::{
     ntrip_request_bytes, parse_ntrip_sourcetable, NtripClientMachine, NtripState, NtripVersion,
 };
 pub use observables::{
-    acquire, autocorrelation, ca_chip, ca_code, carrier_frequency_hz, chi2_inv, coherent_loss,
-    coherent_loss_db, correlate, correlate_against, correlation_at, cross_correlation,
-    default_pair, default_spp_frequency_hz_js, detect_cycle_slips, doppler_to_range_rate, gamma,
-    geometry_free, glonass_g1_frequency_hz_js, ionosphere_free, ionosphere_free_phase_cycles,
-    ionosphere_free_phase_m, ionosphere_free_pseudoranges, melbourne_wubbena, narrow_lane_code,
-    noise_amplification, observables_broadcast, observables_sp3, phase_meters,
-    predict_batch_broadcast, predict_batch_sp3, pseudorange_variance, range_rate_to_doppler,
-    replica, rinex_band_frequency_hz_js, rinex_band_wavelength_m_js,
-    rinex_observation_frequency_hz_js, rinex_observation_wavelength_m_js, sigmas,
-    slip_reason_label, smooth_code, smooth_iono_free_code, snr_post_db, solve_velocity,
-    solve_velocity_broadcast, wavelength_m_js, weight_vector, wide_lane_cycles,
-    wide_lane_wavelength, AcquisitionGrid, AcquisitionResult, CarrierPair, CorrelationResult,
-    IonoFreePseudorangeResult, IonoFreeSmoothResult, PredictBatch, PredictedObservables,
-    PseudorangeDropReason, RaimWeights, SatelliteVector, SlipReason, SlipResult, SmoothCodeResult,
-    VelocitySolution,
+    acquire, autocorrelation, ca_chip, ca_code, carrier_frequency_hz, chi2_inv, chi2_isf,
+    coherent_loss, coherent_loss_db, correlate, correlate_against, correlation_at,
+    cross_correlation, default_pair, default_spp_frequency_hz_js, detect_cycle_slips,
+    doppler_to_range_rate, gamma, geometry_free, glonass_g1_frequency_hz_js, ionosphere_free,
+    ionosphere_free_phase_cycles, ionosphere_free_phase_m, ionosphere_free_pseudoranges,
+    melbourne_wubbena, narrow_lane_code, noise_amplification, observables_broadcast,
+    observables_sp3, phase_meters, predict_batch_broadcast, predict_batch_sp3,
+    pseudorange_variance, range_rate_to_doppler, replica, rinex_band_frequency_hz_js,
+    rinex_band_wavelength_m_js, rinex_observation_frequency_hz_js,
+    rinex_observation_wavelength_m_js, sigmas, slip_reason_label, smooth_code,
+    smooth_iono_free_code, snr_post_db, solve_velocity, solve_velocity_broadcast, wavelength_m_js,
+    weight_vector, wide_lane_cycles, wide_lane_wavelength, AcquisitionGrid, AcquisitionResult,
+    CarrierPair, CorrelationResult, IonoFreePseudorangeResult, IonoFreeSmoothResult, PredictBatch,
+    PredictedObservables, PseudorangeDropReason, RaimWeights, SatelliteVector, SlipReason,
+    SlipResult, SmoothCodeResult, VelocitySolution,
 };
 pub use observation::{
     observe, observe_barycentric_state, observe_spk_body, observe_spk_body_with_validity,
@@ -343,10 +343,12 @@ pub use ppp_kinematic::{
     PppKinematicState, PppKinematicUpdateSummary,
 };
 pub use ppp_raim::{
+    fault_free_accuracy_bounds as ppp_raim_fault_free_accuracy_bounds,
     fde_float_epoch as ppp_fde_float_epoch, global_test as ppp_raim_global_test,
     global_test_with_geometry as ppp_raim_global_test_with_geometry,
     per_satellite_statistics as ppp_raim_per_satellite_statistics,
     protection_levels as ppp_raim_protection_levels,
+    protection_levels_with_weights as ppp_raim_protection_levels_with_weights,
     solve_float_epoch_with_raim as solve_ppp_float_epoch_with_raim, PppProtectionLevels,
     PppRaimConfig, PppRaimFdeResult, PppRaimIdentification, PppRaimResult,
 };
@@ -425,7 +427,7 @@ pub use rtk_arc::{
     build_dual_frequency_rinex_rtk_arc_js, build_rinex_rtk_arc_js, fix_wide_lane_rtk_arc_js,
     prepare_ionosphere_free_rtk_arc_js, solve_rtk_arc_js, solve_static_reference_station_rinex_js,
     solve_static_rinex_rtk_baseline_js, solve_static_rtk_arc_js,
-    solve_wide_lane_fixed_rinex_rtk_baseline_js,
+    solve_wide_lane_fixed_rinex_rtk_baseline_js, solve_wide_lane_fixed_rtk_arc_js,
 };
 pub use sbas::{
     decode_sbas_message, parse_sbas_ems_lines, parse_sbas_ems_log, parse_sbas_rtklib_lines,

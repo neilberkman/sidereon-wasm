@@ -101,6 +101,9 @@ struct FdeRequest {
     /// Optional PDOP ceiling applied to each candidate solution.
     #[serde(default)]
     max_pdop: Option<f64>,
+    /// Optional single-clock GDOP ceiling applied to each candidate.
+    #[serde(default)]
+    max_gdop: Option<f64>,
     #[serde(default)]
     robust: Option<RobustInput>,
 }
@@ -242,6 +245,7 @@ pub fn fde(eph: &dyn EphemerisSource, request: JsValue) -> Result<FdeSolution, J
             "maxIterations is unsupported; use maxExclusions",
         ));
     }
+    crate::spp::reject_request_policy_fields(&request, &["coarseSearchSeeds"])?;
     let req: FdeRequest = serde_wasm_bindgen::from_value(request.clone())
         .map_err(|e| type_error(&format!("invalid FDE request: {e}")))?;
 
@@ -302,6 +306,7 @@ pub fn fde(eph: &dyn EphemerisSource, request: JsValue) -> Result<FdeSolution, J
         .unwrap_or(defaults.max_exclusion_rms_m);
     let mut validation = SolutionValidationOptions::default();
     validation.max_pdop = req.max_pdop;
+    validation.max_gdop = req.max_gdop;
     let options = FdeSppOptions::new(fde, validation);
 
     let result = if let Some(robust) = &req.robust {

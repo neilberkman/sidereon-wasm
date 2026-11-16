@@ -12,7 +12,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { loadSp3, solvePppFloat, solvePppFixed } from "../pkg-node/sidereon.js";
+import { loadSp3, solvePppFloat, solvePppFixed, pppFdeFloatEpoch } from "../pkg-node/sidereon.js";
 import { coreGoldens, f64Bits, fixture, fixtureJson } from "./helpers.mjs";
 
 // Bit patterns ("0x...") the golden generator (test/golden-gen) computed
@@ -128,6 +128,7 @@ test("PPP float position matches the engine reference", () => {
   const sol = solvePppFloat(sp3, mapEpochs(fx), mapState(fx), mapFloatConfig(fx));
 
   assertVecClose(sol.positionM, fx.expected.position_m, POS_TOL, "float position");
+  assert.equal(sol.posteriorVarianceFactorEstimated, true);
   assert.ok(sol.converged);
   assert.ok(sol.usedSats.length > 0);
 });
@@ -203,6 +204,7 @@ test("PPP fixed position and integer fix match the engine reference", () => {
 
   const sol = solvePppFixed(sp3, epochs, floatSol, mapFixedConfig(fx));
   const exp = fx.expected;
+  assert.equal(sol.posteriorVarianceFactorEstimated, true);
 
   assertVecClose(sol.positionM, exp.fixed_position_m, POS_TOL, "fixed position");
   assertVecClose(
@@ -364,4 +366,22 @@ test("PPP rejects a non-ascending VMF1 series", () => {
       }),
     Error,
   );
+});
+
+// A single epoch with four satellites has eight code/phase rows and eight
+// unknowns (position, clock, and four ambiguities), so no residual variance
+// can be estimated. This is the zero-redundancy case documented in core's
+// ppp_raim_oracles.rs clean_zero_redundancy_fde_is_untested test.
+test("exactly determined PPP is untested and does not estimate residual variance", () => {
+  const fx = fixtureJson("ppp_esbc.json");
+  const epoch = mapEpochs(fx)[0];
+  epoch.observations = epoch.observations.slice(0, 4);
+  const config = mapFloatConfig(fx);
+  config.tropo = { ...config.tropo, estimateZtd: false, estimateTropoGradients: false };
+  const state = mapState(fx);
+  state.clocksM = state.clocksM.slice(0, 1);
+  const result = pppFdeFloatEpoch(loadSp3Fixture(fx), epoch, state, config);
+  assert.equal(result.status, "untested");
+  assert.equal(result.solution.posteriorVarianceFactorEstimated, false);
+  assert.equal(result.solution.posteriorVarianceFactor, 1);
 });

@@ -5,9 +5,10 @@ use wasm_bindgen::prelude::*;
 
 use sidereon_core::geometry::{LineOfSight, Wgs84Geodetic};
 use sidereon_core::precise_positioning::raim::{
-    fde_float_epoch as core_fde, global_test as core_global_test,
-    global_test_with_geometry as core_global_with_geometry,
+    fault_free_accuracy_bounds as core_accuracy_bounds, fde_float_epoch as core_fde,
+    global_test as core_global_test, global_test_with_geometry as core_global_with_geometry,
     per_satellite_statistics as core_statistics, protection_levels as core_protection_levels,
+    protection_levels_with_weights as core_weighted_levels,
 };
 use sidereon_core::precise_positioning::{
     FloatResidual, ProtectionLevels, RaimConfig, RaimError, RaimFdeError, RaimFdeResult,
@@ -93,6 +94,15 @@ fn raim_error(error: RaimError) -> JsValue {
         RaimError::Dop(inner) => {
             serde_json::json!({"family":"RaimError","kind":"DOP","cause":format!("{inner:?}"),"message":error.to_string()})
         }
+        RaimError::NumericalProtectionLevel => {
+            serde_json::json!({"family":"RaimError","kind":"NUMERICAL_PROTECTION_LEVEL","message":error.to_string()})
+        }
+        RaimError::UnsupportedNoncentrality => {
+            serde_json::json!({"family":"RaimError","kind":"UNSUPPORTED_NONCENTRALITY","message":error.to_string()})
+        }
+        RaimError::UnsupportedDof { dof, max } => {
+            serde_json::json!({"family":"RaimError","kind":"UNSUPPORTED_DOF","dof":dof,"max":max,"message":error.to_string()})
+        }
         RaimError::SingularGeometry => {
             serde_json::json!({"family":"RaimError","kind":"SINGULAR_GEOMETRY","message":error.to_string()})
         }
@@ -101,7 +111,11 @@ fn raim_error(error: RaimError) -> JsValue {
         RaimError::InvalidConfig { .. }
         | RaimError::InvalidResidual { .. }
         | RaimError::InvalidGeometry { .. } => js_sys::RangeError::new(&error.to_string()).into(),
-        _ => js_sys::Error::new(&error.to_string()),
+        RaimError::Dop(_)
+        | RaimError::SingularGeometry
+        | RaimError::NumericalProtectionLevel
+        | RaimError::UnsupportedNoncentrality
+        | RaimError::UnsupportedDof { .. } => js_sys::Error::new(&error.to_string()),
     };
     let value = detail
         .serialize(&serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true))
@@ -328,9 +342,10 @@ impl PppRaimFdeResult {
     pub fn excluded_sats(&self) -> Vec<String> {
         self.inner.excluded_sats.clone()
     }
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, unchecked_return_type = "PppRaimFdeStatus")]
     pub fn status(&self) -> String {
         match self.inner.status {
+            sidereon_core::precise_positioning::RaimFdeStatus::Untested => "untested",
             sidereon_core::precise_positioning::RaimFdeStatus::Clean => "clean",
             sidereon_core::precise_positioning::RaimFdeStatus::Restored => "restored",
             sidereon_core::precise_positioning::RaimFdeStatus::CannotExclude => "cannotExclude",
@@ -387,6 +402,7 @@ pub fn per_satellite_statistics(
     .map(|inner| PppRaimIdentification { inner })
     .map_err(raim_error)
 }
+/// Brown snapshot-RAIM fault protection levels; requires positive redundancy.
 #[wasm_bindgen(js_name = pppRaimProtectionLevels)]
 pub fn protection_levels(
     geometry_values: JsValue,
@@ -403,6 +419,54 @@ pub fn protection_levels(
     core_protection_levels(
         &geometry(geometry_values)?,
         receiver,
+        PppRaimConfig::core(config),
+    )
+    .map(|inner| PppProtectionLevels { inner })
+    .map_err(raim_error)
+}
+
+/// Brown snapshot-RAIM fault protection levels with inverse-standard-deviation weights.
+#[wasm_bindgen(js_name = pppRaimProtectionLevelsWithWeights)]
+pub fn protection_levels_with_weights(
+    geometry_values: JsValue,
+    weights: Vec<f64>,
+    latitude_rad: f64,
+    longitude_rad: f64,
+    height_m: f64,
+    config: Option<PppRaimConfig>,
+) -> Result<PppProtectionLevels, JsValue> {
+    core_weighted_levels(
+        &geometry(geometry_values)?,
+        &weights,
+        Wgs84Geodetic {
+            lat_rad: latitude_rad,
+            lon_rad: longitude_rad,
+            height_m,
+        },
+        PppRaimConfig::core(config),
+    )
+    .map(|inner| PppProtectionLevels { inner })
+    .map_err(raim_error)
+}
+
+/// Fault-free K × sigma × DOP accuracy bounds, with inverse-standard-deviation weights.
+#[wasm_bindgen(js_name = pppRaimFaultFreeAccuracyBounds)]
+pub fn fault_free_accuracy_bounds(
+    geometry_values: JsValue,
+    weights: Vec<f64>,
+    latitude_rad: f64,
+    longitude_rad: f64,
+    height_m: f64,
+    config: Option<PppRaimConfig>,
+) -> Result<PppProtectionLevels, JsValue> {
+    core_accuracy_bounds(
+        &geometry(geometry_values)?,
+        &weights,
+        Wgs84Geodetic {
+            lat_rad: latitude_rad,
+            lon_rad: longitude_rad,
+            height_m,
+        },
         PppRaimConfig::core(config),
     )
     .map(|inner| PppProtectionLevels { inner })
@@ -458,7 +522,7 @@ const TYPES: &'static str = r#"
 export interface PppFloatResidualInput { epochIndex: number; satelliteId: string; ambiguityId: string; codeM: number; phaseM: number; codeWeight: number; phaseWeight: number; }
 export interface PppRaimGeometryRow { satelliteId: string; lineOfSight: [number, number, number]; }
 export type PppRaimStatus = "passed" | "faultDetected" | "notEnoughRedundancy";
-export type PppRaimFdeStatus = "clean" | "restored" | "cannotExclude" | "integrityNotRestored";
+export type PppRaimFdeStatus = "untested" | "clean" | "restored" | "cannotExclude" | "integrityNotRestored";
 export interface PppSatelliteTestStatistic { satelliteId: string; code: number; phase: number; statistic: number; codeTestable: boolean; phaseTestable: boolean; }
-export type PppRaimErrorDetail = { family: "RaimError"; kind: "INVALID_CONFIG"; field: string; reason: string; message: string } | { family: "RaimError"; kind: "INVALID_RESIDUAL"; field: string; message: string } | { family: "RaimError"; kind: "INVALID_GEOMETRY"; field: string; reason: string; message: string } | { family: "RaimError"; kind: "DOP"; cause: string; message: string } | { family: "RaimError"; kind: "SINGULAR_GEOMETRY"; message: string };
+export type PppRaimErrorDetail = { family: "RaimError"; kind: "INVALID_CONFIG"; field: string; reason: string; message: string } | { family: "RaimError"; kind: "INVALID_RESIDUAL"; field: string; message: string } | { family: "RaimError"; kind: "INVALID_GEOMETRY"; field: string; reason: string; message: string } | { family: "RaimError"; kind: "DOP"; cause: string; message: string } | { family: "RaimError"; kind: "SINGULAR_GEOMETRY" | "NUMERICAL_PROTECTION_LEVEL" | "UNSUPPORTED_NONCENTRALITY"; message: string } | { family: "RaimError"; kind: "UNSUPPORTED_DOF"; dof: number; max: number; message: string };
 "#;

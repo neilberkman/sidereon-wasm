@@ -156,3 +156,78 @@ test("PPP snapshot RAIM global test returns exact statistics and typed refusals"
     },
   );
 });
+
+test("PPP Brown fault levels and fault-free bounds match the core NumPy/SciPy fixture", async () => {
+  const { readFileSync } = await import("node:fs");
+  const {
+    pppRaimProtectionLevels,
+    pppRaimProtectionLevelsWithWeights,
+    pppRaimFaultFreeAccuracyBounds,
+  } = await import("../pkg-node/sidereon.js");
+  // Extracted from core tests/fixtures/ppp_raim_oracles.json.
+  const f = JSON.parse(
+    readFileSync(new URL("./fixtures/ppp-raim-reference.json", import.meta.url)),
+  );
+  const rows = f.line_of_sight_ecef.map((lineOfSight, i) => ({
+    satelliteId: `G${String(i + 1).padStart(2, "0")}`,
+    lineOfSight,
+  }));
+  const [lat, lon] = f.receiver;
+  const plain = pppRaimProtectionLevels(rows, lat, lon, 0);
+  const weighted = pppRaimProtectionLevelsWithWeights(
+    rows,
+    new Float64Array(f.nonuniform_weighted_protection.weights_inverse_sigma),
+    lat,
+    lon,
+    0,
+  );
+  const accuracy = pppRaimFaultFreeAccuracyBounds(
+    rows,
+    new Float64Array(f.nonuniform_weighted_protection.weights_inverse_sigma),
+    lat,
+    lon,
+    0,
+  );
+  for (const [actual, expected] of [
+    [plain.hplM, f.slope_cases[0].hpl_slope],
+    [plain.vplM, f.slope_cases[0].vpl_slope],
+    [weighted.hplM, f.nonuniform_weighted_protection.hpl_slope_m],
+    [weighted.vplM, f.nonuniform_weighted_protection.vpl_slope_m],
+    [accuracy.hplM, f.nonuniform_weighted_protection.fault_free_h_m],
+    [accuracy.vplM, f.nonuniform_weighted_protection.fault_free_v_m],
+  ]) {
+    assert.ok(Math.abs(actual - expected) < Math.abs(expected) * 2e-11);
+  }
+  assert.throws(
+    () => pppRaimProtectionLevels(rows.slice(0, 4), lat, lon, 0),
+    (e) =>
+      e.details.kind === "INVALID_GEOMETRY" &&
+      e.details.reason === "protection levels require positive redundancy",
+  );
+});
+
+test("PPP protection levels distinguish unsupported noncentrality and degrees of freedom", async () => {
+  const { pppRaimProtectionLevels } = await import("../pkg-node/sidereon.js");
+  const vectors = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, 0, 1], Array(3).fill(1 / Math.sqrt(3))];
+  const rows = vectors.map((lineOfSight, i) => ({ satelliteId: `G${i + 1}`, lineOfSight }));
+  assert.throws(
+    () =>
+      pppRaimProtectionLevels(
+        rows,
+        0.7,
+        -1.2,
+        0,
+        new PppRaimConfig(undefined, undefined, undefined, 1e15),
+      ),
+    (e) => e.details.kind === "UNSUPPORTED_NONCENTRALITY",
+  );
+  const many = Array.from({ length: 100005 }, (_, i) => ({
+    satelliteId: `S${i}`,
+    lineOfSight: vectors[i % 5],
+  }));
+  assert.throws(
+    () => pppRaimProtectionLevels(many, 0.7, -1.2, 0),
+    (e) =>
+      e.details.kind === "UNSUPPORTED_DOF" && e.details.dof === 100001 && e.details.max === 100000,
+  );
+});

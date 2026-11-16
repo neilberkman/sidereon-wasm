@@ -1545,7 +1545,7 @@ impl Sp3 {
 
     /// Run SPP and attach a Doppler velocity/clock-drift solve when Doppler rows solve.
     ///
-    /// `request` is the normal SPP request object. `dopplerObservations` is an
+    /// `request` is an SPP request without `maxGdop`, which this path rejects. `dopplerObservations` is an
     /// array of `{ satelliteId, dopplerHz, carrierHz, satClockDriftSS? }`. The
     /// returned receiver solution carries `rxClockDriftSS` when velocity solved.
     #[wasm_bindgen(js_name = solveSppWithDopplerVelocity)]
@@ -1560,7 +1560,7 @@ impl Sp3 {
     /// Solve a batch of independent SPP epochs against this ephemeris in one call.
     ///
     /// `epochs` is an array of SPP request objects (the `SppRequest` shape) and
-    /// `options` the shared `{ withGeodetic?, maxPdop?, coarseSearchSeeds? }`
+    /// `options` the shared `{ withGeodetic?, maxPdop?, maxGdop?, coarseSearchSeeds? }`
     /// applied to every epoch. Returns an `SppBatchSolution` whose per-epoch
     /// results are index-aligned to `epochs`; each epoch independently converged
     /// or failed. Delegates to the serial reference batch kernel.

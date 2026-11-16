@@ -64,6 +64,8 @@ fn system_label(system: GnssSystem) -> &'static str {
 /// first that applies.
 pub(crate) fn rejection_reason_label(reason: RejectionReason) -> &'static str {
     match reason {
+        RejectionReason::NonFinitePseudorange => "nonFinitePseudorange",
+        RejectionReason::NonPositivePseudorange => "nonPositivePseudorange",
         RejectionReason::NoEphemeris => "noEphemeris",
         RejectionReason::SsrCorrectionExceedsLimit(_) => "ssrCorrectionExceedsLimit",
         RejectionReason::LowElevation => "lowElevation",
@@ -252,6 +254,7 @@ struct SppRequest {
     /// is refused with an `Error`. Honored only on the SP3 `solveSpp` path.
     #[serde(default)]
     max_pdop: Option<f64>,
+    max_gdop: Option<f64>,
     /// Which code the pseudoranges are: `"singleFrequency"` (the default) or
     /// `"ionosphereFree"`. The broadcast single-frequency group delay (GPS and
     /// QZSS TGD, Galileo BGD, BeiDou TGD1) applies to single-frequency code only,
@@ -444,7 +447,7 @@ fn build_solve_inputs(req: &SppRequest) -> Result<(SolveInputs, bool), JsValue> 
 /// validation ceiling and the optional coarse-search seed count. Out-of-domain
 /// values are rejected at the boundary with a `RangeError`.
 fn build_policy(req: &SppRequest) -> Result<SolvePolicy, JsValue> {
-    make_policy(req.max_pdop, req.coarse_search_seeds)
+    make_policy(req.max_pdop, req.max_gdop, req.coarse_search_seeds)
 }
 
 /// Validate the optional PDOP ceiling and coarse-search seed count at the
@@ -452,6 +455,7 @@ fn build_policy(req: &SppRequest) -> Result<SolvePolicy, JsValue> {
 /// [`SolvePolicy`]. Shared by the single-solve and batch paths.
 fn make_policy(
     max_pdop: Option<f64>,
+    max_gdop: Option<f64>,
     coarse_search_seeds: Option<usize>,
 ) -> Result<SolvePolicy, JsValue> {
     if let Some(max_pdop) = max_pdop {
@@ -466,6 +470,7 @@ fn make_policy(
     }
     let mut validation = SolutionValidationOptions::default();
     validation.max_pdop = max_pdop;
+    validation.max_gdop = max_gdop;
     Ok(SolvePolicy {
         validation,
         coarse_search_seeds,
@@ -475,9 +480,23 @@ fn make_policy(
 /// Marshal one SPP request JS object into the core [`SolveInputs`] and the
 /// caller's `withGeodetic` flag. Shared by the broadcast-only path and the
 /// precise-with-broadcast fallback (which take no [`SolvePolicy`]), so the
-/// `coarseSearchSeeds` / `maxPdop` request fields are ignored on those paths;
+/// `maxGdop` is refused on those paths; the older `coarseSearchSeeds` and
+/// `maxPdop` request fields are not applied there;
 /// the `robust` field is honored everywhere because it lives on the inputs.
+pub(crate) fn reject_request_policy_fields(
+    request: &JsValue,
+    fields: &[&str],
+) -> Result<(), JsValue> {
+    for field in fields {
+        if js_sys::Reflect::has(request, &JsValue::from_str(field)).unwrap_or(false) {
+            return Err(type_error(&format!("{field} is unsupported on this path")));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn build_inputs(request: JsValue) -> Result<(SolveInputs, bool), JsValue> {
+    reject_request_policy_fields(&request, &["maxGdop"])?;
     let req: SppRequest = serde_wasm_bindgen::from_value(request)
         .map_err(|e| type_error(&format!("invalid SPP request: {e}")))?;
     build_solve_inputs(&req)
@@ -594,6 +613,7 @@ pub fn solve_with_doppler_velocity(
     request: JsValue,
     doppler_observations: JsValue,
 ) -> Result<SppDopplerSolution, JsValue> {
+    reject_request_policy_fields(&request, &["maxGdop"])?;
     let req: SppRequest = serde_wasm_bindgen::from_value(request)
         .map_err(|e| type_error(&format!("invalid SPP request: {e}")))?;
     let (inputs, with_geodetic) = build_solve_inputs(&req)?;
@@ -615,6 +635,7 @@ struct SppBatchOptions {
     with_geodetic: Option<bool>,
     coarse_search_seeds: Option<usize>,
     max_pdop: Option<f64>,
+    max_gdop: Option<f64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -714,7 +735,11 @@ fn rinex_solve_policy(value: JsValue) -> Result<(bool, SolvePolicy), JsValue> {
     };
     Ok((
         options.with_geodetic.unwrap_or(true),
-        make_policy(options.max_pdop, options.coarse_search_seeds)?,
+        make_policy(
+            options.max_pdop,
+            options.max_gdop,
+            options.coarse_search_seeds,
+        )?,
     ))
 }
 
@@ -921,7 +946,7 @@ impl RinexSppSolutionBatch {
 /// `withGeodetic` flag and the `SolvePolicy` (PDOP ceiling, coarse-search seeds)
 /// are shared across the whole batch and taken from `options`, so any
 /// `withGeodetic` / `maxPdop` / `coarseSearchSeeds` set on an individual entry is
-/// ignored. Element `i` of the result corresponds to `epochs[i]` and is either a
+/// ignored; per-entry `maxGdop` is rejected and must be supplied in `options`. Element `i` of the result corresponds to `epochs[i]` and is either a
 /// solution or that epoch's solve error. Delegates to the serial reference batch
 /// kernel `sidereon_core::positioning::solve_spp_batch_serial`; the binding never spawns
 /// the rayon thread pool the parallel variant uses.
@@ -930,6 +955,11 @@ pub fn solve_batch(
     epochs: JsValue,
     options: JsValue,
 ) -> Result<SppBatchSolution, JsValue> {
+    if js_sys::Array::is_array(&epochs) {
+        for epoch in js_sys::Array::from(&epochs).iter() {
+            reject_request_policy_fields(&epoch, &["maxGdop"])?;
+        }
+    }
     let reqs: Vec<SppRequest> = serde_wasm_bindgen::from_value(epochs)
         .map_err(|e| type_error(&format!("invalid SPP batch epochs: {e}")))?;
     let opts: SppBatchOptions = if options.is_undefined() || options.is_null() {
@@ -940,7 +970,7 @@ pub fn solve_batch(
     };
 
     let with_geodetic = opts.with_geodetic.unwrap_or(true);
-    let policy = make_policy(opts.max_pdop, opts.coarse_search_seeds)?;
+    let policy = make_policy(opts.max_pdop, opts.max_gdop, opts.coarse_search_seeds)?;
 
     let mut inputs = Vec::with_capacity(reqs.len());
     for req in &reqs {
@@ -1220,6 +1250,12 @@ impl SppSolution {
         self.inner.dop.clone().map(Dop::from)
     }
 
+    /// RTKLIB-style DOP using one shared receiver clock.
+    #[wasm_bindgen(getter, js_name = rtklibSingleClockDop)]
+    pub fn rtklib_single_clock_dop(&self) -> Option<Dop> {
+        self.inner.rtklib_single_clock_dop.clone().map(Dop::from)
+    }
+
     /// Per-constellation time (clock) DOP as a `{ system, tdop }[]`, one entry
     /// per GNSS in the solve in ascending system order (the same order as the
     /// per-system clocks). The first entry's `tdop` equals the reference clock's
@@ -1313,6 +1349,8 @@ export interface StaticSolveMetadata {
 }
 
 export type SppRejectionReason =
+  | "nonFinitePseudorange"
+  | "nonPositivePseudorange"
   | "noEphemeris"
   | "ssrCorrectionExceedsLimit"
   | "lowElevation"
