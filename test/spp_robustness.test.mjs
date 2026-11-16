@@ -160,3 +160,34 @@ test("maxPdop refuses a fix whose geometry exceeds the ceiling", async () => {
   assert.throws(() => sp3.solveSpp({ ...request, maxPdop: 0 }), RangeError);
   assert.throws(() => sp3.solveSpp({ ...request, maxPdop: -1 }), RangeError);
 });
+
+test("GDOP validation, shared-clock DOP and invalid pseudorange reasons are exposed", async () => {
+  const sp3 = await loadFixtureSp3();
+  const { request } = scenario(sp3);
+  const observations = request.observations.map((observation, i) =>
+    i === 0
+      ? { ...observation, pseudorangeM: NaN }
+      : i === 1
+        ? { ...observation, pseudorangeM: 0 }
+        : observation,
+  );
+  const sol = sp3.solveSpp({ ...request, observations, maxGdop: 100 });
+  assert.deepEqual(sol.rejectedSats.map(({ reason }) => reason).sort(), [
+    "nonFinitePseudorange",
+    "nonPositivePseudorange",
+  ]);
+  assert.ok(sol.rtklibSingleClockDop.gdop > 1);
+  assert.throws(
+    () => sp3.solveSpp({ ...request, maxGdop: 0.1 }),
+    (error) => error.detail?.validation?.kind === "DEGENERATE_GEOMETRY_GDOP",
+  );
+});
+
+test("paths without a per-epoch GDOP policy reject maxGdop", async () => {
+  const sp3 = await loadFixtureSp3();
+  const { request } = scenario(sp3);
+  const rejected = { ...request, maxGdop: 30 };
+  assert.throws(() => sp3.solveSppBatch([rejected]), /maxGdop is unsupported/);
+  assert.throws(() => sp3.solveStatic([rejected]), /maxGdop is unsupported/);
+  assert.throws(() => sp3.solveSppWithDopplerVelocity(rejected, []), /maxGdop is unsupported/);
+});

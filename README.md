@@ -612,3 +612,13 @@ build.
 ## License
 
 MIT
+
+PPP snapshot RAIM protection levels are Brown fault-mode levels and require positive redundancy. `pppRaimProtectionLevelsWithWeights` accepts inverse-standard-deviation weights; `pppRaimFaultFreeAccuracyBounds` exposes the separate fault-free K × sigma × DOP bounds. `chi2Isf` accepts an upper-tail probability directly. Coverage grids provide checked `tryVisibleMask` and `tryAccessCounts`; the legacy methods are deprecated.
+
+`araimSatelliteIsmModelAddV30` constructs the ADD v3.0 local-error model for supported constellations and reports `unsupportedConstellation` in the error detail when Appendix A does not cover a system. Joint innovation gating is available through `jointInnovationGateProbability` in fusion update options; correction reports include `jointInnovationGate`.
+
+`solveWideLaneFixedRtkArc` accepts dual-frequency arc epochs directly and supports one reference per constellation. `solveRtkArc` attaches an `RtkArcErrorDetail` to thrown errors; an update failure carries its specific `RtkUpdateErrorDetail`, including `missingAmbiguityColumn` and the ambiguity ID. RTK epoch results report `referenceSatelliteIds`, `elevationMaskedSatelliteIds`, `elevationMaskConverged`, and `releasedHolds`; hold reasons are `unheldReference` and `incompatibleWavelengths`.
+
+PPP FDE status `untested` means a solve succeeded without positive redundancy. PPP RAIM error details distinguish `UNSUPPORTED_NONCENTRALITY` (the bias root exceeds the supported noncentrality), `UNSUPPORTED_DOF` (with `dof` and `max`), and `NUMERICAL_PROTECTION_LEVEL` (failure of the numerical probability calculation). SPP reports invalid measurements as `nonFinitePseudorange` or `nonPositivePseudorange`; GDOP validation failures use `DEGENERATE_GEOMETRY_GDOP`. A PPP posterior variance factor is an estimate only when `posteriorVarianceFactorEstimated` is true.
+
+FDE applies `maxGdop` to every candidate solution. Batch SPP accepts it in the shared options; per-epoch values, and values supplied to static, Doppler, broadcast-only, SBAS, or fallback paths without that policy, are rejected. FDE rejects the unsupported `coarseSearchSeeds` option.

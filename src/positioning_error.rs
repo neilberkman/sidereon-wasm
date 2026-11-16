@@ -44,6 +44,8 @@ pub(crate) enum SolutionValidationDetail {
     DegenerateGeometryRankDeficient,
     #[serde(rename = "DEGENERATE_GEOMETRY_PDOP", rename_all = "camelCase")]
     DegenerateGeometryPdop { pdop: f64 },
+    #[serde(rename = "DEGENERATE_GEOMETRY_GDOP", rename_all = "camelCase")]
+    DegenerateGeometryGdop { gdop: f64 },
     #[serde(rename = "IMPLAUSIBLE_POSITION", rename_all = "camelCase")]
     ImplausiblePosition { radius_m: f64 },
     #[serde(rename = "INVALID_RESIDUALS")]
@@ -137,6 +139,9 @@ impl From<&SolutionValidationError> for SolutionValidationDetail {
             }
             SolutionValidationError::DegenerateGeometryPdop(pdop) => {
                 Self::DegenerateGeometryPdop { pdop }
+            }
+            SolutionValidationError::DegenerateGeometryGdop(gdop) => {
+                Self::DegenerateGeometryGdop { gdop }
             }
             SolutionValidationError::ImplausiblePosition(radius_m) => {
                 Self::ImplausiblePosition { radius_m }
@@ -1303,6 +1308,7 @@ mod rtk_detail_serialization_tests {
 const TS_POSITIONING_ERROR: &str = r#"
 /** Why a solution a solve produced was rejected by its validation gate. */
 export type SolutionValidationDetail =
+  | { kind: "DEGENERATE_GEOMETRY_GDOP"; gdop: number }
   | { kind: "INVALID_OPTIONS"; field: string; reason: string }
   | { kind: "DEGENERATE_GEOMETRY_RANK_DEFICIENT" }
   | { kind: "DEGENERATE_GEOMETRY_PDOP"; pdop: number }

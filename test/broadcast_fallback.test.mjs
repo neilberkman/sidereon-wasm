@@ -19,7 +19,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { loadSp3, loadRinexNav, solveWithFallback } from "../pkg-node/sidereon.js";
+import {
+  loadSp3,
+  loadRinexNav,
+  solveWithFallback,
+  solveSppSbas,
+  SbasCorrectionStore,
+} from "../pkg-node/sidereon.js";
 import { f64Bits } from "./helpers.mjs";
 
 const here = (rel) => fileURLToPath(new URL(rel, import.meta.url));
@@ -288,4 +294,23 @@ test("SPP requests expose the core QZSS-clock and troposphere choices", () => {
   assert.ok(selected.positionM.every(Number.isFinite));
   assert.throws(() => nav.solveBroadcast({ ...request, qzssClock: "own" }), TypeError);
   assert.throws(() => nav.solveBroadcast({ ...request, troposphereModel: "niell" }), TypeError);
+});
+
+test("broadcast FDE applies GDOP limits and policy-free paths reject them", () => {
+  const { request } = scenario();
+  assert.throws(
+    () => nav.fde({ ...request, maxGdop: 0.1 }),
+    (error) =>
+      error.detail?.kind === "SOLUTION_REJECTED" &&
+      error.detail.validation.kind === "DEGENERATE_GEOMETRY_GDOP",
+  );
+  assert.throws(() => nav.solveBroadcast({ ...request, maxGdop: 30 }), /maxGdop is unsupported/);
+  assert.throws(
+    () => solveSppSbas(nav, new SbasCorrectionStore(), "S20", { ...request, maxGdop: 30 }),
+    /maxGdop is unsupported/,
+  );
+  assert.throws(
+    () => solveWithFallback([sp3Day177()], nav, { ...request, maxGdop: 30 }, {}),
+    /maxGdop is unsupported/,
+  );
 });

@@ -8,8 +8,10 @@
 
 use wasm_bindgen::prelude::*;
 
+#[allow(deprecated)]
 use sidereon_core::astro::coverage::{
-    access_counts, look_angles_batch_with_validity, max_elevation, visible_mask, LookAngleGrid,
+    access_counts, look_angles_batch_with_validity, max_elevation, try_access_counts,
+    try_visible_mask, visible_mask, LookAngleGrid,
 };
 use sidereon_core::astro::sgp4::Satellite;
 use sidereon_core::astro::time::DegradeReason;
@@ -80,6 +82,8 @@ impl CoverageGrid {
     /// Row-major `[satellite][station]` visibility mask at `minElevationDeg`, as a
     /// flat `Uint8Array` of `1` (visible) / `0`. Error cells are not visible.
     /// Delegates to `sidereon_core::astro::coverage::visible_mask`.
+    /// @deprecated Use `tryVisibleMask` to reject invalid thresholds.
+    #[allow(deprecated)]
     #[wasm_bindgen(js_name = visibleMask)]
     pub fn visible_mask(&self, min_elevation_deg: f64) -> Vec<u8> {
         visible_mask(&self.grid, min_elevation_deg)
@@ -91,9 +95,26 @@ impl CoverageGrid {
     /// Number of visible satellites per station at `minElevationDeg`, as a flat
     /// array of length `stationCount`. Delegates to
     /// `sidereon_core::astro::coverage::access_counts`.
+    /// @deprecated Use `tryAccessCounts` to reject invalid thresholds.
+    #[allow(deprecated)]
     #[wasm_bindgen(js_name = accessCounts)]
     pub fn access_counts(&self, min_elevation_deg: f64) -> Vec<usize> {
         access_counts(&self.grid, min_elevation_deg)
+    }
+
+    /// Checked visibility mask; invalid thresholds return a typed look-angle error.
+    #[wasm_bindgen(js_name = tryVisibleMask)]
+    pub fn try_visible_mask(&self, min_elevation_deg: f64) -> Result<Vec<u8>, JsValue> {
+        try_visible_mask(&self.grid, min_elevation_deg)
+            .map(|rows| rows.into_iter().flatten().map(u8::from).collect())
+            .map_err(crate::sgp4_error::look_angle_error)
+    }
+
+    /// Checked visible-satellite counts per station.
+    #[wasm_bindgen(js_name = tryAccessCounts)]
+    pub fn try_access_counts(&self, min_elevation_deg: f64) -> Result<Vec<usize>, JsValue> {
+        try_access_counts(&self.grid, min_elevation_deg)
+            .map_err(crate::sgp4_error::look_angle_error)
     }
 
     /// Maximum successful elevation per station, degrees, as a flat array of

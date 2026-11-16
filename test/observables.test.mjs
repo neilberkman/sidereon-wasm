@@ -41,6 +41,7 @@ import {
   solveVelocity,
   pseudorangeVariance,
   chi2Inv,
+  chi2Isf,
   sigmas,
   weightVector,
   RaimWeights,
@@ -710,4 +711,8 @@ test("signal loss helpers match the rust oracle bits", () => {
     assert.equal(f64Bits(coherentLossDb(hf(freqErr), hf(intTime))), f64Bits(hf(lossDb)));
   }
   assert.equal(f64Bits(snrPostDb(40.0, 1.0e-3)), f64Bits(10.0));
+});
+
+test("chi2Isf accepts a tail probability directly", () => {
+  assert.ok(Math.abs(chi2Isf(0.05, 2) - 5.991464547107982) < 1e-12);
 });

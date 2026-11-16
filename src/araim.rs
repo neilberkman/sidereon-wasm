@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use sidereon_core::araim::{
-    araim as core_araim, enumerate_fault_modes as core_enumerate_fault_modes,
+    araim as core_araim, enumerate_fault_modes as core_enumerate_fault_modes, AraimError,
     AraimGeometry as CoreAraimGeometry, AraimRow as CoreAraimRow,
     ConstellationIsm as CoreConstellationIsm, IntegrityAllocation as CoreIntegrityAllocation,
     Ism as CoreIsm, SatelliteIsm as CoreSatelliteIsm, SatelliteIsmModel as CoreSatelliteIsmModel,
@@ -142,6 +142,61 @@ fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     value
         .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
         .map_err(|e| engine_error(format!("failed to serialize result: {e}")))
+}
+
+fn araim_error(error: AraimError) -> JsValue {
+    let kind = match &error {
+        AraimError::UnsupportedConstellation(_) => "unsupportedConstellation",
+        AraimError::InsufficientGeometry => "insufficientGeometry",
+        AraimError::UnmonitorableFaultMass => "unmonitorableFaultMass",
+        AraimError::NumericalFailure => "numericalFailure",
+        AraimError::InvalidIsm => "invalidIsm",
+        AraimError::InvalidAllocation => "invalidAllocation",
+        AraimError::Ut1OutsideCoverage(_) => "ut1OutsideCoverage",
+    };
+    let detail = match &error {
+        AraimError::UnsupportedConstellation(system) => {
+            serde_json::json!({"kind":kind,"system":system.as_str()})
+        }
+        AraimError::Ut1OutsideCoverage(reason) => {
+            serde_json::json!({"kind":kind,"reason":crate::spp::degrade_reason_label(*reason)})
+        }
+        AraimError::InsufficientGeometry
+        | AraimError::UnmonitorableFaultMass
+        | AraimError::NumericalFailure
+        | AraimError::InvalidIsm
+        | AraimError::InvalidAllocation => serde_json::json!({"kind":kind}),
+    };
+    crate::error::error_with_detail("Error", &error.to_string(), &detail)
+}
+
+/// Construct the ADD v3.0 dual-frequency local-error model for one satellite.
+#[wasm_bindgen(js_name = araimSatelliteIsmModelAddV30, unchecked_return_type = "AraimSatelliteIsmModel")]
+pub fn satellite_ism_model_add_v3_0(
+    system: &str,
+    elevation_rad: f64,
+    sigma_ura_m: f64,
+    sigma_ure_m: f64,
+    b_nom_m: f64,
+    p_sat: f64,
+) -> Result<JsValue, JsValue> {
+    let model = CoreSatelliteIsmModel::add_v3_0(
+        parse_system(system)?,
+        elevation_rad,
+        sigma_ura_m,
+        sigma_ure_m,
+        b_nom_m,
+        p_sat,
+    )
+    .map_err(araim_error)?;
+    to_js(&SatelliteIsmModelJs {
+        sigma_ura_m: model.sigma_ura_m,
+        sigma_ure_m: model.sigma_ure_m,
+        effective_sigma_int_m: model.effective_sigma_int_m,
+        effective_sigma_acc_m: model.effective_sigma_acc_m,
+        b_nom_m: model.b_nom_m,
+        p_sat: model.p_sat,
+    })
 }
 
 fn parse_sat(token: &str) -> Result<GnssSatelliteId, JsValue> {
@@ -397,7 +452,7 @@ pub fn araim_fault_modes(
     let ism = parse_ism(ism)?;
     let allocation = parse_allocation(allocation)?;
     let modes: Vec<FaultHypothesisJs> = core_enumerate_fault_modes(&geometry, &ism, &allocation)
-        .map_err(engine_error)?
+        .map_err(araim_error)?
         .into_iter()
         .map(fault_hypothesis_from_core)
         .collect();
@@ -419,6 +474,6 @@ pub fn araim(geometry: JsValue, ism: JsValue, allocation: JsValue) -> Result<JsV
     let geometry = parse_geometry(geometry)?;
     let ism = parse_ism(ism)?;
     let allocation = parse_allocation(allocation)?;
-    let result = core_araim(&geometry, &ism, &allocation).map_err(engine_error)?;
+    let result = core_araim(&geometry, &ism, &allocation).map_err(araim_error)?;
     to_js(&result_from_core(result))
 }

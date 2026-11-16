@@ -3397,7 +3397,8 @@ type ExpectedStaticRtkSolutionKeys =
   | "fixedSolution"
   | "droppedSats"
   | "splitCycleSlipArcs"
-  | "elevationMaskedSats";
+  | "elevationMaskedSats"
+  | "elevationMaskConverged";
 type _WebStaticRtkSolutionKeys = Assert<
   Equal<keyof WebBindings.RtkStaticArcSolution, ExpectedStaticRtkSolutionKeys>
 >;
@@ -3421,7 +3422,12 @@ type _NodeStaticRtkSplitArcs = Assert<
 >;
 
 const staticRtkConfig: WebBindings.RtkStaticArcConfig = {
-  arc: { baseM: [3512900, 780500, 5248700] },
+  arc: {
+    baseM: [3512900, 780500, 5248700],
+    model: { codeSigmaM: 1, phaseSigmaM: 0.01 },
+    baselinePriorSigmaM: 100,
+    ambiguityPriorSigmaM: 1000,
+  },
   opts: {
     float: { positionTolM: 1e-4, ambiguityTolM: 1e-4, maxIterations: 8 },
     fixed: { ratioThreshold: 3, partialAmbiguityResolution: true },
@@ -3457,3 +3463,95 @@ type _GpTleConversion = Assert<
 
 // @ts-expect-error Both CCSDS header values must be strings.
 WebBindings.fitTle([], { ommHeader: { creationDate: "2026-06-17T05:00:00", originator: 42 } });
+
+type _PppRaimFdeStatusUntested = Assert<
+  Equal<Extract<NodeBindings.PppRaimFdeStatus, "untested">, "untested">
+>;
+type _PppVarianceEstimated = Assert<
+  Equal<NodeBindings.PppFloatSolution["posteriorVarianceFactorEstimated"], boolean>
+>;
+type _RtkHoldReleaseReasons = Assert<
+  Equal<
+    NodeBindings.RtkArcEpochSolution["releasedHolds"][number]["reason"],
+    "unheldReference" | "incompatibleWavelengths"
+  >
+>;
+type _JointGateProbability = Assert<
+  Equal<NodeBindings.UkfUpdateOptions["jointInnovationGateProbability"], number | undefined>
+>;
+
+type ExpectedCombinedMetadata = {
+  integerMethod: "wideLaneNarrowLaneLambda";
+  wideLaneFixed: boolean;
+  wideLaneAmbiguitiesCycles: Record<string, number>;
+  droppedCycleSlipSats: string[];
+  splitCycleSlipArcs: NodeBindings.RtkCycleSlipSplitArc[];
+};
+type _CombinedMetadata = Assert<
+  Equal<NodeBindings.RtkWideLaneCombinedResult["metadata"], ExpectedCombinedMetadata>
+>;
+type _CombinedUpdateDynamics = Assert<
+  Equal<
+    NonNullable<NodeBindings.RtkWideLaneCombinedConfig["updateOpts"]>["dynamicsModel"],
+    "constantPosition" | "velocityPropagated" | undefined
+  >
+>;
+type _CombinedUpdateFloatSystems = Assert<
+  Equal<
+    NonNullable<NodeBindings.RtkWideLaneCombinedConfig["updateOpts"]>["floatOnlySystems"],
+    string[] | undefined
+  >
+>;
+type _FdeHasGdop = Assert<Equal<NodeBindings.FdeRequest["maxGdop"], number | undefined>>;
+type _BatchEpochHasNoGdop = Assert<
+  Equal<"maxGdop" extends keyof NodeBindings.SppInputRequest ? true : false, false>
+>;
+
+type _WebCombinedMetadata = Assert<
+  Equal<WebBindings.RtkWideLaneCombinedResult["metadata"], ExpectedCombinedMetadata>
+>;
+type _WebCombinedDynamics = Assert<
+  Equal<
+    NonNullable<WebBindings.RtkWideLaneCombinedConfig["updateOpts"]>["dynamicsModel"],
+    "constantPosition" | "velocityPropagated" | undefined
+  >
+>;
+type _WebCombinedFloatSystems = Assert<
+  Equal<
+    NonNullable<WebBindings.RtkWideLaneCombinedConfig["updateOpts"]>["floatOnlySystems"],
+    string[] | undefined
+  >
+>;
+
+type _WideLaneDoesNotInheritUpdateOpts = Assert<
+  Equal<"updateOpts" extends keyof NodeBindings.RtkWideLaneArcConfig ? true : false, false>
+>;
+type _IonoFreeDoesNotInheritUpdateOpts = Assert<
+  Equal<"updateOpts" extends keyof NodeBindings.RtkIonosphereFreeArcConfig ? true : false, false>
+>;
+type _FdeDoesNotInheritCoarseSearch = Assert<
+  Equal<"coarseSearchSeeds" extends keyof NodeBindings.FdeRequest ? true : false, false>
+>;
+
+type ExpectedRtkUpdateOptions = {
+  holdSigmaM?: number;
+  positionTolM?: number;
+  ambiguityTolM?: number;
+  maxIterations?: number;
+  processNoiseBaselineSigmaM?: number;
+  dynamicsModel?: "constantPosition" | "velocityPropagated";
+  floatOnlySystems?: string[];
+  reportResiduals?: boolean;
+  arArmingSigmaM?: number | null;
+  ratioThreshold?: number;
+};
+type _NodeCombinedUpdateOptions = Assert<
+  Equal<NonNullable<NodeBindings.RtkWideLaneCombinedConfig["updateOpts"]>, ExpectedRtkUpdateOptions>
+>;
+type _WebCombinedUpdateOptions = Assert<
+  Equal<NonNullable<WebBindings.RtkWideLaneCombinedConfig["updateOpts"]>, ExpectedRtkUpdateOptions>
+>;
+
+type _CombinedIntegerRatio = Assert<
+  Equal<NodeBindings.RtkWideLaneCombinedResult["integerRatio"], number | undefined>
+>;

@@ -107,3 +107,13 @@ test("cellError retains the strict UT1 refusal cause", () => {
     cause: { kind: "ut1OutsideCoverage", reason: "beforeCoverage" },
   });
 });
+
+test("checked coverage reductions reject non-finite thresholds", () => {
+  const grid = makeGrid();
+  assert.deepEqual(Array.from(grid.tryVisibleMask(90)), [0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(Array.from(grid.tryAccessCounts(90)), [0, 0, 0]);
+  assert.deepEqual(Array.from(grid.visibleMask(NaN)), [0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(Array.from(grid.accessCounts(NaN)), [0, 0, 0]);
+  assert.throws(() => grid.tryVisibleMask(NaN));
+  assert.throws(() => grid.tryAccessCounts(Infinity));
+});

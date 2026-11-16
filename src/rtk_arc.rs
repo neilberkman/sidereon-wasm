@@ -33,15 +33,16 @@ use sidereon_core::rtk_filter::{
     solve_wide_lane_fixed_rtk_arc, DynamicsModel, FilterState, FixedBaselineSolution,
     FloatBaselineSolution, FloatResidual, FloatSolveStatus, IntegerSearchMeta, IntegerStatus,
     MeasModel, ResidualComponentKind, ResidualValidationMeta, ResidualValidationOutlier,
-    RtkArcConfig, RtkArcEpoch, RtkArcEpochSolution, RtkArcObservation, RtkArcPreprocessing,
-    RtkArcSolution, RtkDualCycleSlipConfig, RtkDualFrequencyArcEpoch, RtkDualFrequencyObservation,
-    RtkDualFrequencySatelliteObservation, RtkIonosphereFreeArcConfig, RtkIonosphereFreeArcSolution,
-    RtkRinexArc, RtkRinexArcOptions, RtkRinexDualArcOptions, RtkRinexDualFrequencyArc,
-    RtkRinexDualSignalPair, RtkRinexReceiver, RtkRinexSignalPair, RtkRinexUnresolvedCarrier,
-    RtkStaticArcConfig, RtkStaticArcSolution, RtkWideLaneArcConfig, RtkWideLaneArcSolution,
-    RtkWideLaneFixedArcConfig, RtkWideLaneFixedArcIntegerMethod, RtkWideLaneFixedArcMetadata,
-    RtkWideLaneFixedArcSolution, RtkWideLaneFixedStaticArcSolution, SearchOpts, StochasticModel,
-    UpdateOpts, ValidatedFixedBaselineSolution, ValidatedFixedSolveOpts, WideLaneOptions,
+    RtkArcConfig, RtkArcEpoch, RtkArcEpochSolution, RtkArcError, RtkArcObservation,
+    RtkArcPreprocessing, RtkArcSolution, RtkDualCycleSlipConfig, RtkDualFrequencyArcEpoch,
+    RtkDualFrequencyObservation, RtkDualFrequencySatelliteObservation, RtkHoldReleaseReason,
+    RtkInputErrorKind, RtkIonosphereFreeArcConfig, RtkIonosphereFreeArcSolution, RtkRinexArc,
+    RtkRinexArcOptions, RtkRinexDualArcOptions, RtkRinexDualFrequencyArc, RtkRinexDualSignalPair,
+    RtkRinexReceiver, RtkRinexSignalPair, RtkRinexUnresolvedCarrier, RtkStaticArcConfig,
+    RtkStaticArcSolution, RtkWideLaneArcConfig, RtkWideLaneArcSolution, RtkWideLaneFixedArcConfig,
+    RtkWideLaneFixedArcIntegerMethod, RtkWideLaneFixedArcMetadata, RtkWideLaneFixedArcSolution,
+    RtkWideLaneFixedStaticArcSolution, SearchOpts, StochasticModel, UpdateError, UpdateOpts,
+    ValidatedFixedBaselineSolution, ValidatedFixedSolveOpts, WideLaneOptions,
 };
 use sidereon_core::GnssSystem;
 
@@ -1574,6 +1575,7 @@ struct StaticArcSolutionObject {
     dropped_sats: Vec<String>,
     split_cycle_slip_arcs: Vec<CycleSlipSplitArcObject>,
     elevation_masked_sats: Vec<String>,
+    elevation_mask_converged: bool,
 }
 
 impl From<&RtkStaticArcSolution> for StaticArcSolutionObject {
@@ -1592,8 +1594,16 @@ impl From<&RtkStaticArcSolution> for StaticArcSolutionObject {
                 .map(CycleSlipSplitArcObject::from)
                 .collect(),
             elevation_masked_sats: s.elevation_masked_sats.clone(),
+            elevation_mask_converged: s.elevation_mask_converged,
         }
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReleasedHoldObject {
+    ambiguity_id: String,
+    reason: &'static str,
 }
 
 #[derive(Serialize)]
@@ -1608,6 +1618,10 @@ struct EpochSolutionObject {
     sd_ambiguities_m: BTreeMap<String, f64>,
     fixed_double_difference_ids: Vec<String>,
     used_satellite_ids: Vec<String>,
+    reference_satellite_ids: Vec<String>,
+    elevation_masked_satellite_ids: Vec<String>,
+    elevation_mask_converged: bool,
+    released_holds: Vec<ReleasedHoldObject>,
     search: Option<SearchSummary>,
     residuals: Vec<ResidualObject>,
     geometry_quality: GeometryQualityJs,
@@ -1625,11 +1639,103 @@ impl From<&RtkArcEpochSolution> for EpochSolutionObject {
             sd_ambiguities_m: e.sd_ambiguities_m.iter().cloned().collect(),
             fixed_double_difference_ids: e.fixed_double_difference_ids.clone(),
             used_satellite_ids: e.used_satellite_ids.clone(),
+            reference_satellite_ids: e.reference_satellite_ids.clone(),
+            elevation_masked_satellite_ids: e.elevation_masked_satellite_ids.clone(),
+            elevation_mask_converged: e.elevation_mask_converged,
+            released_holds: e
+                .released_holds
+                .iter()
+                .map(|hold| ReleasedHoldObject {
+                    ambiguity_id: hold.ambiguity_id.clone(),
+                    reason: match hold.reason {
+                        RtkHoldReleaseReason::UnheldReference => "unheldReference",
+                        RtkHoldReleaseReason::IncompatibleWavelengths => "incompatibleWavelengths",
+                    },
+                })
+                .collect(),
             search: e.search.as_ref().map(SearchSummary::from),
             residuals: e.residuals.iter().map(ResidualObject::from).collect(),
             geometry_quality: e.geometry_quality.into(),
         }
     }
+}
+
+fn rtk_arc_error(error: RtkArcError) -> JsValue {
+    use serde_json::json;
+    let detail = match &error {
+        RtkArcError::EmptyEpochs => json!({"kind":"emptyEpochs"}),
+        RtkArcError::TooFewSatellites { count, minimum } => {
+            json!({"kind":"tooFewSatellites", "count":count, "minimum":minimum})
+        }
+        RtkArcError::Reference(cause) => json!({"kind":"reference", "cause":format!("{cause:?}")}),
+        RtkArcError::FilterState(cause) => {
+            json!({"kind":"filterState", "cause":format!("{cause:?}")})
+        }
+        RtkArcError::Update {
+            epoch_index,
+            source,
+        } => {
+            let cause = match source {
+                UpdateError::InvalidState { field, kind } => {
+                    json!({"kind":"invalidState", "field":field, "reason":format!("{kind:?}")})
+                }
+                UpdateError::ReferenceChanged {
+                    system,
+                    expected,
+                    actual,
+                } => {
+                    json!({"kind":"referenceChanged", "system":system, "expected":expected, "actual":actual})
+                }
+                UpdateError::UnknownReferenceSystem(system) => {
+                    json!({"kind":"unknownReferenceSystem", "system":system})
+                }
+                UpdateError::MissingSystemReference(system) => {
+                    json!({"kind":"missingSystemReference", "system":system})
+                }
+                UpdateError::MissingAmbiguityColumn(id) => {
+                    json!({"kind":"missingAmbiguityColumn", "ambiguityId":id})
+                }
+                UpdateError::MissingWavelength(id) => {
+                    json!({"kind":"missingWavelength", "ambiguityId":id})
+                }
+                UpdateError::MissingOffset(id) => json!({"kind":"missingOffset", "ambiguityId":id}),
+                UpdateError::InvalidInput { field, kind } => {
+                    json!({"kind":"invalidInput", "field":field, "reason":match kind {
+                        RtkInputErrorKind::NonFinite => "NonFinite", RtkInputErrorKind::NotPositive => "NotPositive",
+                        RtkInputErrorKind::Negative => "Negative", RtkInputErrorKind::OutOfRange => "OutOfRange",
+                        RtkInputErrorKind::Missing => "Missing", RtkInputErrorKind::FloatParse => "FloatParse",
+                        RtkInputErrorKind::IntParse => "IntParse", RtkInputErrorKind::InvalidCivilDate => "InvalidCivilDate",
+                        RtkInputErrorKind::InvalidCivilTime => "InvalidCivilTime",
+                    }})
+                }
+                UpdateError::SingularGeometry => json!({"kind":"singularGeometry"}),
+                UpdateError::ReceiverAntenna(cause) => {
+                    json!({"kind":"receiverAntenna", "cause":format!("{cause:?}")})
+                }
+                UpdateError::Ils(cause) => json!({"kind":"ils", "cause":format!("{cause:?}")}),
+            };
+            json!({"kind":"update", "epochIndex":epoch_index, "cause":cause})
+        }
+        RtkArcError::InvalidEpochTime { epoch_index } => {
+            json!({"kind":"invalidEpochTime", "epochIndex":epoch_index})
+        }
+        RtkArcError::MissingPosition {
+            epoch_index,
+            satellite_id,
+        } => {
+            json!({"kind":"missingPosition", "epochIndex":epoch_index, "satelliteId":satellite_id})
+        }
+        RtkArcError::CycleSlipPrep(cause) => {
+            json!({"kind":"cycleSlipPrep", "cause":format!("{cause:?}")})
+        }
+        RtkArcError::CodeSmoothing(cause) => {
+            json!({"kind":"codeSmoothing", "cause":format!("{cause:?}")})
+        }
+        RtkArcError::ElevationMask(cause) => {
+            json!({"kind":"elevationMask", "cause":format!("{cause:?}")})
+        }
+    };
+    crate::error::error_with_detail("Error", &error.to_string(), &detail)
 }
 
 /// The final carried filter state (the serializable streaming ABI).
@@ -2202,6 +2308,32 @@ pub fn solve_wide_lane_fixed_rinex_rtk_baseline_js(
     }
 }
 
+/// Solve a static wide-lane / ionosphere-free baseline from dual-frequency arc epochs.
+/// Configuration follows `solveWideLaneFixedRinexRtkBaseline` without its RINEX options.
+#[wasm_bindgen(js_name = solveWideLaneFixedRtkArc)]
+pub fn solve_wide_lane_fixed_rtk_arc_js(
+    epochs: JsValue,
+    config: JsValue,
+) -> Result<JsValue, JsValue> {
+    let epochs = parse_dual_frequency_arc_epochs(epochs)?;
+    let cfg: RinexWideLaneFixedBaselineConfigInput = serde_wasm_bindgen::from_value(config)
+        .map_err(|e| type_error(&format!("invalid wide-lane fixed RTK config: {e}")))?;
+    let core_epochs: Vec<_> = epochs
+        .iter()
+        .map(DualFrequencyArcEpochInput::to_core)
+        .collect();
+    match solve_wide_lane_fixed_rtk_arc(&core_epochs, &cfg.combined_core()?)
+        .map_err(engine_error)?
+    {
+        RtkWideLaneFixedArcSolution::Static(solution) => {
+            serialize_to_js(&WideLaneFixedStaticArcSolutionObject::from(&solution))
+        }
+        RtkWideLaneFixedArcSolution::Sequential(_) => Err(type_error(
+            "wide-lane static configuration returned a sequential solution",
+        )),
+    }
+}
+
 /// Solve a sequential RTK baseline arc from raw rover+base epochs.
 ///
 /// `epochs` is an array of `RtkArcEpoch` objects and `config` an `RtkArcConfig`
@@ -2217,7 +2349,7 @@ pub fn solve_rtk_arc_js(epochs: JsValue, config: JsValue) -> Result<JsValue, JsV
         .map_err(|e| type_error(&format!("invalid RTK arc config: {e}")))?;
 
     let core_epochs: Vec<RtkArcEpoch> = epochs.iter().map(ArcEpochInput::to_core).collect();
-    let solution = solve_rtk_arc(&core_epochs, &cfg.to_core()?).map_err(engine_error)?;
+    let solution = solve_rtk_arc(&core_epochs, &cfg.to_core()?).map_err(rtk_arc_error)?;
 
     serialize_to_js(&ArcSolutionObject::from(&solution))
 }

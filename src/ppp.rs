@@ -1275,6 +1275,12 @@ impl PppFloatSolution {
         self.inner.posterior_variance_factor
     }
 
+    /// Whether the posterior variance factor was estimated from residual redundancy.
+    #[wasm_bindgen(getter, js_name = posteriorVarianceFactorEstimated)]
+    pub fn posterior_variance_factor_estimated(&self) -> bool {
+        self.inner.posterior_variance_factor_estimated
+    }
+
     #[wasm_bindgen(getter, js_name = positionCovarianceScaleFactor)]
     pub fn position_covariance_scale_factor(&self) -> f64 {
         self.inner.position_covariance_scale_factor
@@ -1487,6 +1493,12 @@ impl PppFixedSolution {
     #[wasm_bindgen(getter, js_name = posteriorVarianceFactor)]
     pub fn posterior_variance_factor(&self) -> f64 {
         self.inner.posterior_variance_factor
+    }
+
+    /// Whether the posterior variance factor was estimated from residual redundancy.
+    #[wasm_bindgen(getter, js_name = posteriorVarianceFactorEstimated)]
+    pub fn posterior_variance_factor_estimated(&self) -> bool {
+        self.inner.posterior_variance_factor_estimated
     }
 
     #[wasm_bindgen(getter, js_name = positionCovarianceScaleFactor)]
