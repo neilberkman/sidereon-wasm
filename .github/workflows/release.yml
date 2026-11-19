@@ -108,7 +108,10 @@ jobs:
 
           installed=false
           for attempt in {1..30}; do
-            if npm install --save-exact --ignore-scripts --no-audit --no-fund \
+            # --prefer-online revalidates the cached package metadata on every
+            # attempt; without it npm reuses the pre-release packument for its
+            # five-minute max-age and every retry in that window fails.
+            if npm install --prefer-online --save-exact --ignore-scripts --no-audit --no-fund \
               "@neilberkman/sidereon@$version"; then
               installed=true
               break
