@@ -7,6 +7,6 @@ publish = false
 [workspace]
 
 [dependencies]
-sidereon = { version = "=4.0.0" }
-sidereon-core = { version = "=4.0.0" }
+sidereon = { version = "=4.1.0" }
+sidereon-core = { version = "=4.1.0" }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }

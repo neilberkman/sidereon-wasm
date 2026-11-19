@@ -2,8 +2,8 @@
 //! week/TOW, leap-second / EOP table provenance, and batched coordinate
 //! transforms.
 //!
-//! Every instant's TT/UT1/TDB scales come from the parity-critical
-//! `UtcInstant::time_scales` path, and every transform is the engine's own
+//! Every instant's TT/UT1/TDB scales come from the
+//! `UtcInstant::try_time_scales` path, and every transform is the engine's own
 //! `*_compute`, so the numbers are bit-identical to what `sidereon-core`
 //! produces. The batched transforms take a flat row-major `Float64Array`
 //! (`n`-by-3) of states plus a `BigInt64Array` of unix-microsecond epochs and

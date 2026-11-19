@@ -311,3 +311,105 @@ test("visibleFromSatellites maps ids to catalogNumber and rejects a length misma
 
   assert.throws(() => visibleFromSatellites(sats(), ["only-one"], STATION(), EPOCH, -90.0));
 });
+
+test("Constellation.groundTracks and groundTrackOutcomes match Tle.groundTrack bit-for-bit", () => {
+  const fleet = new Constellation(sats());
+  const epochs = bigints(issEpochs());
+  const tracks = fleet.groundTracks(epochs);
+  const outcomes = fleet.groundTrackOutcomes(epochs);
+  assert.equal(tracks.length, 3);
+  assert.equal(outcomes.length, 3);
+
+  sats().forEach((sat, index) => {
+    const single = sat.groundTrack(epochs);
+    const batch = tracks[index];
+    const outcome = outcomes[index];
+    assert.equal(outcome.satelliteIndex, index);
+    assert.equal(outcome.error, null);
+    assert.equal(batch.epochCount, single.epochCount);
+    for (let j = 0; j < single.epochCount; j++) {
+      eqBits(batch.latDeg[j], single.latDeg[j], `lat mismatch sat ${index} epoch ${j}`);
+      eqBits(batch.lonDeg[j], single.lonDeg[j], `lon mismatch sat ${index} epoch ${j}`);
+      eqBits(batch.altKm[j], single.altKm[j], `alt mismatch sat ${index} epoch ${j}`);
+      eqBits(
+        outcome.value.latitudeDeg[j],
+        single.latDeg[j],
+        `outcome lat mismatch sat ${index} epoch ${j}`,
+      );
+      eqBits(
+        outcome.value.longitudeDeg[j],
+        single.lonDeg[j],
+        `outcome lon mismatch sat ${index} epoch ${j}`,
+      );
+      eqBits(
+        outcome.value.altitudeKm[j],
+        single.altKm[j],
+        `outcome alt mismatch sat ${index} epoch ${j}`,
+      );
+    }
+    batch.free();
+    single.free();
+  });
+  fleet.free();
+});
+
+test("pass search, batch look-angle, batch ground-track, and visible reject out-of-range UTC instants with RangeError", () => {
+  const BELOW_CIVIL_UTC = -62_167_219_200_000_001n;
+  const ABOVE_CIVIL_UTC = 253_402_300_800_000_000n;
+  const MIN_I64 = -9_223_372_036_854_775_808n;
+  const MAX_I64 = 9_223_372_036_854_775_807n;
+  const assertCivilRangeError = (fn, expectedArg) => {
+    assert.throws(fn, (error) => {
+      assert.equal(error instanceof RangeError, true);
+      assert.match(error.message, /UTC civil year from 0 through 9999/);
+      assert.ok(
+        error.message.includes(expectedArg),
+        `expected RangeError message "${error.message}" to name ${expectedArg}`,
+      );
+      return true;
+    });
+  };
+
+  const fleet = new Constellation(sats());
+  const tle = new Tle(ISS.l1, ISS.l2, "improved");
+  const station = STATION();
+
+  // Pass search with start outside range and with end outside range.
+  for (const [start, end, expectedArg] of [
+    [BELOW_CIVIL_UTC, EPOCH, "startUnixUs"],
+    [EPOCH, ABOVE_CIVIL_UTC, "endUnixUs"],
+    [MIN_I64, EPOCH, "startUnixUs"],
+    [EPOCH, MAX_I64, "endUnixUs"],
+  ]) {
+    assertCivilRangeError(() => tle.findPasses(station, start, end), expectedArg);
+    assertCivilRangeError(
+      () =>
+        tle.findPassesWithValidity(
+          station,
+          start,
+          end,
+          undefined,
+          undefined,
+          undefined,
+          "permissive",
+        ),
+      expectedArg,
+    );
+    assertCivilRangeError(() => fleet.passes(station, start, end), expectedArg);
+    assertCivilRangeError(() => fleet.passOutcomes(station, start, end), expectedArg);
+  }
+
+  // Batch look-angle, batch ground-track, and visibility at out-of-range instants.
+  for (const outOfRange of [BELOW_CIVIL_UTC, ABOVE_CIVIL_UTC, MIN_I64, MAX_I64]) {
+    const epochs = BigInt64Array.from([outOfRange]);
+    assertCivilRangeError(() => fleet.lookAngleArcs(station, epochs), "epochsUnixUs[0]");
+    assertCivilRangeError(() => fleet.lookAngleArcOutcomes(station, epochs), "epochsUnixUs[0]");
+    assertCivilRangeError(() => fleet.groundTracks(epochs), "epochsUnixUs[0]");
+    assertCivilRangeError(() => fleet.groundTrackOutcomes(epochs), "epochsUnixUs[0]");
+    assertCivilRangeError(() => fleet.visible(station, outOfRange, -90.0), "epochUnixUs");
+  }
+
+  tle.free();
+  station.free();
+  fleet.free();
+});

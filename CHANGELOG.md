@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 4.1.0 - 2026-11-19
+
+### Changed
+
+- Engine update: `sidereon` / `sidereon-core` 4.1.0.
+- `Constellation.groundTracks`, `groundTrackOutcomes`, `lookAngleArcs`, `lookAngleArcOutcomes`, `visible` and `coverageLookAngles` evaluate each epoch's Earth-orientation transform once for all satellites instead of once per satellite; results are unchanged bit for bit. Median times in Node:
+  - `groundTracks`, 143 satellites × 51 epochs: 559.8 ms → 42.1 ms (40 satellites: 167.0 ms → 20.2 ms).
+  - `lookAngleArcs`, 143 satellites × 51 epochs: 474.3 ms → 37.3 ms (40 satellites: 146.9 ms → 23.2 ms).
+  - `visible`, 143 satellites at one epoch: 8.83 ms → 0.16 ms.
+
 ## 4.0.0 - 2026-11-16
 
 ### Added
@@ -53,6 +63,7 @@
 
 - Adds `Sp3.toSp3StringWithRounding()`, returning SP3 text and maximum absolute
   record-field changes in SI units, while keeping `toSp3String()` strict.
+
 ### Fixed
 
 - Writes source-grid-derived SP3 merge means at record precision and keeps the
@@ -157,7 +168,7 @@ restates an engine change as it reaches the JavaScript API.
   from the first configured pair whose carriers resolve, and a satellite no
   pair resolves for is left out of that epoch and listed in the new
   `unresolvedCarriers` as `{ receiver, epochIndex, satelliteId,
-  observableCode }`.
+observableCode }`.
 - **Breaking.** A PPP observation whose code is zero or negative is no longer
   solved at a meaningless transmission epoch. It is left out and reported in
   the new `unplacedObservations` on `PppFloatSolution` and
@@ -202,8 +213,8 @@ restates an engine change as it reaches the JavaScript API.
   a spent robust budget reports `converged: false`. The status is typed as the
   new `SolveStatus` union, and the metadata as `StaticSolveMetadata`.
 - `SppSolution.metadata` reports how the solve ran and ended, `{ iterations,
-  converged, status, outerIterations, finalRobustScaleM, ionosphereApplied,
-  troposphereApplied, usedCount }` (`SppSolveMetadata`).
+converged, status, outerIterations, finalRobustScaleM, ionosphereApplied,
+troposphereApplied, usedCount }` (`SppSolveMetadata`).
 - The SPP carrier check applies only when a frequency-dependent term is
   applied, so a solve without the ionosphere correction no longer leaves out a
   satellite for want of a carrier. The PPP auto-init SPP seed passes each
@@ -335,7 +346,7 @@ restates an engine change as it reaches the JavaScript API.
   matrix is refused. `matrix` returns the stored values unvalidated and
   `toValidatedMatrix()` checks positive semidefiniteness.
 - **Breaking.** `OemSegment(metadata, states, covariances, dataComments?,
-  covarianceComments?)` throws on invalid input. `skippedStates` is an array of
+covarianceComments?)` throws on invalid input. `skippedStates` is an array of
   `{ line, segment, text, reason, itemCount, field, issue }`, with the count in
   `skippedStateCount`.
 - Every record the messages define is retained: OMM `classification`,
@@ -361,7 +372,7 @@ restates an engine change as it reaches the JavaScript API.
 - **Breaking.** Bias lookups (`codeOsbSeconds`, `phaseOsbCycles`,
   `codeDsbSeconds`, `codeBiasModelM`) return a `BiasLookup`,
   `{ status, value, records, overridden, productScale, queryScale,
-  observable }`, instead of a number or `undefined`, so an absent, ambiguous or
+observable }`, instead of a number or `undefined`, so an absent, ambiguous or
   out-of-scale lookup is distinct from a value. `phaseOsbCycles` takes
   `timeScale?` and `carrierHz?`.
 - Bias records carry `family`, `unit`, `svn`, `validFrom`, `validUntil`,
@@ -397,8 +408,8 @@ restates an engine change as it reaches the JavaScript API.
   departs from RTCM 3. It returned the frames it could read. Use
   `decodeRtcmStream` for noisy input.
 - **Breaking.** `decodeRtcmStream(bytes, policy?)`, `decodeRtcmFrame(bytes,
-  policy?)`, `encodeRtcm(message, policy?)` and `encodeRtcmFrame(message,
-  policy?, reserved?)` take a policy, `"strict"` (the default) or
+policy?)`, `encodeRtcm(message, policy?)` and `encodeRtcmFrame(message,
+policy?, reserved?)` take a policy, `"strict"` (the default) or
   `"lenient"`. Messages carry `trailingBits`, MSM messages `signalMask` and
   GLONASS fields `negativeZero`, so a lenient decode re-encodes byte for byte.
   Stream diagnostics gain `crcFailures` and `departures`, and skipped frames
@@ -455,6 +466,7 @@ restates an engine change as it reaches the JavaScript API.
   - a map inheriting an earlier map's `EXPONENT`, reported as `EXPONENT_CARRIED_INTO_MAP`
 
   `slantDelay` also interpolates across the longitude seam of a grid that closes the circle, and returns a value along a line of sight through a pole.
+
 - **Breaking.** The reader refuses what it used to misplace or pass over:
   - a `MAP DIMENSION 3` product, or an `HGT1 / HGT2 / DHGT` giving several heights
   - a band whose latitude, longitude or height is not a grid node
@@ -514,6 +526,7 @@ restates an engine change as it reaches the JavaScript API.
   - in the file header only: `RINEX VERSION / TYPE`, `TIME OF FIRST OBS`, `TIME OF LAST OBS`, `LEAP SECONDS` and `# OF SATELLITES`
 
   Two scale factors for one code and two channels for one GLONASS slot are refused too. The later record used to win. Conflicting phase shifts or GLONASS biases are kept and read as `ambiguous` instead of being refused.
+
 - Flag 6 epochs are read as cycle slips into `ObsEpoch.cycleSlips` and `cycleSlipSatellites`, with `satellites` and `observations` empty, and `rinexObsCycleSlipFlag()` returns the flag. New `ObsEpoch` getters: `observations`, `rcvClockOffsetS`, `epochPicoseconds`, `declaredRecordCount` and `specialRecords` (the records an event carried, verbatim; they used to be discarded).
 - New `ObsHeader` getters: `rinex2Types`, `rinex2System`, `programRunByDate`, `comments`, `markerNumber`, `markerType`, `observer`, `agency`, `receiver`, `antenna`, `timeOfLastObsEpoch`, `timeOfLastObsScale`, `declaredSatelliteCount`, `prnObsCounts`, `scaleFactors`, `signalStrengthUnit` and `unretainedHeaderLabels`. `leapSeconds` is an `ObsLeapSeconds` with `bigint` fields and a `timeSystem` that keeps blank and `GPS` distinct. `RinexObs.skippedRecords` is also new.
 - `ObsHeader.glonassCodPhsBis` returns the record as written, with `biasM: null` for a blank bias. A header with a blank bias used to be refused. `glonassCodePhaseBias(code)` returns `available`, `none`, `unknown` or `ambiguous`.
@@ -610,6 +623,7 @@ restates an engine change as it reaches the JavaScript API.
   - a comment in which a word `ORDER` is followed by labels to the end of the line
 
   A header naming a label outside the eleven constituents, repeating one, or holding another count is refused with a `BlqParseError`.
+
 - The BLQ writer throws a `BlqWriteError` with the zero-based `block` index for a block that would not read back unchanged:
   - a station that is empty, holds a line break or surrounding whitespace, or reads as a comment, header or row
   - a non-finite coefficient
