@@ -1,7 +1,7 @@
 //! Bodies binding: analytic Sun and Moon positions over an epoch grid.
 //!
-//! Each epoch's precise time scales come from the parity-critical
-//! `UtcInstant::time_scales` path and the positions are exactly
+//! Each epoch's precise time scales come from the
+//! `UtcInstant::try_time_scales` path and the positions are exactly
 //! `sun_moon_eci_at` / `sun_moon_ecef`, so the numbers are bit-identical to what
 //! `sidereon-core` produces. The per-epoch loop runs inside Rust.
 

@@ -7,10 +7,10 @@ use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
 use sidereon::passes::{
-    find_passes_for_satellite, ground_track, look_angle_arc, look_angle_batch_serial,
-    propagate_teme_arc, propagate_teme_batch_serial, visible_from_satellites,
-    GroundStation as CoreGroundStation, PassFinderOptions, SatellitePass as CoreSatellitePass,
-    VisibleSatellite as CoreVisibleSatellite,
+    find_passes_for_satellite, ground_track, ground_track_batch_serial, look_angle_arc,
+    look_angle_batch_serial, propagate_teme_arc, propagate_teme_batch_serial,
+    visible_from_satellites, GroundStation as CoreGroundStation, PassFinderOptions,
+    SatellitePass as CoreSatellitePass, VisibleSatellite as CoreVisibleSatellite,
 };
 use sidereon::sgp4::{
     fit_tle as core_fit_tle, parse_tle_file_with_policy, DecayLatch as CoreDecayLatch, FitConfig,
@@ -1829,10 +1829,10 @@ impl Constellation {
     #[wasm_bindgen(js_name = groundTracks)]
     pub fn ground_tracks(&self, epochs_unix_us: &[i64]) -> Result<Vec<GroundTrack>, JsValue> {
         let datetimes = utc_instants("epochsUnixUs", epochs_unix_us)?;
-        Ok(self
-            .satellites
-            .iter()
-            .map(|satellite| match ground_track(satellite, &datetimes) {
+        let results = ground_track_batch_serial(&self.satellites, &datetimes);
+        Ok(results
+            .into_iter()
+            .map(|track| match track {
                 Ok(points) => GroundTrack {
                     latitude_deg: points.iter().map(|g| g.lat_rad.to_degrees()).collect(),
                     longitude_deg: points.iter().map(|g| g.lon_rad.to_degrees()).collect(),
@@ -1854,14 +1854,17 @@ impl Constellation {
     pub fn ground_track_outcomes(&self, epochs_unix_us: &[i64]) -> Result<js_sys::Array, JsValue> {
         let datetimes = utc_instants("epochsUnixUs", epochs_unix_us)?;
         let outcomes = js_sys::Array::new();
-        for (satellite_index, satellite) in self.satellites.iter().enumerate() {
+        for (satellite_index, result) in ground_track_batch_serial(&self.satellites, &datetimes)
+            .into_iter()
+            .enumerate()
+        {
             let outcome = js_sys::Object::new();
             js_sys::Reflect::set(
                 &outcome,
                 &JsValue::from_str("satelliteIndex"),
                 &JsValue::from_f64(satellite_index as f64),
             )?;
-            match ground_track(satellite, &datetimes) {
+            match result {
                 Ok(points) => {
                     let value = js_sys::Object::new();
                     let latitude = js_sys::Float64Array::from(

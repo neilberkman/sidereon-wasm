@@ -519,7 +519,7 @@ fn spp_trace_section() -> Value {
 fn raim_solution_section() -> Value {
     let sp3 = load_sp3(GBM_SP3);
     let t_rx = sp3.epochs_j2000_seconds()[12];
-    let rx = [3_582_105.291, 532_589.7313, 5_232_754.8054];
+    let rx = [3_582_105.291, 532_589.731_3, 5_232_754.805_4];
     let observations: Vec<(GnssSatelliteId, f64)> = ["G05", "G07", "G08", "G10", "G13", "G15"]
         .iter()
         .map(|token| {
@@ -562,7 +562,7 @@ fn raim_solution_section() -> Value {
 fn nav_store_section() -> Value {
     let text = fixture_text("nav/BRD400DLR_S_20261800000_01H_MN_trim.rnx");
     let store = BroadcastEphemeris::from_nav(&text).expect("broadcast store");
-    let record = store.records()[0].clone();
+    let record = store.records()[0];
     let gps_epoch = j2000_seconds(1980, 1, 6, 0, 0, 0.0);
     let query = gps_epoch + f64::from(record.week) * 604_800.0 + record.elements.toe_sow;
     let (position, clock) = store
@@ -1013,7 +1013,7 @@ fn rtk_static_reference_section() -> Value {
         "obs/WTZZ00DEU_R_20201770000_01D_30S_MO_120epoch.rnx",
     ))
     .expect("rover OBS");
-    let marker = [4_075_580.3111, 931_854.0543, 4_801_568.2808];
+    let marker = [4_075_580.311_1, 931_854.054_3, 4_801_568.280_8];
     let delta = base_obs.header.antenna_delta_hen_m.expect("antenna delta");
     assert_eq!((delta[1], delta[2]), (0.0, 0.0));
     let radius = norm3(marker);
@@ -1375,14 +1375,14 @@ fn precise_artifact_section() -> Value {
     })
 }
 
-const CORE_REV: &str = "3132eeac13ebf30f63766fc608aa9aae9258dd3d";
+const CORE_REV: &str = "012c6c38ea054b61293e83fc95ac60ff6d11fb8b";
 
 fn main() {
     let rev = CORE_REV;
     let (velocity, range_rates) = velocity_section();
     let doc = json!({
         "source": format!(
-            "sidereon-core 4.0.0 ({rev})"
+            "sidereon-core 4.1.0 ({rev})"
         ),
         "coreRev": rev,
         "velocity": velocity,

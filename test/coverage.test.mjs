@@ -117,3 +117,25 @@ test("checked coverage reductions reject non-finite thresholds", () => {
   assert.throws(() => grid.tryVisibleMask(NaN));
   assert.throws(() => grid.tryAccessCounts(Infinity));
 });
+
+test("coverageLookAngles rejects out-of-civil-range epochs with RangeError", () => {
+  const BELOW_CIVIL_UTC = -62_167_219_200_000_001n;
+  const ABOVE_CIVIL_UTC = 253_402_300_800_000_000n;
+  const MIN_I64 = -9_223_372_036_854_775_808n;
+  const MAX_I64 = 9_223_372_036_854_775_807n;
+
+  for (const epoch of [BELOW_CIVIL_UTC, ABOVE_CIVIL_UTC, MIN_I64, MAX_I64]) {
+    assert.throws(
+      () =>
+        coverageLookAngles([new Tle(ISS_L1, ISS_L2)], [new GroundStation(51.5, -0.1, 11.0)], epoch),
+      (error) => {
+        assert.equal(error instanceof RangeError, true);
+        assert.match(
+          error.message,
+          /epochUnixUs must represent a UTC civil year from 0 through 9999/,
+        );
+        return true;
+      },
+    );
+  }
+});

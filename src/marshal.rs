@@ -50,7 +50,13 @@ pub fn utc_instants(name: &str, epochs_unix_us: &[i64]) -> Result<Vec<UtcInstant
 
 /// Resolve civil time scales only after validating the supported UTC range.
 pub fn utc_time_scales(name: &str, unix_us: i64) -> Result<TimeScales, JsValue> {
-    Ok(utc_instant(name, unix_us)?.time_scales())
+    utc_instant(name, unix_us)?
+        .try_time_scales()
+        .ok_or_else(|| {
+            range_error(&format!(
+                "{name} must represent a UTC civil year from 0 through 9999"
+            ))
+        })
 }
 
 /// Read a length-3 vector, rejecting a wrong length (`TypeError`).
