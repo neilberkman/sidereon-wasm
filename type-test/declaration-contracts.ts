@@ -3555,3 +3555,157 @@ type _WebCombinedUpdateOptions = Assert<
 type _CombinedIntegerRatio = Assert<
   Equal<NodeBindings.RtkWideLaneCombinedResult["integerRatio"], number | undefined>
 >;
+
+function astrodynamicsContracts(
+  position: Float64Array,
+  state: NodeBindings.CartesianState,
+  context: NodeBindings.PropagationContext,
+  sp3: NodeBindings.Sp3,
+  trajectory: NodeBindings.OrbitTrajectory,
+  webProduct: WebBindings.Sp3,
+  webTrajectory: WebBindings.OrbitTrajectory,
+) {
+  const coeff = NodeBindings.Ecom2D2b1Coefficients.fromArray(new Float64Array(7));
+  const ecom = NodeBindings.Ecom2SolarRadiationPressure.d2b1(coeff);
+  const acceleration: Float64Array = ecom.acceleration(state, context);
+  const parameters: NodeBindings.ForceParameter[] = ecom.parameters();
+  const partials: NodeBindings.AccelerationPartials = ecom.accelerationPartials(
+    new Float64Array(7),
+    state,
+    context,
+  );
+  const force = ecom.asForceModel();
+  const equations = new NodeBindings.VariationalEquations(
+    force,
+    new Float64Array(7),
+    new Float64Array([0]),
+  );
+  const propagation: NodeBindings.VariationalState[] = NodeBindings.propagateVariational(
+    state,
+    [new NodeBindings.VariationalEpoch(0, 0)],
+    equations,
+    "dp54",
+    { maxSteps: 1000 },
+    context,
+  );
+  const request: NodeBindings.PropagateStateRequest = {
+    epochS: 0,
+    positionKm: position,
+    velocityKmS: position,
+    timesS: [0],
+    forceModel: "two_body",
+    additionalForces: [force],
+    context,
+  };
+  const ephemeris: NodeBindings.Ephemeris = NodeBindings.propagateState(request);
+  const options = new NodeBindings.OrbitScoreOptions(new Float64Array([0, 600]));
+  const score: NodeBindings.OrbitScoreReport = NodeBindings.scoreOrbit(
+    trajectory,
+    sp3,
+    ["G02"],
+    options,
+  );
+  const webOptions = new WebBindings.OrbitScoreOptions(new Float64Array([0, 600]));
+  const webScore: WebBindings.OrbitScoreReport = WebBindings.scoreOrbit(
+    webTrajectory,
+    webProduct,
+    ["G02"],
+    webOptions,
+  );
+  const gravity = NodeBindings.IcgemGravityField.fromBytes(new Uint8Array());
+  const term: NodeBindings.IcgemTimeVariableTerm | undefined = gravity.timeVariableTerms()[0];
+  const ephemerisConstants: Map<string, number> = NodeBindings.DeEphemeris.fromBytes(
+    new Uint8Array(),
+  ).constants();
+  const fitOptions = new NodeBindings.OrbitParameterFitOptions({ additionalForces: [force] });
+  const fitForce: NodeBindings.ForceModel = fitOptions.forceModel;
+  const model = new NodeBindings.StatePropagator(state, { integratorOptions: { maxSteps: 1000 } });
+  const dense: NodeBindings.DenseOutput | undefined = model.propagateToWithContext(60, context, {
+    additionalForces: [fitForce],
+    denseOutput: true,
+  }).dense;
+  NodeBindings.propagateState({
+    ...request,
+    denseOutput: true,
+    drag: { bcFactorM2Kg: 0.02, extraDragKey: true, spaceWeather: { ap: 12, extraWeatherKey: 1 } },
+  });
+  const weather = NodeBindings.parseSpaceWeather(new Uint8Array());
+  // @ts-expect-error Table-driven sampled propagation rejects unknown keys.
+  NodeBindings.propagateStateWithSpaceWeather({ ...request, denseOutput: true }, weather, context);
+  // @ts-expect-error Fit integration options do not include dense output.
+  new NodeBindings.OrbitParameterFitOptions({ integratorOptions: { denseOutput: true } });
+  const releasedFitOptions: NodeBindings.OrbitFitOptions = {
+    integratorOptions: { initialStepS: 60, extraNumericOption: 1, denseOutput: 1 },
+  };
+  void releasedFitOptions;
+  // @ts-expect-error The force list takes shared force handles.
+  NodeBindings.propagateState({ ...request, additionalForces: [ecom] });
+  void dense;
+  const epoch = NodeBindings.ClockInstant.fromNanos(NodeBindings.TimeScale.Tt, 10n);
+  const samples = [new NodeBindings.InertialPositionSample(epoch, position)];
+  const fit: NodeBindings.OrbitParameterFit = NodeBindings.fitInertialOrbitParameters(
+    samples,
+    "G02",
+    undefined,
+    fitOptions,
+  );
+  // @ts-expect-error The geometry requires a known Earth shadow model.
+  NodeBindings.shadowFractionWithModelAndMoon(position, position, position, "sphere");
+  // @ts-expect-error A DE file is binary.
+  NodeBindings.DeEphemeris.fromBytes("DE440");
+  return {
+    acceleration,
+    parameters,
+    partials,
+    propagation,
+    ephemeris,
+    score,
+    webScore,
+    term,
+    ephemerisConstants,
+    fit,
+  };
+}
+void astrodynamicsContracts;
+
+export function orbitAttitudeDeclarations(
+  nav: NodeBindings.BroadcastEphemeris,
+  precise: NodeBindings.Sp3,
+  source: NodeBindings.OrbitSource | NodeBindings.OrbitTrajectory,
+  orientation: NodeBindings.Iers2010EarthOrientationProvider,
+  ecksteinHechler: NodeBindings.EcksteinHechlerPropagator,
+  brouwerLyddane: NodeBindings.BrouwerLyddanePropagator,
+  ephemeris: NodeBindings.DeEphemeris,
+  propagator: NodeBindings.StatePropagator,
+  context: NodeBindings.PropagationContext,
+  law: NodeBindings.GnssAttitudeLaw,
+) {
+  using sp3 = NodeBindings.OrbitAttitudeTrajectory.fromSp3(precise, "G03", orientation);
+  using broadcast = NodeBindings.OrbitAttitudeTrajectory.fromBroadcast(nav, "G03");
+  using fromSource = NodeBindings.OrbitAttitudeTrajectory.fromOrbitSource(source, "G03");
+  using eh = NodeBindings.OrbitAttitudeTrajectory.fromEcksteinHechler(ecksteinHechler);
+  using bl = NodeBindings.OrbitAttitudeTrajectory.fromBrouwerLyddane(brouwerLyddane);
+  using withStep = sp3.withVelocityHalfStepS(0.5);
+  using withDe = withStep.withDeEphemeris(ephemeris);
+  using result: NodeBindings.PropagationResult = propagator.propagateTo(300);
+  using withContext: NodeBindings.PropagationResult = propagator.propagateToWithContext(
+    300,
+    context,
+  );
+  using finalState: NodeBindings.CartesianState = result.finalState;
+  using dense: NodeBindings.DenseOutput | undefined = withContext.dense;
+  if (dense) {
+    const coverage: Float64Array | undefined = dense.coverageTdbSeconds();
+    using trajectory = NodeBindings.OrbitAttitudeTrajectory.fromDenseOutput(dense);
+    using sample: NodeBindings.AttitudeSample | undefined = trajectory.sample(123);
+    using attitude: NodeBindings.GnssAttitude = NodeBindings.gnssAttitude(law, trajectory, 123);
+  }
+  // @ts-expect-error A numeric epoch is required.
+  NodeBindings.gnssAttitude(law, withDe, "123");
+  // @ts-expect-error Only an IERS 2010 provider is accepted here.
+  NodeBindings.OrbitAttitudeTrajectory.fromSp3(precise, "G03", context);
+  // @ts-expect-error A parsed SP3 product requires fromSp3.
+  NodeBindings.OrbitAttitudeTrajectory.fromOrbitSource(precise, "G03");
+  // @ts-expect-error An interpolant is required.
+  NodeBindings.OrbitAttitudeTrajectory.fromDenseOutput(result);
+}

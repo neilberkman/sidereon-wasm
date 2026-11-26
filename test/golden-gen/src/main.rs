@@ -1375,7 +1375,7 @@ fn precise_artifact_section() -> Value {
     })
 }
 
-const CORE_REV: &str = "012c6c38ea054b61293e83fc95ac60ff6d11fb8b";
+const CORE_REV: &str = "3c61740f5e3d71f930ce40a6504fc9ce320c0fa7";
 
 fn main() {
     let rev = CORE_REV;

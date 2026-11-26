@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added
+
+- JPL DE binary ephemerides, analytic GCRS Sun and Moon positions, and IERS 2010 daily Earth orientation.
+- ICGEM gravity fields with time-variable coefficients and tide-system conversion.
+- Eckstein–Hechler and Brouwer–Lyddane propagation and mean element conversions.
+- Earth and Moon eclipse geometry and gradients, GNSS attitude laws, and instantaneous yaw and solar axes.
+- GNSS attitude and GCRF sampling along SP3, broadcast, scoring, analytic and continuous numerical orbits at TDB seconds past J2000. DP5(4) propagation can return a dense output handle for use as an attitude trajectory.
+- ECOM1, ECOM2, empirical RTN and Earth radiation pressure forces, force parameter partials, variational propagation, and orbit parameter fitting.
+- Prediction horizon scoring against SP3 for predicted products, broadcast ephemerides and sampled trajectories.
+- Numerical state propagation and parameter fitting accept ordered additional force handles alongside built-in gravity and fixed or table-driven drag.
+
+### Changed
+
+- Numerical propagation integrates in elapsed TT. Atmospheric drag uses UT1 orientation and UTC weather epochs.
+- Solar radiation pressure defaults to apparent-disc occultation, WGS84 Earth and lunar occultation. Radiation pressure and third-body gravity use GCRS Sun and Moon vectors.
+- Spherical harmonic gravity uses the Holmes–Featherstone recursion. Precise orbit fits evaluate force models at TDB and keep sample times in their original scales.
+
+### Fixed
+
+- State propagation honors the supplied Earth orientation and ephemeris context. New numerical propagation, fitting, and decay inputs reject unknown keys. `propagateState` and `OrbitFitOptions` retain their existing handling of extra keys, including ignoring `denseOutput`.
+- GNSS attitude trajectory constructors preserve the caller's IERS 2010 provider handle.
+- The engine returns typed force errors for invalid inputs and recovers finite accelerations and partials after intermediate overflow or underflow.
+- J2 gravity follows the Orekit evaluation order.
+
 ## 4.1.0 - 2026-11-19
 
 ### Changed
@@ -737,21 +761,6 @@ policy?, reserved?)` take a policy, `"strict"` (the default) or
 
 - Engine update: sidereon 1.2.0 / sidereon-core 1.2.0, which corrects lenient
   RINEX 4 CNAV decoding and RTKLIB SBAS wire-form preservation.
-
-## Unreleased
-
-### Added
-
-- Lenient RINEX NAV parsing with core skipped-block diagnostics and standalone
-  encoding for arbitrary caller-supplied record lists.
-- Direct, RINEX-version-aware observation-code frequency and wavelength
-  mappings.
-- EMS and RTKLIB SBAS text-log parsers returning timestamped raw message
-  blocks with structured decode access.
-- Added core-backed `secondOfDay`, `dayOfYear`, and `dataDayOfYear` calendar
-  helpers.
-- Added core-backed six-by-six covariance unit conversion, PSD interpolation,
-  and ECI/RTN transform helpers using flat row-major arrays.
 
 ## 1.1.1 - 2026-08-26
 

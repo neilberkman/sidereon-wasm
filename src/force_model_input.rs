@@ -9,9 +9,10 @@ use wasm_bindgen::prelude::*;
 
 use sidereon_core::astro::constants::{J2_EARTH, MU_EARTH, RE_EARTH};
 use sidereon_core::astro::forces::{
-    DragForce as CoreDragForce, DragParameters, SchwarzschildRelativity, SolarRadiationPressure,
-    SolidEarthPoleTideGravity, SolidEarthTideGravity, SpaceWeather, SphericalHarmonicGravityConfig,
-    ThirdBodyBodies, ThirdBodyGravity, TideSystem, ZonalCoefficients, ZonalDegrees, ZonalGravity,
+    DragForce as CoreDragForce, DragParameters, EarthRadiationPressure, SchwarzschildRelativity,
+    SolarRadiationPressure, SolidEarthPoleTideGravity, SolidEarthTideGravity, SpaceWeather,
+    SphericalHarmonicGravityConfig, ThirdBodyBodies, ThirdBodyGravity, TideSystem,
+    ZonalCoefficients, ZonalDegrees, ZonalGravity,
 };
 use sidereon_core::astro::propagator::{
     ForceModelComponents, ForceModelKind, IntegratorKind, IntegratorOptions,
@@ -50,6 +51,7 @@ pub(crate) struct ForceModelObject {
     solar_radiation_pressure: Option<ComponentInput<SolarRadiationPressureInput>>,
     srp: Option<ComponentInput<SolarRadiationPressureInput>>,
     relativity: Option<ComponentInput<RelativityInput>>,
+    earth_radiation_pressure: Option<EarthRadiationPressureInput>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -69,6 +71,28 @@ pub(crate) struct SolarRadiationPressureInput {
     mass_kg: Option<f64>,
     pressure_n_m2: Option<f64>,
     au_km: Option<f64>,
+    shadow_function: Option<f64>,
+    earth_shadow_model: Option<f64>,
+    moon_eclipse: Option<bool>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EarthRadiationPressureInput {
+    cr: f64,
+    area_to_mass_m2_kg: f64,
+    moon_eclipse: Option<bool>,
+}
+
+impl EarthRadiationPressureInput {
+    fn to_core(&self) -> Result<EarthRadiationPressure, JsValue> {
+        let mut model =
+            EarthRadiationPressure::new(self.cr, self.area_to_mass_m2_kg).map_err(engine_error)?;
+        if let Some(enabled) = self.moon_eclipse {
+            model = model.with_moon_eclipse(enabled);
+        }
+        Ok(model)
+    }
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -148,6 +172,7 @@ const FORCE_MODEL_OBJECT_KEYS: &[&str] = &[
     "solarRadiationPressure",
     "srp",
     "relativity",
+    "earthRadiationPressure",
 ];
 const ZONAL_INPUT_KEYS: &[&str] = &[
     "maxDegree",
@@ -170,11 +195,14 @@ const SRP_KEYS: &[&str] = &[
     "massKg",
     "pressureNM2",
     "auKm",
+    "shadowFunction",
+    "earthShadowModel",
+    "moonEclipse",
 ];
 const RELATIVITY_KEYS: &[&str] = &["muKm3S2", "cKmS"];
 const SOLID_EARTH_TIDE_KEYS: &[&str] = &["tideSystem"];
 
-fn reject_force_model_component(
+pub(crate) fn reject_object_property_keys(
     parent: &JsValue,
     key: &str,
     context: &str,
@@ -193,50 +221,56 @@ fn reject_force_model_object(value: &JsValue) -> Result<(), JsValue> {
         return Ok(());
     }
     reject_unknown_keys(value, "force model", FORCE_MODEL_OBJECT_KEYS)?;
-    reject_force_model_component(value, "zonal", "zonal gravity", ZONAL_INPUT_KEYS)?;
+    reject_object_property_keys(value, "zonal", "zonal gravity", ZONAL_INPUT_KEYS)?;
     let zonal = js_sys::Reflect::get(value, &JsValue::from_str("zonal"))
         .map_err(|_| type_error("could not read zonal gravity"))?;
     if !zonal.is_null() && zonal.is_object() {
-        reject_force_model_component(
+        reject_object_property_keys(
             &zonal,
             "coefficients",
             "zonal coefficients",
             ZONAL_COEFFICIENT_KEYS,
         )?;
     }
-    reject_force_model_component(
+    reject_object_property_keys(
         value,
         "sphericalHarmonic",
         "spherical-harmonic gravity",
         SPHERICAL_HARMONIC_KEYS,
     )?;
-    reject_force_model_component(
+    reject_object_property_keys(
         value,
         "geopotential",
         "geopotential gravity",
         SPHERICAL_HARMONIC_KEYS,
     )?;
-    reject_force_model_component(value, "thirdBody", "third-body gravity", THIRD_BODY_KEYS)?;
-    reject_force_model_component(
+    reject_object_property_keys(value, "thirdBody", "third-body gravity", THIRD_BODY_KEYS)?;
+    reject_object_property_keys(
         value,
         "solidEarthTide",
         "solid-earth tide gravity",
         SOLID_EARTH_TIDE_KEYS,
     )?;
-    reject_force_model_component(
+    reject_object_property_keys(
         value,
         "solidEarthPoleTide",
         "solid-earth pole-tide gravity",
         &[],
     )?;
-    reject_force_model_component(
+    reject_object_property_keys(
         value,
         "solarRadiationPressure",
         "solar-radiation pressure",
         SRP_KEYS,
     )?;
-    reject_force_model_component(value, "srp", "solar-radiation pressure", SRP_KEYS)?;
-    reject_force_model_component(value, "relativity", "relativity", RELATIVITY_KEYS)
+    reject_object_property_keys(value, "srp", "solar-radiation pressure", SRP_KEYS)?;
+    reject_object_property_keys(value, "relativity", "relativity", RELATIVITY_KEYS)?;
+    reject_object_property_keys(
+        value,
+        "earthRadiationPressure",
+        "Earth radiation pressure",
+        &["cr", "areaToMassM2Kg", "moonEclipse"],
+    )
 }
 
 pub(crate) fn reject_force_model_property(parent: &JsValue, key: &str) -> Result<(), JsValue> {
@@ -253,6 +287,79 @@ export type ZonalCoefficientsInput = {
   tideSystem?: TideSystem;
 };
 export type SolidEarthTideGravityInput = { tideSystem?: TideSystem };
+
+/** Parameters and eclipse settings for cannonball solar radiation pressure. */
+export type SolarRadiationPressureInput = {
+  cr: number;
+  pressureNM2?: number;
+  auKm?: number;
+  shadowFunction?: ShadowFunction;
+  earthShadowModel?: EarthShadowModel;
+  moonEclipse?: boolean;
+} & ({ areaToMassM2Kg: number } | { areaM2: number; massKg: number });
+
+/** Parameters for Earth albedo and thermal radiation pressure. */
+export interface EarthRadiationPressureInput {
+  cr: number;
+  areaToMassM2Kg: number;
+  moonEclipse?: boolean;
+}
+
+/** Degree and order limits for the embedded EGM96 field. */
+export interface SphericalHarmonicInput {
+  model?: "earth" | "egm96" | "EGM96";
+  maxDegree?: number;
+  maxOrder?: number;
+  degree?: number;
+  order?: number;
+}
+
+/** Options for the embedded zonal gravity model. */
+export interface ZonalGravityInput {
+  maxDegree?: number;
+  j2?: boolean;
+  j3?: boolean;
+  j4?: boolean;
+  j5?: boolean;
+  j6?: boolean;
+  muKm3S2?: number;
+  reKm?: number;
+  coefficients?: ZonalCoefficientsInput;
+}
+
+/** Built-in force configuration for numerical propagation and orbit fitting. */
+export type NumericalForceModel =
+  | "two_body" | "two_body_j2" | "earth_phase_a" | "earthPhaseA" | "earth_phase_b" | "earthPhaseB" | "composite"
+  | { kind: "two_body"; muKm3S2?: number; twoBodyMuKm3S2?: number }
+  | { kind: "two_body_j2"; muKm3S2?: number; twoBodyMuKm3S2?: number; reKm?: number; j2?: number }
+  | { kind: "earth_phase_a" | "earthPhaseA"; solarRadiationPressure?: false | "none" | SolarRadiationPressureInput; srp?: false | "none" | SolarRadiationPressureInput }
+  | { kind: "earth_phase_b" | "earthPhaseB"; maxDegree?: number; maxOrder?: number; degree?: number; order?: number; solarRadiationPressure?: false | "none" | SolarRadiationPressureInput; srp?: false | "none" | SolarRadiationPressureInput }
+  | {
+      kind?: "composite";
+      twoBody?: boolean;
+      twoBodyMuKm3S2?: number;
+      muKm3S2?: number;
+      zonal?: boolean | "none" | "j2" | "J2" | "j2_j6" | "j2ThroughJ6" | "J2ThroughJ6" | ZonalGravityInput;
+      sphericalHarmonic?: boolean | "none" | "earth" | "egm96" | SphericalHarmonicInput;
+      geopotential?: boolean | "none" | "earth" | "egm96" | SphericalHarmonicInput;
+      thirdBody?: boolean | "none" | "sun" | "moon" | "sun_moon" | "sunMoon" | "sun_and_moon" | { sun?: boolean; moon?: boolean; gmSunKm3S2?: number; gmMoonKm3S2?: number };
+      solidEarthTide?: boolean | "none" | "default" | "solidEarthTide" | "solid_earth_tide" | SolidEarthTideGravityInput;
+      solidEarthPoleTide?: boolean | "none" | "default" | "solidEarthPoleTide" | "solid_earth_pole_tide" | Record<string, never>;
+      solarRadiationPressure?: false | "none" | SolarRadiationPressureInput;
+      srp?: false | "none" | SolarRadiationPressureInput;
+      earthRadiationPressure?: EarthRadiationPressureInput;
+      relativity?: boolean | "none" | "schwarzschild" | { muKm3S2?: number; cKmS?: number };
+    };
+
+/** Drag configuration with fixed space weather unless a table is supplied. */
+export type NumericalDragOptions = {
+  cutoffAltitudeKm?: number;
+  spaceWeather?: { f107?: number; f107a?: number; ap?: number };
+} & (
+  | { bcFactorM2Kg: number }
+  | { ballisticCoefficientKgM2: number }
+  | { cd: number; areaM2: number; massKg: number }
+);
 "#;
 
 #[derive(Clone, Copy, Deserialize)]
@@ -337,6 +444,57 @@ impl DragInput {
     }
 }
 
+const INTEGRATOR_OPTION_KEYS: &[&str] = &[
+    "absTol",
+    "relTol",
+    "initialStepS",
+    "minStepS",
+    "maxStepS",
+    "maxSteps",
+];
+
+pub(crate) fn reject_integrator_option_keys(input: &JsValue) -> Result<(), JsValue> {
+    if input.is_null() || input.is_undefined() {
+        return Ok(());
+    }
+    reject_unknown_keys(input, "integrator options", INTEGRATOR_OPTION_KEYS)
+}
+
+pub(crate) fn reject_integrator_options_property(input: &JsValue) -> Result<(), JsValue> {
+    reject_object_property_keys(
+        input,
+        "integratorOptions",
+        "integrator options",
+        INTEGRATOR_OPTION_KEYS,
+    )
+}
+
+pub(crate) fn reject_drag_property(input: &JsValue) -> Result<(), JsValue> {
+    let drag = js_sys::Reflect::get(input, &JsValue::from_str("drag"))?;
+    if drag.is_object() {
+        reject_unknown_keys(
+            &drag,
+            "drag",
+            &[
+                "bcFactorM2Kg",
+                "ballisticCoefficientKgM2",
+                "cd",
+                "areaM2",
+                "massKg",
+                "cutoffAltitudeKm",
+                "spaceWeather",
+            ],
+        )?;
+        reject_object_property_keys(
+            &drag,
+            "spaceWeather",
+            "space weather",
+            &["f107", "f107a", "ap"],
+        )?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub(crate) struct IntegratorOptionsInput {
@@ -358,7 +516,6 @@ impl IntegratorOptionsInput {
         options.min_step = self.min_step_s.unwrap_or(defaults.min_step);
         options.max_step = self.max_step_s.unwrap_or(defaults.max_step);
         options.max_steps = self.max_steps.unwrap_or(defaults.max_steps);
-        options.dense_output = false;
         options
     }
 }
@@ -435,6 +592,11 @@ fn force_model_object(
         .or(object.mu_km3_s2)
         .or(mu_override_km3_s2)
         .unwrap_or(MU_EARTH);
+    if object.earth_radiation_pressure.is_some() && kind != "composite" {
+        return Err(type_error(
+            "earthRadiationPressure requires a composite force model",
+        ));
+    }
     match kind {
         "two_body" => Ok(ForceModelKind::TwoBody { mu_km3_s2: mu }),
         "two_body_j2" => Ok(ForceModelKind::TwoBodyJ2 {
@@ -524,7 +686,14 @@ fn composite_object(object: &ForceModelObject, mu: f64) -> Result<ForceModelKind
         .transpose()?
         .flatten();
 
-    if third_body.is_none()
+    let earth_radiation_pressure = object
+        .earth_radiation_pressure
+        .as_ref()
+        .map(EarthRadiationPressureInput::to_core)
+        .transpose()?;
+
+    if earth_radiation_pressure.is_none()
+        && third_body.is_none()
         && solid_earth_tide.is_none()
         && solid_earth_pole_tide.is_none()
         && srp.is_none()
@@ -565,6 +734,9 @@ fn composite_object(object: &ForceModelObject, mu: f64) -> Result<ForceModelKind
     }
     if let Some(srp) = srp {
         components = components.with_solar_radiation_pressure(srp);
+    }
+    if let Some(model) = earth_radiation_pressure {
+        components = components.with_earth_radiation_pressure(model);
     }
     if let Some(relativity) = relativity {
         components = components.with_relativity(relativity);
@@ -823,7 +995,7 @@ pub(crate) fn srp_from_object(
             ));
         }
     };
-    match (input.pressure_n_m2, input.au_km) {
+    let mut model = match (input.pressure_n_m2, input.au_km) {
         (None, None) => SolarRadiationPressure::new(cr, area_to_mass).map_err(engine_error),
         _ => SolarRadiationPressure::with_pressure(
             cr,
@@ -834,7 +1006,17 @@ pub(crate) fn srp_from_object(
                 .unwrap_or(sidereon_core::astro::constants::astro::AU_KM),
         )
         .map_err(engine_error),
+    }?;
+    if let Some(function) = input.shadow_function {
+        model = model.with_shadow_function(crate::events::shadow_function(function)?);
     }
+    if let Some(figure) = input.earth_shadow_model {
+        model = model.with_earth_shadow_model(crate::events::earth_shadow_model(figure)?);
+    }
+    if let Some(enabled) = input.moon_eclipse {
+        model = model.with_moon_eclipse(enabled);
+    }
+    Ok(model)
 }
 
 fn component_relativity(

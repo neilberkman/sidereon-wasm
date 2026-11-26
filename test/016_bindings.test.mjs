@@ -22,7 +22,7 @@ import {
   tropoMappingFactors,
 } from "../pkg-node/sidereon.js";
 
-import { f64Bits, fixture, fixtureText, hexToF64 } from "./helpers.mjs";
+import { f64Bits, fixture, fixtureJson, fixtureText, hexToF64 } from "./helpers.mjs";
 
 function assertClose(actual, expected, tol, label) {
   assert.ok(Math.abs(actual - expected) <= tol, `${label}: ${actual} vs ${expected}`);
@@ -184,8 +184,9 @@ test("016 force model: spherical-harmonic geopotential option propagates with pi
   });
 
   assert.equal(ephemeris.epochCount, 3);
-  assertBits(ephemeris.positionKm[8], "0x40951791acc3f85b", "harmonic z at 120s");
-  assertBits(ephemeris.velocityKmS[8], "0x3fd522a88dabbd12", "harmonic vz at 120s");
+  const expected = fixtureJson("numerical_models.json").geopotential;
+  assertBits(ephemeris.positionKm[8], expected.positionKm[2], "harmonic z at 120s");
+  assertBits(ephemeris.velocityKmS[8], expected.velocityKmS[2], "harmonic vz at 120s");
 });
 
 test("016 SGP4 decay latch: raw propagation stays stateless after latch trips", () => {

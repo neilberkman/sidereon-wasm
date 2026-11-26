@@ -620,7 +620,7 @@ pub struct Instant {
 }
 
 impl Instant {
-    fn time_scales(&self) -> Result<TimeScales, JsValue> {
+    pub(crate) fn time_scales(&self) -> Result<TimeScales, JsValue> {
         utc_time_scales("unixMicros", self.unix_micros)
     }
 }
@@ -1267,4 +1267,58 @@ pub fn leap_seconds_batch(dates: &[i32]) -> Result<Vec<f64>, JsValue> {
         .iter()
         .map(|d| leap_seconds(d[0], d[1], d[2]))
         .collect())
+}
+
+/// GCRS to mean equator and equinox of date rotation, flat row-major.
+#[wasm_bindgen(js_name = gcrsToMeanOfDateMatrix)]
+pub fn gcrs_to_mean_of_date_matrix(instant: &Instant) -> Result<Vec<f64>, JsValue> {
+    sidereon_core::astro::frames::transforms::gcrs_to_mean_of_date_matrix(&instant.time_scales()?)
+        .map(|matrix| mat3_flat(&matrix))
+        .map_err(frame_error)
+}
+
+/// Mean equator and equinox of date to GCRS rotation, flat row-major.
+#[wasm_bindgen(js_name = meanOfDateToGcrsMatrix)]
+pub fn mean_of_date_to_gcrs_matrix(instant: &Instant) -> Result<Vec<f64>, JsValue> {
+    sidereon_core::astro::frames::transforms::mean_of_date_to_gcrs_matrix(&instant.time_scales()?)
+        .map(|matrix| mat3_flat(&matrix))
+        .map_err(frame_error)
+}
+
+pub(crate) fn time_scale_arg(value: f64) -> Result<TimeScale, JsValue> {
+    const SCALES: [TimeScale; 11] = [
+        TimeScale::Utc,
+        TimeScale::Tai,
+        TimeScale::Tt,
+        TimeScale::Tdb,
+        TimeScale::Gpst,
+        TimeScale::Gst,
+        TimeScale::Bdt,
+        TimeScale::Glonasst,
+        TimeScale::Qzsst,
+        TimeScale::Tcg,
+        TimeScale::Tcb,
+    ];
+    SCALES
+        .get(crate::error::index_arg(value, "scale")?)
+        .copied()
+        .ok_or_else(|| range_error("scale must be a TimeScale value"))
+}
+
+/// TDB seconds from J2000 at the given TT seconds from J2000.
+#[wasm_bindgen(js_name = tdbFromTtJ2000Seconds)]
+pub fn tdb_from_tt_j2000_seconds(tt_j2000_s: f64) -> f64 {
+    sidereon_core::astro::time::tdb_from_tt_j2000_seconds(tt_j2000_s)
+}
+
+/// TDB minus TT, in seconds, at the given TT seconds from J2000.
+#[wasm_bindgen(js_name = tdbMinusTtSeconds)]
+pub fn tdb_minus_tt_seconds(tt_j2000_s: f64) -> f64 {
+    sidereon_core::astro::time::tdb_minus_tt_seconds(tt_j2000_s)
+}
+
+/// TT seconds from J2000 at the given TDB seconds from J2000.
+#[wasm_bindgen(js_name = ttFromTdbJ2000Seconds)]
+pub fn tt_from_tdb_j2000_seconds(tdb_j2000_s: f64) -> f64 {
+    sidereon_core::astro::time::tt_from_tdb_j2000_seconds(tdb_j2000_s)
 }

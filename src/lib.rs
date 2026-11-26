@@ -15,6 +15,7 @@
 //! dependency) but its runtime is never entered under wasm32.
 
 mod almanac;
+mod analytic;
 mod anomaly;
 mod antex;
 mod araim;
@@ -33,12 +34,15 @@ mod covariance;
 mod coverage;
 mod crinex;
 mod data_distribution;
+mod de;
 mod dgnss;
 mod domain_error;
 mod dop;
 mod doppler;
+mod earth_orientation;
 mod elements;
 mod emission_media;
+mod empirical;
 mod equinoctial;
 mod error;
 mod error_metrics;
@@ -47,6 +51,7 @@ mod events;
 mod exact;
 mod exact_cache;
 mod force_model_input;
+mod force_models;
 mod forces;
 mod frame_catalog;
 mod frames;
@@ -57,6 +62,8 @@ mod geofence;
 mod geoid;
 mod geometry_quality;
 mod gnss;
+mod gnss_attitude;
+mod gravity_field;
 mod ils;
 mod inertial;
 mod iod;
@@ -79,6 +86,9 @@ mod omm;
 mod opm;
 mod orbit_determination;
 mod orbit_fit_error;
+mod orbit_parameters;
+mod orbit_scoring;
+mod orbit_state;
 mod positioning_error;
 mod ppp;
 mod ppp_corrections;
@@ -91,6 +101,7 @@ mod ppp_velocity;
 mod precise_samples;
 mod propagation;
 mod qc;
+mod radiation_pressure;
 mod raim;
 mod reduced_orbit;
 mod relative;
@@ -127,6 +138,7 @@ mod terrain_store;
 mod tides;
 mod trls;
 mod tropo;
+mod variational;
 
 pub use almanac::{
     lunar_solar_eclipses, lunar_solar_eclipses_spk, meridian_transits, meridian_transits_spk,
@@ -208,7 +220,8 @@ pub use events::{
 };
 pub use exact_cache::ExactCacheSingleFlightWait;
 pub use forces::{
-    estimate_decay, force_j2_acceleration, force_twobody_acceleration, DragForce, SpaceWeather,
+    estimate_decay, estimate_decay_with_context, force_j2_acceleration, force_twobody_acceleration,
+    DragForce, SpaceWeather,
 };
 pub use frame_catalog::{
     frame_catalog, frame_catalog_entry, frame_catalog_propagate_position, frame_catalog_transform,
@@ -378,7 +391,9 @@ pub use precise_samples::{
     sample_sp3_ephemeris, sp3_precise_ephemeris_accuracy_samples, sp3_precise_ephemeris_samples,
     PreciseEphemerisInterpolant, PreciseEphemerisSampleSource,
 };
-pub use propagation::{propagate_state, Ephemeris};
+pub use propagation::{
+    propagate_state, propagate_state_with_space_weather, Ephemeris, StatePropagator,
+};
 pub use qc::FdeSolution;
 pub use raim::{raim, raim_fde_design_js, raim_for_solution};
 pub use reduced_orbit::{
@@ -476,8 +491,8 @@ pub use sp3_merge::{
     Sp3MergeInputIdentity, Sp3MergeReport, Sp3MergeResult,
 };
 pub use space_weather::{
-    estimate_decay_with_space_weather, parse_space_weather, parse_space_weather_csv,
-    parse_space_weather_txt, SpaceWeatherTable,
+    estimate_decay_with_source_and_context, estimate_decay_with_space_weather, parse_space_weather,
+    parse_space_weather_csv, parse_space_weather_txt, SpaceWeatherTable,
 };
 pub use spk::{
     spk_inertial_frame_name, spk_inertial_frame_rotation, Spk, SpkKernels, SpkSegment, SpkState,
@@ -523,3 +538,77 @@ pub use trls::{
 pub use tropo::{
     tropo_mapping_factors, tropo_slant_delay, tropo_zenith_delay, MappingFactors, ZenithDelay,
 };
+
+pub use bodies::{sun_moon_gcrs, sun_moon_gcrs_at, sun_moon_gcrs_at_tdb_seconds};
+pub use frames::{gcrs_to_mean_of_date_matrix, mean_of_date_to_gcrs_matrix};
+
+pub use de::{DeBody, DeEphemeris, DeState, DeSunMoon};
+
+pub use events::{
+    iau_2015_solar_radius_km, moon_shadow_fraction, shadow_fraction_with_gradient,
+    shadow_fraction_with_model_and_gradient, shadow_fraction_with_model_and_moon,
+    shadow_fraction_with_model_moon_and_gradient, shadow_fraction_with_moon,
+    status_with_model_and_moon, status_with_moon, ShadowFractionGradient, ShadowFunction,
+};
+
+pub use analytic::{
+    analytic_theory_to_string, brouwer_lyddane_mean_elements, brouwer_lyddane_osculating_elements,
+    eckstein_hechler_mean_elements, eckstein_hechler_osculating_elements, AnalyticTheory,
+    BrouwerLyddanePropagator, CircularElements, EcksteinHechlerPropagator, KeplerianElements,
+    MeanConversionOptions, MeanElements, ZonalHarmonics,
+};
+
+pub use orbit_state::{CartesianState, CartesianVectors};
+
+pub use gnss_attitude::{
+    beidou2_on_to_ys_beta_rad, beidou2_ys_to_on_beta_rad, beidou3_cast_igso_turn,
+    beidou3_cast_meo_turn, beidou3_secm_beta0_rad, dyb_axes, galileo_foc_turn,
+    galileo_iov_beta_x_rad, galileo_iov_beta_y_rad, glonass_m_default_yaw_rate_rad_s,
+    glonass_m_shadow_limit_rad, gps_iia_default_yaw_bias_rad, gps_iia_default_yaw_rate_rad_s,
+    gps_iif_default_yaw_bias_rad, gps_iif_default_yaw_rate_rad_s, gps_iii_beta_x_rad,
+    gps_iii_beta_y_rad, gps_iir_default_yaw_rate_rad_s, gps_shadow_limit_rad, nominal_yaw,
+    AttitudeMode, AttitudeSample, BeidouManufacturer, BeidouOrbitClass, CosineTurnParameters,
+    CosineTurnStartAngle, DybAxes, GnssAttitude, GnssAttitudeLaw, GnssBlock, NominalYaw,
+};
+
+pub use gravity_field::{
+    IcgemErrors, IcgemFormat, IcgemGravityField, IcgemHeader, IcgemNormalization, IcgemSigmas,
+    IcgemTermKind, IcgemTimeVariableTerm, SphericalHarmonicCoefficient, SphericalHarmonicGravity,
+};
+
+pub use earth_orientation::{
+    EarthOrientation, Iers2010EarthOrientationProvider, Iers2010EopSample, PropagationContext,
+};
+
+pub use force_models::{AccelerationPartials, CompositeForceModel, ForceModel, ForceParameter};
+
+pub use radiation_pressure::{
+    ecom1_coefficient_count, ecom2_d2b1_coefficient_count, ecom2_d4b1_coefficient_count,
+    ecom_geometry, ecom_geometry_with_shadow, EarthRadiationPressure, Ecom1Coefficients,
+    Ecom1SolarRadiationPressure, Ecom2D2b1Coefficients, Ecom2D4b1Coefficients,
+    Ecom2SolarRadiationPressure, EcomGeometry, SolarRadiationPressure,
+};
+
+pub use empirical::{
+    empirical_harmonic_all, rtn_axis_all, EmpiricalHarmonic, EmpiricalRtnAcceleration, RtnAxis,
+};
+
+pub use variational::{
+    propagate_variational, VariationalEpoch, VariationalEquations, VariationalState,
+};
+
+pub use rinex_clock::ClockInstant;
+
+pub use orbit_scoring::*;
+
+pub use orbit_parameters::{
+    fit_inertial_orbit_parameters, fit_inertial_orbit_parameters_with_validity,
+    fit_sp3_ecef_orbit_parameters, fit_sp3_ecef_orbit_parameters_with_validity,
+    state_parameter_names, EstimatedForceParameter, InertialPositionSample,
+    OrbitParameterCovariance, OrbitParameterFit, OrbitParameterFitOptions, OrbitRtnResidual,
+};
+
+pub use frames::{tdb_from_tt_j2000_seconds, tdb_minus_tt_seconds, tt_from_tdb_j2000_seconds};
+
+pub use empirical::{empirical_harmonic_compare, rtn_axis_compare};
+pub use gnss_attitude::{beidou_manufacturer_compare, beidou_orbit_class_compare};

@@ -428,6 +428,131 @@ CCSDS OMM, OPM, OEM and CDM readers and writers throw `OmmError`, `OpmError`,
 engine variant (`kind`) and its fields. A value a message does not carry reads
 as `undefined`.
 
+## Numerical forces and propagation
+
+`propagateState` accepts a built-in `forceModel`, optional atmospheric
+`drag`, an optional `context`, and an `additionalForces` array. Use
+`propagateStateWithSpaceWeather(request, table, context)` to drive the
+configured drag with a weather table. The engine evaluates additional forces
+in array order after built-in forces and drag.
+
+`propagateState` ignores extra keys on the request, `drag` and
+`drag.spaceWeather`. Its `forceModel` configuration rejects unknown keys.
+`propagateStateWithSpaceWeather` checks keys throughout the request.
+The released `OrbitFitOptions.integratorOptions` accepts `denseOutput` for
+compatibility and ignores it.
+
+Pass shared `ForceModel` handles in `additionalForces` for either propagation
+or `OrbitParameterFitOptions`. Concrete force classes such as
+`EmpiricalRtnAcceleration` and `SolarRadiationPressure` provide
+`asForceModel()`. The original handles remain available after the call.
+`OrbitParameterFitOptions.forceModel` returns a handle for the configured
+built-in force, including the engine default when omitted. Use that handle
+to inspect parameters and evaluate accelerations and partials.
+`CompositeForceModel` consumes its supplied handles and evaluates them in
+input order.
+
+A reusable `StatePropagator` accepts a weather table through
+`setSpaceWeather(table)`. Pass `additionalForces` in the final options object
+of `propagateTo` or `propagateToWithContext`, or as the final argument of
+`ephemerisWithContext`. The state propagator and context-aware covariance
+options, orbit parameter fit options, variational integrator options, and
+context-aware decay requests reject unknown keys, including in nested
+configuration objects.
+
+The force APIs expose estimable parameters, replacement parameter values,
+state partials and parameter partials. Matrices are flat row-major
+`Float64Array`s. Parameter partials contain one consecutive three-vector per
+parameter. `propagateVariational` returns the state, state transition matrix,
+and sensitivity to selected parameters. Each propagation epoch is labeled
+in TDB seconds from J2000 and integrated in elapsed Terrestrial Time.
+`VariationalEpoch.fromTdbSeconds` derives the elapsed TT from the TDB epochs.
+
+Cannonball solar radiation pressure defaults to apparent-disc lighting,
+the WGS84 oblate Earth and lunar occultation. Select `ShadowFunction.Conical`
+and `EarthShadowModel.Spherical` to use spherical Earth-only conical lighting.
+Earth albedo and thermal radiation pressure can be added to a composite.
+Atmospheric drag uses the UT1 Earth rotation and UTC space-weather epochs.
+
+## Ephemerides, Earth orientation and analytic orbits
+
+`DeEphemeris.fromBytes` reads JPL DE data and gives geocentric GCRF Sun and
+Moon states and file constants. `sunMoonGcrs` and its epoch-specific
+variants evaluate analytic Sun and Moon positions on GCRS axes.
+`sunMoonEci` returns mean equator and equinox of date positions.
+`Iers2010EarthOrientationProvider` uses daily EOP samples for GCRF–ITRF
+orientation and rotation rates. Attach either data source to a
+`PropagationContext` for propagation, covariance, decay or estimation.
+
+`IcgemGravityField.parse` and `fromBytes` read static and time-variable
+spherical harmonics, coefficient uncertainties and tide-system metadata.
+Field truncation controls the stored degree and order. Gravity built from
+the field evaluates the geopotential and perturbing acceleration with the
+Holmes–Featherstone recursion.
+
+`EcksteinHechlerPropagator` handles near-circular zonal orbits using
+`CircularElements`. `BrouwerLyddanePropagator` uses `KeplerianElements` for
+elliptic zonal orbits. Both expose mean and osculating conversions, Cartesian
+states and sampled ephemerides.
+
+## Orbit scoring and parameter estimation
+
+`scoreOrbit` compares a `PredictedSp3`, `BroadcastOrbit`, or
+`OrbitTrajectory` against a precise SP3 reference. Reports include
+per-satellite and per-constellation horizon bins, radial/transverse/normal
+errors, SISRE, clock errors and coverage counts. Configure missing-data
+handling with `GapPolicy` and frame reconciliation with
+`Sp3FrameReconciliationOptions`.
+
+`fitInertialOrbitParameters` and `fitSp3EcefOrbitParameters` fit the initial
+state and selected named force parameters. Results include the fit
+covariance, RTN residuals, and standard deviations and correlations by
+parameter name. The estimate's epoch and any initial-state seed use TDB.
+
+## Eclipse and GNSS attitude
+
+Earth and Moon eclipse functions return shadow fraction or illumination
+status. Gradient functions return the derivative with respect to the
+satellite position. `nominalYaw` and `dybAxes` evaluate instantaneous
+geometry. `GnssBlock` identifies satellite designs, and
+`GnssAttitudeLaw.forBlock` returns the published yaw law and defaults
+for the selected block.
+
+Use `gnssAttitude(law, trajectory, tS)` to evaluate a yaw law along an
+`OrbitAttitudeTrajectory`. Both `gnssAttitude` and `trajectory.sample(tS)`
+take TDB seconds past J2000. The sample contains GCRF satellite position,
+velocity and Sun position in metres and metres per second. Analytic and
+numerical inputs must already be in GCRF. Earth-fixed positions must align
+with the provider's ITRF.
+
+Construct the trajectory with `fromSp3`, `fromBroadcast`, `fromOrbitSource`,
+`fromEcksteinHechler`, `fromBrouwerLyddane` or `fromDenseOutput`.
+`fromOrbitSource` accepts `PredictedSp3`, `BroadcastOrbit` and
+`OrbitTrajectory`, or their shared `asOrbitSource()` handles.
+For Earth-fixed sources, omitting the orientation argument selects the
+default TDB provider. The trajectory retains its orbit data and a share of
+any supplied `Iers2010EarthOrientationProvider`. The original handles can
+be reused or freed after construction.
+
+Use `withDeEphemeris` to supply JPL DE Sun positions and
+`withVelocityHalfStepS` to set the velocity difference interval to twice
+the specified half step on the Earth-fixed source's time axis. Choose a
+half step that reaches an adjacent epoch for a node-only source.
+`sample` returns `undefined` if a sample is unavailable. A yaw law may also
+need samples at nearby epochs and can throw `GnssAttitudeError`.
+
+For continuous numerical output, pass `{ denseOutput: true }` to
+`propagateTo(tEnd, options)` or `propagateToWithContext(tEnd, context, options)`
+on a DP5(4) `StatePropagator`. Pass the result's `dense` handle to
+`OrbitAttitudeTrajectory.fromDenseOutput`. The handle's `coverageTdbSeconds()`
+returns the chronological `[start, end]` bounds as a `Float64Array` or
+`undefined` for empty output. Free the result and its returned handles when
+finished with them.
+
+Classes that have core value equality expose `equals(other)`. Return values
+owned by a class use `free()` or `Symbol.dispose`. Typed failures carry
+the engine message and structured `kind` and `detail` properties.
+
 ## Capabilities
 
 The package provides these APIs:

@@ -1,6 +1,6 @@
 {
-  "source": "sidereon-core 4.1.0 (012c6c38ea054b61293e83fc95ac60ff6d11fb8b)",
-  "coreRev": "012c6c38ea054b61293e83fc95ac60ff6d11fb8b",
+  "source": "sidereon-core 4.1.0 (3c61740f5e3d71f930ce40a6504fc9ce320c0fa7)",
+  "coreRev": "3c61740f5e3d71f930ce40a6504fc9ce320c0fa7",
   "velocity": {
     "tRxJ2000S": "0x41c342aa00000000",
     "receiverEcefM": [

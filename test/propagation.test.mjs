@@ -103,7 +103,7 @@ test("two-body circular orbit returns to its start after one period", () => {
   const mu = 398600.4418;
   const r = 7000.0;
   const v = Math.sqrt(mu / r);
-  const period = 2.0 * Math.PI * Math.sqrt((r * r * r) / mu);
+  const period = hexToF64(fixtureJson("numerical_models.json").onePeriodTdbSeconds);
   const eph = propagateState({
     epochS: 0.0,
     positionKm: [r, 0.0, 0.0],

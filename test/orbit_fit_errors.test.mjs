@@ -62,3 +62,24 @@ test("precise-orbit fit refusals preserve typed core variants and fields", () =>
     sp3.free();
   }
 });
+
+test("released orbit fitting ignores extra options and denseOutput", () => {
+  using sp3 = loadSp3(fixture("sp3/g02_ecef_two_epoch.sp3"));
+  const options = {
+    forceModel: "two_body",
+    integrator: "rk4",
+    integratorOptions: { initialStepS: 60, maxStepS: 60 },
+    solverOptions: { maxNfev: 200 },
+    minLedgerSamples: 3,
+  };
+  const expected = fitSp3EcefPreciseOrbit(sp3, "G02", options);
+  for (const denseOutput of [1, true]) {
+    const report = fitSp3EcefPreciseOrbit(sp3, "G02", {
+      ...options,
+      minledgersamples: 0,
+      integratorOptions: { ...options.integratorOptions, denseOutput, extraNumericOption: 1 },
+      solverOptions: { ...options.solverOptions, maxnfev: 0 },
+    });
+    assert.deepEqual(report, expected);
+  }
+});

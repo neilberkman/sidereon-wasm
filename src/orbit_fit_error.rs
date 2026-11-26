@@ -92,7 +92,7 @@ fn tier_label(tier: sidereon_core::geometry_quality::ObservabilityTier) -> &'sta
     }
 }
 
-fn detail(error: &OrbitFitError) -> serde_json::Value {
+pub(crate) fn detail(error: &OrbitFitError) -> serde_json::Value {
     use OrbitFitError as E;
     let message = error.to_string();
     match error {

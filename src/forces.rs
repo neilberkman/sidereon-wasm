@@ -116,9 +116,17 @@ pub struct DragForce {
     inner: CoreDragForce,
 }
 
+impl DragForce {
+    pub(crate) fn from_parameters(parameters: DragParameters) -> Self {
+        Self {
+            inner: parameters.to_force(),
+        }
+    }
+}
+
 #[wasm_bindgen]
 impl DragForce {
-    pub(crate) fn parameters(&self) -> Result<DragParameters, JsValue> {
+    pub(crate) fn drag_parameters(&self) -> Result<DragParameters, JsValue> {
         DragParameters::from_bc_factor_m2_kg(
             self.inner.bc_factor_m2_kg(),
             self.inner.space_weather(),
@@ -216,6 +224,19 @@ impl DragForce {
     }
 }
 
+pub(crate) const DECAY_REQUEST_KEYS: &[&str] = &[
+    "epochS",
+    "positionKm",
+    "velocityKmS",
+    "forceModel",
+    "integrator",
+    "reentryAltitudeKm",
+    "scanStepS",
+    "crossingToleranceS",
+    "maxDurationS",
+    "maxScanSamples",
+];
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DecayRequest {
@@ -270,11 +291,30 @@ fn integrator(label: Option<&str>) -> Result<IntegratorKind, JsValue> {
 
 #[wasm_bindgen(js_name = estimateDecay)]
 pub fn estimate_decay(drag: &DragForce, request: JsValue) -> Result<JsValue, JsValue> {
+    decay_impl(drag, request, None)
+}
+
+/// Estimate time to reentry with an explicit propagation context.
+#[wasm_bindgen(js_name = estimateDecayWithContext, unchecked_return_type = "NumericalDecayEstimate")]
+pub fn estimate_decay_with_context(
+    drag: &DragForce,
+    #[wasm_bindgen(unchecked_param_type = "NumericalDecayRequest")] request: JsValue,
+    context: &crate::earth_orientation::PropagationContext,
+) -> Result<JsValue, JsValue> {
+    crate::error::reject_unknown_keys(&request, "decay request", DECAY_REQUEST_KEYS)?;
+    decay_impl(drag, request, Some(&context.inner))
+}
+
+fn decay_impl(
+    drag: &DragForce,
+    request: JsValue,
+    context: Option<&sidereon_core::astro::propagator::PropagationContext>,
+) -> Result<JsValue, JsValue> {
     let req: DecayRequest = serde_wasm_bindgen::from_value(request)
         .map_err(|e| type_error(&format!("invalid decay request: {e}")))?;
     let position = vec3_finite("positionKm", &req.position_km)?;
     let velocity = vec3_finite("velocityKmS", &req.velocity_km_s)?;
-    let mut config = DecayConfig::new(drag.parameters()?)
+    let mut config = DecayConfig::new(drag.drag_parameters()?)
         .with_force_model(force_model(req.force_model.as_deref())?)
         .with_integrator(integrator(req.integrator.as_deref())?);
     if let Some(value) = req.reentry_altitude_km {
@@ -293,10 +333,13 @@ pub fn estimate_decay(drag: &DragForce, request: JsValue) -> Result<JsValue, JsV
         config = config.with_max_scan_samples(value);
     }
 
-    let estimate = core_estimate_decay(
-        CartesianState::new(req.epoch_s, position, velocity),
-        &config,
-    )
+    let initial = CartesianState::new(req.epoch_s, position, velocity);
+    let estimate = match context {
+        Some(context) => {
+            sidereon_core::astro::propagator::estimate_decay_with_context(initial, &config, context)
+        }
+        None => core_estimate_decay(initial, &config),
+    }
     .map_err(engine_error)?;
     serde_wasm_bindgen::to_value(&DecayEstimateJs {
         time_to_decay_s: estimate.time_to_decay_s,
@@ -307,3 +350,45 @@ pub fn estimate_decay(drag: &DragForce, request: JsValue) -> Result<JsValue, JsV
     })
     .map_err(|e| type_error(&e.to_string()))
 }
+
+crate::force_models::force_methods!(DragForce, inner, acceleration_at, accelerationAt);
+
+#[wasm_bindgen]
+impl DragForce {
+    /// Return a shared handle usable for propagation and estimation.
+    #[wasm_bindgen(js_name = asForceModel)]
+    pub fn as_force_model(&self) -> crate::force_models::ForceModel {
+        crate::force_models::ForceModel(std::sync::Arc::new(self.inner))
+    }
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const DECAY_TYPES: &str = r#"
+/** Initial state and search controls for a decay estimate. */
+export interface NumericalDecayRequest {
+    epochS: number;
+    positionKm: Vec3;
+    velocityKmS: Vec3;
+    forceModel?: "two_body" | "two_body_j2";
+    integrator?: "rk4" | "dp54";
+    reentryAltitudeKm?: number;
+    scanStepS?: number;
+    crossingToleranceS?: number;
+    maxDurationS?: number;
+    maxScanSamples?: number;
+}
+
+/** Decay search controls with an optional space-weather lookup policy. */
+export interface NumericalSourcedDecayRequest extends NumericalDecayRequest {
+    policy?: SpaceWeatherPolicyInput;
+}
+
+/** Estimated state and altitude at atmospheric reentry. */
+export interface NumericalDecayEstimate {
+    timeToDecayS: number;
+    reentryEpochS: number;
+    reentryPositionKm: [number, number, number];
+    reentryVelocityKmS: [number, number, number];
+    reentryAltitudeKm: number;
+}
+"#;

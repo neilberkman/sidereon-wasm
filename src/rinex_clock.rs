@@ -1880,3 +1880,110 @@ export interface RinexClockSeriesRowInput {
   biasS: ArrayLike<number>;
 }
 "#;
+
+/// An instant with an explicit time scale and a precision-preserving representation.
+#[wasm_bindgen]
+pub struct ClockInstant(pub(crate) Instant);
+
+#[wasm_bindgen]
+impl ClockInstant {
+    /// Construct from integer nanoseconds on the given time scale.
+    #[wasm_bindgen(js_name = fromNanos)]
+    pub fn from_nanos(
+        #[wasm_bindgen(unchecked_param_type = "TimeScale")] scale: f64,
+        #[wasm_bindgen(unchecked_param_type = "bigint")] nanos: JsValue,
+    ) -> Result<Self, JsValue> {
+        if !nanos.is_bigint() {
+            return Err(type_error("nanos must be a bigint"));
+        }
+        let nanos = serde_wasm_bindgen::from_value(nanos)
+            .map_err(|_| range_error("nanos must fit a signed 128-bit integer"))?;
+        Ok(Self(Instant::from_nanos(
+            crate::frames::time_scale_arg(scale)?.into(),
+            nanos,
+        )))
+    }
+
+    /// Construct from a two-part Julian date on the given time scale.
+    #[wasm_bindgen(js_name = fromSplitJulianDate)]
+    pub fn from_split_julian_date(
+        #[wasm_bindgen(unchecked_param_type = "TimeScale")] scale: f64,
+        jd_whole: f64,
+        fraction: f64,
+    ) -> Result<Self, JsValue> {
+        let date = sidereon_core::astro::time::JulianDateSplit::new(jd_whole, fraction)
+            .map_err(crate::tropo::time_model_error)?;
+        Ok(Self(Instant::from_julian_date(
+            crate::frames::time_scale_arg(scale)?.into(),
+            date,
+        )))
+    }
+
+    /// Label a civil clock epoch with a time scale.
+    #[wasm_bindgen(js_name = fromCivil)]
+    pub fn from_civil(
+        #[wasm_bindgen(unchecked_param_type = "TimeScale")] scale: f64,
+        epoch: &ClockEpoch,
+    ) -> Result<Self, JsValue> {
+        let epoch = epoch.inner;
+        civil_to_clock_instant(
+            crate::frames::time_scale_arg(scale)?.into(),
+            epoch.year,
+            epoch.month,
+            epoch.day,
+            epoch.hour,
+            epoch.minute,
+            epoch.second,
+        )
+        .map(Self)
+        .ok_or_else(|| range_error("invalid civil clock epoch fields for the given time scale"))
+    }
+
+    /// Time scale of the epoch.
+    #[wasm_bindgen(getter)]
+    pub fn scale(&self) -> TimeScale {
+        self.0.scale.into()
+    }
+
+    /// Core epoch representation.
+    #[wasm_bindgen(getter, js_name = reprKind, unchecked_return_type = "'JulianDate' | 'Nanos'")]
+    pub fn repr_kind(&self) -> String {
+        match self.0.repr {
+            InstantRepr::JulianDate(_) => "JulianDate",
+            InstantRepr::Nanos(_) => "Nanos",
+        }
+        .to_owned()
+    }
+
+    /// Whole part of a split Julian date.
+    #[wasm_bindgen(getter, js_name = jdWhole)]
+    pub fn jd_whole(&self) -> Option<f64> {
+        self.0.julian_date().map(|date| date.jd_whole)
+    }
+
+    /// Fractional part of a split Julian date.
+    #[wasm_bindgen(getter)]
+    pub fn fraction(&self) -> Option<f64> {
+        self.0.julian_date().map(|date| date.fraction)
+    }
+
+    /// Exact nanoseconds, if held in this representation.
+    #[wasm_bindgen(getter)]
+    pub fn nanos(&self) -> Option<i128> {
+        match self.0.repr {
+            InstantRepr::Nanos(nanos) => Some(nanos),
+            InstantRepr::JulianDate(_) => None,
+        }
+    }
+
+    /// GPS seconds when the scale and representation admit that projection.
+    #[wasm_bindgen(getter, js_name = gpsSeconds)]
+    pub fn gps_seconds(&self) -> Option<f64> {
+        instant_gps_seconds(self.0)
+    }
+
+    /// Compare both the scale and the stored time representation.
+    pub fn equals(&self, other: &ClockInstant) -> bool {
+        self.0 == other.0
+    }
+}

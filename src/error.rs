@@ -256,3 +256,34 @@ pub fn validated_object(
         "UT1-validated result",
     )
 }
+
+/// Named domain error with a discriminated, plain JavaScript payload.
+pub(crate) fn typed_error(name: &str, message: &str, detail: serde_json::Value) -> JsValue {
+    match detail["kind"].as_str() {
+        Some(kind) => typed_error_with_kind(name, message, kind, &detail),
+        None => error_with_detail(name, message, &detail),
+    }
+}
+
+pub(crate) fn typed_error_with_kind<T: serde::Serialize>(
+    name: &str,
+    message: &str,
+    kind: &str,
+    detail: &T,
+) -> JsValue {
+    let error = error_with_detail(name, message, detail);
+    if !matches!(
+        js_sys::Reflect::set(&error, &JsValue::from_str("kind"), &JsValue::from_str(kind)),
+        Ok(true)
+    ) {
+        return engine_error(format!("{message} (the error kind could not be attached)"));
+    }
+    let display = message.to_owned();
+    let to_string = Closure::<dyn Fn() -> String>::new(move || display.clone()).into_js_value();
+    match js_sys::Reflect::set(&error, &JsValue::from_str("toString"), &to_string) {
+        Ok(true) => error,
+        _ => engine_error(format!(
+            "{message} (the error display text could not be attached)"
+        )),
+    }
+}

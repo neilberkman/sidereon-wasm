@@ -12,7 +12,7 @@ import {
   parseSpaceWeatherTxt,
 } from "../pkg-node/sidereon.js";
 
-import { f64Bits, fixture, fixtureText } from "./helpers.mjs";
+import { f64Bits, fixture, fixtureJson, fixtureText, hexToF64 } from "./helpers.mjs";
 
 const bits = (values) =>
   Array.from(values, (x) => `0x${f64Bits(x).toString(16).padStart(16, "0")}`);
@@ -74,7 +74,7 @@ test("parseSpaceWeather exposes daily, monthly, coverage, and query rows", () =>
   assert.deepEqual(txt.sampleAt(civilToJ2000Seconds(2026, 7, 1, 12, 0, 0)), observed);
 });
 
-test("estimateDecayWithSpaceWeather uses the parsed table source", () => {
+test("estimateDecayWithSpaceWeather uses the table and ignores extra request keys", () => {
   const table = parseSpaceWeather(fixture("space_weather/SW-All-20260702-trim.csv"));
   const drag = DragForce.fromBcFactor(0.02, new SpaceWeather(150, 150, 4), 100);
   const decay = estimateDecayWithSpaceWeather(drag, table, {
@@ -86,19 +86,13 @@ test("estimateDecayWithSpaceWeather uses the parsed table source", () => {
     maxScanSamples: 300,
     reentryAltitudeKm: 100,
     crossingToleranceS: 1,
+    maxscansamples: 0,
   });
 
-  assert.equal(f64Bits(decay.timeToDecayS), 0x4062390000000000n);
-  assert.equal(f64Bits(decay.reentryEpochS), 0x419cc9a347200000n);
-  assert.deepEqual(bits(decay.reentryPositionKm), [
-    "0x40b8e9cbef7c2275",
-    "0x4091bf17fdabc600",
-    "0x0000000000000000",
-  ]);
-  assert.deepEqual(bits(decay.reentryVelocityKmS), [
-    "0xbff5fc98a5d29a88",
-    "0x401ec41273d4f53e",
-    "0x0000000000000000",
-  ]);
-  assert.equal(f64Bits(decay.reentryAltitudeKm), 0x4059000f3e7287f2n);
+  const expected = fixtureJson("numerical_models.json").decay;
+  assert.equal(decay.timeToDecayS, hexToF64(expected.timeToDecayS));
+  assert.equal(decay.reentryEpochS, hexToF64(expected.reentryEpochS));
+  assert.deepEqual(bits(decay.reentryPositionKm), expected.reentryState.positionKm);
+  assert.deepEqual(bits(decay.reentryVelocityKmS), expected.reentryState.velocityKmS);
+  assert.equal(decay.reentryAltitudeKm, hexToF64(expected.reentryAltitudeKm));
 });
