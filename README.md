@@ -15,7 +15,7 @@ checked against IGS products.
 ## Install
 
 ```sh
-npm install @neilberkman/sidereon@4.1.0
+npm install @neilberkman/sidereon@4.2.0
 ```
 
 The package is dual ESM/CJS and ships prebuilt wasm with bundled TypeScript

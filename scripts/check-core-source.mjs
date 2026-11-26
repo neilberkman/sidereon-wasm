@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const registry = "registry+https://github.com/rust-lang/crates.io-index";
-const coreVersion = "4.1.0";
-const coreRevision = "012c6c38ea054b61293e83fc95ac60ff6d11fb8b";
+const coreVersion = "4.2.0";
+const coreRevision = "17b493fe8cf6d1b45ecc0982e7d594b88cdd2b7b";
 
 for (const manifest of ["Cargo.toml", "test/golden-gen/Cargo.toml"]) {
   const metadata = JSON.parse(

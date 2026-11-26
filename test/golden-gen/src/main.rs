@@ -1375,14 +1375,14 @@ fn precise_artifact_section() -> Value {
     })
 }
 
-const CORE_REV: &str = "3c61740f5e3d71f930ce40a6504fc9ce320c0fa7";
+const CORE_REV: &str = "17b493fe8cf6d1b45ecc0982e7d594b88cdd2b7b";
 
 fn main() {
     let rev = CORE_REV;
     let (velocity, range_rates) = velocity_section();
     let doc = json!({
         "source": format!(
-            "sidereon-core 4.1.0 ({rev})"
+            "sidereon-core 4.2.0 ({rev})"
         ),
         "coreRev": rev,
         "velocity": velocity,

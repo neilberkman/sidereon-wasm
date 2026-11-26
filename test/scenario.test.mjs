@@ -113,7 +113,7 @@ test("scenario simulator is byte-deterministic for the same schema and seed", ()
   assert.deepEqual(Buffer.from(first), Buffer.from(second));
   const payload = JSON.parse(Buffer.from(first).toString("utf8"));
   assert.equal(payload.schemaVersion, 1);
-  assert.equal(payload.engineVersion, "4.1.0:scenario-observables-v1");
+  assert.equal(payload.engineVersion, "4.2.0:scenario-observables-v1");
 });
 
 test("the simulation set writes the engine's RINEX text and SPP observations", () => {
