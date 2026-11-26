@@ -35,7 +35,11 @@ export interface OrbitFitOptions {
   forceModel?: unknown;
   muKm3S2?: number;
   integrator?: string;
-  integratorOptions?: Record<string, number>;
+  /** Numerical integration overrides. Unrecognized keys are ignored. */
+  integratorOptions?: Record<string, number> & {
+    /** Accepted for compatibility and ignored. */
+    denseOutput?: number;
+  };
   solverOptions?: { gtol?: number; ftol?: number; xtol?: number; maxNfev?: number };
   linearSolve?: "nalgebraLu" | "nalgebra_lu" | "ownedGaussianFirstTie" | "owned_gaussian_first_tie";
   minLedgerSamples?: number;
@@ -237,7 +241,7 @@ impl From<OrbitArcSpan> for OrbitArcSpanJs {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct OrbitResidualStatsJs {
+pub(crate) struct OrbitResidualStatsJs {
     radial_rms_m: f64,
     along_rms_m: f64,
     cross_rms_m: f64,

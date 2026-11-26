@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 
 import { propagateCovariance, transportCovariance } from "../pkg-node/sidereon.js";
 
-import { f64Bits } from "./helpers.mjs";
+import { f64Bits, fixtureJson } from "./helpers.mjs";
 
 const bits = (values) =>
   Array.from(values, (x) => `0x${f64Bits(x).toString(16).padStart(16, "0")}`);
@@ -42,32 +42,11 @@ test("propagateCovariance matches the core two-body covariance golden", () => {
   assert.equal(ephem.epochCount, 3);
   assert.equal(ephem.frame, "inertial");
   assert.deepEqual(Array.from(ephem.timesS), [0, 60, 120]);
-  assert.deepEqual(bits(ephem.positionKm.slice(6, 9)), [
-    "0x40bb1d83035f8049",
-    "0x408c380507e1c397",
-    "0x0000000000000000",
-  ]);
-  assert.deepEqual(bits(ephem.velocityKmS.slice(6, 9)), [
-    "0xbfef26742e29f282",
-    "0x401dee9720f7f290",
-    "0x0000000000000000",
-  ]);
-  assert.deepEqual(bits(diagonal(ephem.covariance.slice(72, 108))), [
-    "0x3f305ac78cffd4a5",
-    "0x3f3fbcb090a416b0",
-    "0x3f47cce0d8fd2b3b",
-    "0x3e46788333ef968b",
-    "0x3e5562f27fa2ea73",
-    "0x3e60089f9c17b1a5",
-  ]);
-  assert.deepEqual(bits(diagonal(ephem.covarianceAt(60))), [
-    "0x3f21f54fe379c7fc",
-    "0x3f31c626c2f0c848",
-    "0x3f3aa92ce87715eb",
-    "0x3e45c9a23ad39127",
-    "0x3e5583f80e315b79",
-    "0x3e6022e1dec13de8",
-  ]);
+  const expected = fixtureJson("numerical_models.json").covariance;
+  assert.deepEqual(bits(ephem.positionKm.slice(6, 9)), expected.finalState.positionKm);
+  assert.deepEqual(bits(ephem.velocityKmS.slice(6, 9)), expected.finalState.velocityKmS);
+  assert.deepEqual(bits(diagonal(ephem.covariance.slice(72, 108))), expected.finalDiagonal);
+  assert.deepEqual(bits(diagonal(ephem.covarianceAt(60))), expected.midDiagonal);
 });
 
 test("transportCovariance delegates STM transport and process noise to core", () => {

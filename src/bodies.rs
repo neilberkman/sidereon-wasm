@@ -38,7 +38,7 @@ impl SunMoon {
         self.moon.clone()
     }
 
-    /// The frame these positions are in: `"eci"` or `"ecef"`.
+    /// The frame these positions are in: `"eci"`, `"ecef"`, or `"gcrs"`.
     #[wasm_bindgen(getter)]
     pub fn frame(&self) -> String {
         self.frame.to_string()
@@ -90,4 +90,38 @@ pub fn sun_moon_eci(epochs_unix_us: &[i64]) -> Result<SunMoon, JsValue> {
 #[wasm_bindgen(js_name = sunMoonEcef)]
 pub fn sun_moon_ecef_batch(epochs_unix_us: &[i64]) -> Result<SunMoon, JsValue> {
     collect(epochs_unix_us, "ecef", sun_moon_ecef)
+}
+
+impl SunMoon {
+    pub(crate) fn geocentric(positions: sidereon_core::astro::bodies::SunMoon) -> Self {
+        Self {
+            sun: positions.sun.to_vec(),
+            moon: positions.moon.to_vec(),
+            frame: "gcrs",
+        }
+    }
+}
+
+/// Analytic GCRS Sun and Moon positions in metres at TT centuries from J2000.
+#[wasm_bindgen(js_name = sunMoonGcrs)]
+pub fn sun_moon_gcrs(tt_centuries: f64) -> Result<SunMoon, JsValue> {
+    sidereon_core::astro::bodies::sun_moon::sun_moon_gcrs(tt_centuries)
+        .map(SunMoon::geocentric)
+        .map_err(crate::astro_error::sun_moon_error)
+}
+
+/// Analytic GCRS Sun and Moon positions in metres at an instant.
+#[wasm_bindgen(js_name = sunMoonGcrsAt)]
+pub fn sun_moon_gcrs_at(instant: &crate::frames::Instant) -> Result<SunMoon, JsValue> {
+    sidereon_core::astro::bodies::sun_moon::sun_moon_gcrs_at(&instant.time_scales()?)
+        .map(SunMoon::geocentric)
+        .map_err(crate::astro_error::sun_moon_error)
+}
+
+/// Analytic GCRS Sun and Moon positions in metres at TDB seconds from J2000.
+#[wasm_bindgen(js_name = sunMoonGcrsAtTdbSeconds)]
+pub fn sun_moon_gcrs_at_tdb_seconds(epoch_tdb_seconds: f64) -> Result<SunMoon, JsValue> {
+    sidereon_core::astro::bodies::sun_moon::sun_moon_gcrs_at_tdb_seconds(epoch_tdb_seconds)
+        .map(SunMoon::geocentric)
+        .map_err(crate::astro_error::sun_moon_error)
 }

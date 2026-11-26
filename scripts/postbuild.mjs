@@ -2007,6 +2007,10 @@ export type TerrainOrthometricBatchResult =
 `;
 
 const topLevelReplacements = [
+  [
+    "export function scoreOrbit(source: OrbitSource, reference: Sp3, satellites: string[], options: OrbitScoreOptions): OrbitScoreReport;",
+    "export function scoreOrbit(source: OrbitSource | PredictedSp3 | BroadcastOrbit | OrbitTrajectory, reference: Sp3, satellites: string[], options: OrbitScoreOptions): OrbitScoreReport;",
+  ],
   ["export function sourceSolveModeToa(): string;", 'export function sourceSolveModeToa(): "toa";'],
   [
     "export function sourceSolveModeTdoa(reference_sensor: number): any;",
@@ -2143,6 +2147,15 @@ const topLevelReplacements = [
 ];
 
 const classMemberReplacements = [
+  [
+    "OrbitAttitudeTrajectory",
+    [
+      [
+        "static fromOrbitSource(source: OrbitSource, satellite: string, orientation?: Iers2010EarthOrientationProvider | null): OrbitAttitudeTrajectory;",
+        "static fromOrbitSource(source: OrbitSource | PredictedSp3 | BroadcastOrbit | OrbitTrajectory, satellite: string, orientation?: Iers2010EarthOrientationProvider | null): OrbitAttitudeTrajectory;",
+      ],
+    ],
+  ],
   [
     "Sp3MergeInputIdentity",
     [
@@ -2381,7 +2394,7 @@ function occurrenceCount(text, needle) {
 }
 
 function replaceExactly(text, from, to, context) {
-  const fromCount = occurrenceCount(text, from);
+  const fromCount = occurrenceCount(text.replaceAll(to, ""), from);
   const toCount = occurrenceCount(text, to);
   if (fromCount === 1 && toCount === 0) {
     return text.replace(from, to);
@@ -2432,6 +2445,7 @@ function insertOverlay(text, path) {
 
 function patchDeclarations(path) {
   let text = insertOverlay(readFileSync(path, "utf8"), path);
+  text = text.replaceAll(/, force_handles\??: ForceModel\[\](?: \| null)?/g, "");
   for (const [from, to] of topLevelReplacements) {
     text = replaceExactly(text, from, to, `${path}: top-level declaration`);
   }
@@ -2508,12 +2522,132 @@ delete PreciseInterpolantArtifact.__fromBytesAttested;
 `;
 }
 
+function patchOrbitAdapters(text, path) {
+  if (text.includes("function __cloneAdditionalForces(")) return text;
+  let patched = text;
+  for (const [signature, replacement] of [
+    [
+      "function propagateState(request, force_handles, context) {",
+      `function propagateState(request) {
+    const context = __clonePropagationContext(request?.context);
+    let force_handles;
+    try {
+        force_handles = __cloneAdditionalForces(request?.additionalForces);
+    } catch (error) {
+        context?.free();
+        throw error;
+    }`,
+    ],
+    [
+      "function propagateStateWithSpaceWeather(request, table, context, force_handles) {",
+      `function propagateStateWithSpaceWeather(request, table, context) {
+    _assertClass(table, SpaceWeatherTable);
+    _assertClass(context, PropagationContext);
+    const force_handles = __cloneAdditionalForces(request?.additionalForces);`,
+    ],
+    [
+      "propagateTo(epoch_tdb_seconds, options, force_handles) {",
+      `propagateTo(epoch_tdb_seconds, options) {
+        const force_handles = __cloneAdditionalForces(options?.additionalForces);`,
+    ],
+    [
+      "propagateToWithContext(epoch_tdb_seconds, context, options, force_handles) {",
+      `propagateToWithContext(epoch_tdb_seconds, context, options) {
+        _assertClass(context, PropagationContext);
+        const force_handles = __cloneAdditionalForces(options?.additionalForces);`,
+    ],
+    [
+      "ephemerisWithContext(epochs_tdb_seconds, context, additional_forces) {",
+      `ephemerisWithContext(epochs_tdb_seconds, context, additional_forces) {
+        _assertClass(context, PropagationContext);
+        additional_forces = __cloneAdditionalForces(additional_forces ?? undefined);`,
+    ],
+    [
+      "constructor(input, force_handles) {",
+      `constructor(input) {
+        const force_handles = __cloneAdditionalForces(input?.additionalForces);`,
+    ],
+    ...[
+      "static fromSp3(product, satellite, orientation) {",
+      "static fromBroadcast(ephemeris, satellite, orientation) {",
+      "static fromOrbitSource(source, satellite, orientation) {",
+    ].map((signature) => [
+      signature,
+      `${signature}\n        orientation = __cloneAttitudeOrientation(orientation);`,
+    ]),
+  ]) {
+    patched = replaceExactly(patched, signature, replacement, `${path}: ${signature}`);
+  }
+  patched += `
+function __cloneAdditionalForces(forces) {
+    if (forces === undefined) return [];
+    if (!Array.isArray(forces)) throw new TypeError("additionalForces must be an array of ForceModel handles");
+    for (const force of forces) {
+        if (!(force instanceof ForceModel) || !force.__wbg_ptr) {
+            throw new TypeError("additionalForces must contain live ForceModel handles");
+        }
+    }
+    return Array.from(forces, force => ForceModel.prototype.clone.call(force));
+}
+
+const __cloneContextHandle = PropagationContext.prototype.__cloneHandle;
+const __cloneOrientationHandle = Iers2010EarthOrientationProvider.prototype.__cloneHandle;
+delete PropagationContext.prototype.__cloneHandle;
+delete Iers2010EarthOrientationProvider.prototype.__cloneHandle;
+
+function __clonePropagationContext(context) {
+    if (context == null) return undefined;
+    _assertClass(context, PropagationContext);
+    return __cloneContextHandle.call(context);
+}
+
+function __cloneAttitudeOrientation(orientation) {
+    if (orientation == null) return undefined;
+    _assertClass(orientation, Iers2010EarthOrientationProvider);
+    return __cloneOrientationHandle.call(orientation);
+}
+`;
+  for (const [signature, call, operation] of [
+    [
+      "function scoreOrbit(source, reference, satellites, options) {",
+      "scoreOrbit(handle, reference, satellites, options)",
+      "orbit source scoring",
+    ],
+    [
+      "static fromOrbitSource(source, satellite, orientation) {",
+      "OrbitAttitudeTrajectory.fromOrbitSource(handle, satellite, orientation)",
+      "orbit source attitude",
+    ],
+  ]) {
+    patched = replaceExactly(
+      patched,
+      signature,
+      `${signature}
+    const concrete = [PredictedSp3, BroadcastOrbit, OrbitTrajectory].find(type => source instanceof type);
+    if (concrete !== undefined) {
+        const handle = concrete.prototype.asOrbitSource.call(source);
+        try {
+            return ${call};
+        } finally {
+            handle.free();
+        }
+    }`,
+      `${path}: ${operation}`,
+    );
+  }
+  return patched;
+}
+
 const declarationPaths = ["pkg/sidereon.d.ts", "pkg-node/sidereon.d.ts"];
 const patchedDeclarations = declarationPaths.map((path) => [path, patchDeclarations(path)]);
-const patchedNodeJs = patchNodePathAdapters("pkg-node/sidereon.js");
+const nodePath = "pkg-node/sidereon.js";
+const webPath = "pkg/sidereon.js";
+const patchedNodeJs = patchOrbitAdapters(patchNodePathAdapters(nodePath), nodePath);
+const patchedWebJs = patchOrbitAdapters(readFileSync(webPath, "utf8"), webPath);
 
 writeFileSync("pkg-node/package.json", JSON.stringify({ type: "commonjs" }, null, 2) + "\n");
 for (const [path, text] of patchedDeclarations) {
   writeFileSync(path, text);
 }
-writeFileSync("pkg-node/sidereon.js", patchedNodeJs);
+writeFileSync(nodePath, patchedNodeJs);
+writeFileSync(webPath, patchedWebJs);

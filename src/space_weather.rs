@@ -249,12 +249,17 @@ fn parse_policy(policy: JsValue) -> Result<SpaceWeatherPolicy, JsValue> {
 
 /// Parsed CelesTrak CSSI space-weather table.
 #[wasm_bindgen]
+#[derive(Clone)]
 pub struct SpaceWeatherTable {
     inner: Arc<CoreSpaceWeatherTable>,
     diagnostics: Diagnostics,
 }
 
 impl SpaceWeatherTable {
+    pub(crate) fn source(&self) -> SpaceWeatherSource {
+        SpaceWeatherSource::Table(self.inner.clone())
+    }
+
     fn new(inner: CoreSpaceWeatherTable, diagnostics: Diagnostics) -> Self {
         Self {
             inner: Arc::new(inner),
@@ -480,11 +485,36 @@ pub fn estimate_decay_with_space_weather(
     table: &SpaceWeatherTable,
     request: JsValue,
 ) -> Result<JsValue, JsValue> {
+    decay_impl(drag, table, request, None)
+}
+
+/// Estimate time to reentry with an explicit propagation context.
+#[wasm_bindgen(js_name = estimateDecayWithSourceAndContext, unchecked_return_type = "NumericalDecayEstimate")]
+pub fn estimate_decay_with_source_and_context(
+    drag: &DragForce,
+    table: &SpaceWeatherTable,
+    #[wasm_bindgen(unchecked_param_type = "NumericalSourcedDecayRequest")] request: JsValue,
+    context: &crate::earth_orientation::PropagationContext,
+) -> Result<JsValue, JsValue> {
+    crate::error::reject_unknown_keys(
+        &request,
+        "sourced decay request",
+        &[crate::forces::DECAY_REQUEST_KEYS, &["policy"]].concat(),
+    )?;
+    decay_impl(drag, table, request, Some(&context.inner))
+}
+
+fn decay_impl(
+    drag: &DragForce,
+    table: &SpaceWeatherTable,
+    request: JsValue,
+    context: Option<&sidereon_core::astro::propagator::PropagationContext>,
+) -> Result<JsValue, JsValue> {
     let req: DecayRequest = serde_wasm_bindgen::from_value(request)
         .map_err(|e| type_error(&format!("invalid decay request: {e}")))?;
     let position = vec3_finite("positionKm", &req.position_km)?;
     let velocity = vec3_finite("velocityKmS", &req.velocity_km_s)?;
-    let mut config = DecayConfig::new(drag.parameters()?)
+    let mut config = DecayConfig::new(drag.drag_parameters()?)
         .with_force_model(force_model(req.force_model.as_deref())?)
         .with_integrator(integrator(req.integrator.as_deref())?);
     if let Some(value) = req.reentry_altitude_km {
@@ -508,11 +538,13 @@ pub fn estimate_decay_with_space_weather(
     } else {
         SpaceWeatherSource::TableWithPolicy(table.inner.clone(), parse_policy(req.policy)?)
     };
-    let estimate = core_estimate_decay_with_source(
-        CartesianState::new(req.epoch_s, position, velocity),
-        &config,
-        &source,
-    )
+    let initial = CartesianState::new(req.epoch_s, position, velocity);
+    let estimate = match context {
+        Some(context) => sidereon_core::astro::propagator::estimate_decay_with_source_and_context(
+            initial, &config, &source, context,
+        ),
+        None => core_estimate_decay_with_source(initial, &config, &source),
+    }
     .map_err(engine_error)?;
     to_value(&DecayEstimateJs {
         time_to_decay_s: estimate.time_to_decay_s,

@@ -298,3 +298,7 @@ export type AstroErrorDetail =
   | { family: "almanac"; cause: AlmanacCause }
   | { family: "spk"; cause: SpkErrorCause };
 "#;
+
+pub(crate) fn sun_moon_error(error: SunMoonError) -> JsValue {
+    detail("sunMoon", &error.to_string(), sun_moon_cause(error))
+}

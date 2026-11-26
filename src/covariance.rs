@@ -118,7 +118,7 @@ pub enum CovarianceFrame {
     Rtn,
 }
 
-fn parse_frame(label: Option<&str>) -> Result<CoreCovarianceFrame, JsValue> {
+pub(crate) fn parse_frame(label: Option<&str>) -> Result<CoreCovarianceFrame, JsValue> {
     match label.unwrap_or("inertial") {
         "inertial" => Ok(CoreCovarianceFrame::Inertial),
         "rtn" => Ok(CoreCovarianceFrame::Rtn),
@@ -137,13 +137,13 @@ fn frame_label(frame: CoreCovarianceFrame) -> &'static str {
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
-struct ProcessNoiseInput {
+pub(crate) struct ProcessNoiseInput {
     q_radial_km2_s3: Option<f64>,
     q_transverse_km2_s3: Option<f64>,
     q_normal_km2_s3: Option<f64>,
 }
 
-fn process_noise(input: Option<ProcessNoiseInput>) -> ProcessNoise {
+pub(crate) fn process_noise(input: Option<ProcessNoiseInput>) -> ProcessNoise {
     if let Some(input) = input {
         ProcessNoise::RtnAccelerationPsd {
             q_radial_km2_s3: input.q_radial_km2_s3.unwrap_or(0.0),
@@ -390,25 +390,34 @@ pub fn propagate_covariance(request: JsValue) -> Result<CovarianceEphemeris, JsV
         )
         .map_err(engine_error)?;
 
-    let mut times = Vec::with_capacity(inner.len());
-    let mut positions = Vec::with_capacity(inner.len() * 3);
-    let mut velocities = Vec::with_capacity(inner.len() * 3);
-    let mut covariances = Vec::with_capacity(inner.len() * 36);
-    for node in inner.nodes() {
-        times.push(node.state.epoch_tdb_seconds);
-        positions.extend_from_slice(&node.state.position_array());
-        velocities.extend_from_slice(&node.state.velocity_array());
-        covariances.extend(covariance6_flat(&node.covariance));
-    }
+    Ok(CovarianceEphemeris::from_core(inner, options.output_frame))
+}
 
-    Ok(CovarianceEphemeris {
-        times,
-        positions,
-        velocities,
-        covariances,
-        frame: options.output_frame,
-        inner,
-    })
+impl CovarianceEphemeris {
+    pub(crate) fn from_core(
+        inner: sidereon_core::astro::propagator::CovarianceEphemeris,
+        frame: CoreCovarianceFrame,
+    ) -> Self {
+        let mut times = Vec::with_capacity(inner.len());
+        let mut positions = Vec::with_capacity(inner.len() * 3);
+        let mut velocities = Vec::with_capacity(inner.len() * 3);
+        let mut covariances = Vec::with_capacity(inner.len() * 36);
+        for node in inner.nodes() {
+            times.push(node.state.epoch_tdb_seconds);
+            positions.extend_from_slice(&node.state.position_array());
+            velocities.extend_from_slice(&node.state.velocity_array());
+            covariances.extend(covariance6_flat(&node.covariance));
+        }
+
+        Self {
+            times,
+            positions,
+            velocities,
+            covariances,
+            frame,
+            inner,
+        }
+    }
 }
 
 #[derive(Deserialize)]

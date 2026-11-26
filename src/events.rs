@@ -281,3 +281,285 @@ pub fn beta_angle_from_state(r: &[f64], v: &[f64], sun: &[f64]) -> Result<f64, J
     let sun = crate::marshal::vec3_finite("sun", sun)?;
     core_beta_angle_from_state(r, v, sun).map_err(engine_error)
 }
+
+/// Lighting-ratio model for solar radiation pressure.
+#[wasm_bindgen]
+pub enum ShadowFunction {
+    /// Apparent-disc occultation.
+    ApparentDisc,
+    /// Earth-only linear conical geometry.
+    Conical,
+}
+
+/// IAU nominal solar radius in kilometres.
+#[wasm_bindgen(js_name = IAU_2015_SOLAR_RADIUS_KM)]
+pub fn iau_2015_solar_radius_km() -> f64 {
+    sidereon_core::astro::constants::astro::IAU_2015_SOLAR_RADIUS_KM
+}
+
+fn eclipse_detail(error: sidereon_core::astro::events::eclipse::EclipseError) -> serde_json::Value {
+    use sidereon_core::astro::events::eclipse::EclipseError;
+    match error {
+        EclipseError::InvalidInput { field, reason } => {
+            serde_json::json!({"kind":"invalidInput","field":field,"reason":reason})
+        }
+    }
+}
+
+fn eclipse_error(error: sidereon_core::astro::events::eclipse::EclipseError) -> JsValue {
+    crate::error::typed_error("EclipseError", &error.to_string(), eclipse_detail(error))
+}
+
+fn shadow_gradient_error(
+    error: sidereon_core::astro::events::eclipse::ShadowGradientError,
+) -> JsValue {
+    use sidereon_core::astro::events::eclipse::ShadowGradientError;
+    let detail = match error {
+        ShadowGradientError::Eclipse(source) => {
+            serde_json::json!({"kind":"eclipse","cause":eclipse_detail(source)})
+        }
+        ShadowGradientError::NumericalFailure => serde_json::json!({"kind":"numericalFailure"}),
+        _ => serde_json::json!({"kind":"unknown"}),
+    };
+    crate::error::typed_error("ShadowGradientError", &error.to_string(), detail)
+}
+
+/// Shadow fraction and derivative with respect to satellite position.
+#[wasm_bindgen]
+pub struct ShadowFractionGradient {
+    fraction: f64,
+    gradient: [f64; 3],
+}
+
+#[wasm_bindgen]
+impl ShadowFractionGradient {
+    /// Shadow fraction.
+    #[wasm_bindgen(getter)]
+    pub fn fraction(&self) -> f64 {
+        self.fraction
+    }
+
+    /// Derivative with respect to each satellite position component, per kilometre.
+    #[wasm_bindgen(getter, js_name = gradientPerKm)]
+    pub fn gradient_per_km(&self) -> Vec<f64> {
+        self.gradient.to_vec()
+    }
+}
+
+pub(crate) fn earth_shadow_model(model: f64) -> Result<CoreEarthShadowModel, JsValue> {
+    match model {
+        x if x == f64::from(EarthShadowModel::Spherical as u32) => {
+            Ok(CoreEarthShadowModel::Spherical)
+        }
+        x if x == f64::from(EarthShadowModel::Wgs84Oblate as u32) => {
+            Ok(CoreEarthShadowModel::Wgs84Oblate)
+        }
+        _ => Err(crate::error::range_error(
+            "model must be an EarthShadowModel value",
+        )),
+    }
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const ECLIPSE_TYPES: &str = r#"
+/** Invalid position input for eclipse geometry. */
+export interface EclipseErrorDetail {
+    kind: "invalidInput";
+    field: string;
+    reason: string;
+}
+
+/** Eclipse evaluation error. */
+export interface EclipseError extends Error {
+    readonly name: "EclipseError";
+    readonly kind: EclipseErrorDetail["kind"];
+    readonly detail: EclipseErrorDetail;
+}
+
+/** Failure to evaluate a shadow fraction or its gradient. */
+export type ShadowGradientErrorDetail =
+    | { kind: "eclipse"; cause: EclipseErrorDetail }
+    | { kind: "numericalFailure" }
+    | { kind: "unknown" };
+
+/** Shadow fraction gradient evaluation error. */
+export interface ShadowGradientError extends Error {
+    readonly name: "ShadowGradientError";
+    readonly kind: ShadowGradientErrorDetail["kind"];
+    readonly detail: ShadowGradientErrorDetail;
+}
+"#;
+
+/// Shadow fraction from lunar occultation.
+/// Each position is an inertial three-vector in kilometres.
+#[wasm_bindgen(js_name = moonShadowFraction)]
+pub fn moon_shadow_fraction(
+    satellite_position_km: &[f64],
+    sun_position_km: &[f64],
+    moon_position_km: &[f64],
+) -> Result<f64, JsValue> {
+    sidereon_core::astro::events::eclipse::moon_shadow_fraction(
+        crate::marshal::vec3("satellitePositionKm", satellite_position_km)?,
+        crate::marshal::vec3("sunPositionKm", sun_position_km)?,
+        crate::marshal::vec3("moonPositionKm", moon_position_km)?,
+    )
+    .map_err(eclipse_error)
+}
+
+/// Combined shadow fraction from spherical Earth and Moon occultation.
+/// Each position is an inertial three-vector in kilometres.
+#[wasm_bindgen(js_name = shadowFractionWithMoon)]
+pub fn shadow_fraction_with_moon(
+    satellite_position_km: &[f64],
+    sun_position_km: &[f64],
+    moon_position_km: &[f64],
+) -> Result<f64, JsValue> {
+    sidereon_core::astro::events::eclipse::shadow_fraction_with_moon(
+        crate::marshal::vec3("satellitePositionKm", satellite_position_km)?,
+        crate::marshal::vec3("sunPositionKm", sun_position_km)?,
+        crate::marshal::vec3("moonPositionKm", moon_position_km)?,
+    )
+    .map_err(eclipse_error)
+}
+
+/// Combined shadow fraction with the selected Earth figure and Moon occultation.
+/// Each position is an inertial three-vector in kilometres.
+#[wasm_bindgen(js_name = shadowFractionWithModelAndMoon)]
+pub fn shadow_fraction_with_model_and_moon(
+    satellite_position_km: &[f64],
+    sun_position_km: &[f64],
+    moon_position_km: &[f64],
+    #[wasm_bindgen(unchecked_param_type = "EarthShadowModel")] model: f64,
+) -> Result<f64, JsValue> {
+    sidereon_core::astro::events::eclipse::shadow_fraction_with_model_and_moon(
+        crate::marshal::vec3("satellitePositionKm", satellite_position_km)?,
+        crate::marshal::vec3("sunPositionKm", sun_position_km)?,
+        crate::marshal::vec3("moonPositionKm", moon_position_km)?,
+        earth_shadow_model(model)?,
+    )
+    .map_err(eclipse_error)
+}
+
+/// Eclipse status from spherical Earth and Moon occultation.
+/// Each position is an inertial three-vector in kilometres.
+#[wasm_bindgen(js_name = statusWithMoon, unchecked_return_type = "\"sunlit\" | \"penumbra\" | \"umbra\"")]
+pub fn status_with_moon(
+    satellite_position_km: &[f64],
+    sun_position_km: &[f64],
+    moon_position_km: &[f64],
+) -> Result<String, JsValue> {
+    sidereon_core::astro::events::eclipse::status_with_moon(
+        crate::marshal::vec3("satellitePositionKm", satellite_position_km)?,
+        crate::marshal::vec3("sunPositionKm", sun_position_km)?,
+        crate::marshal::vec3("moonPositionKm", moon_position_km)?,
+    )
+    .map(|status| status_label(status).to_owned())
+    .map_err(eclipse_error)
+}
+
+/// Eclipse status with the selected Earth figure and Moon occultation.
+/// Each position is an inertial three-vector in kilometres.
+#[wasm_bindgen(js_name = statusWithModelAndMoon, unchecked_return_type = "\"sunlit\" | \"penumbra\" | \"umbra\"")]
+pub fn status_with_model_and_moon(
+    satellite_position_km: &[f64],
+    sun_position_km: &[f64],
+    moon_position_km: &[f64],
+    #[wasm_bindgen(unchecked_param_type = "EarthShadowModel")] model: f64,
+) -> Result<String, JsValue> {
+    sidereon_core::astro::events::eclipse::status_with_model_and_moon(
+        crate::marshal::vec3("satellitePositionKm", satellite_position_km)?,
+        crate::marshal::vec3("sunPositionKm", sun_position_km)?,
+        crate::marshal::vec3("moonPositionKm", moon_position_km)?,
+        earth_shadow_model(model)?,
+    )
+    .map(|status| status_label(status).to_owned())
+    .map_err(eclipse_error)
+}
+
+/// Spherical Earth conical shadow fraction and position derivative.
+/// Each position is an inertial three-vector in kilometres.
+#[wasm_bindgen(js_name = shadowFractionWithGradient)]
+pub fn shadow_fraction_with_gradient(
+    satellite_position_km: &[f64],
+    sun_position_km: &[f64],
+) -> Result<ShadowFractionGradient, JsValue> {
+    sidereon_core::astro::events::eclipse::shadow_fraction_with_gradient(
+        crate::marshal::vec3("satellitePositionKm", satellite_position_km)?,
+        crate::marshal::vec3("sunPositionKm", sun_position_km)?,
+    )
+    .map(|(fraction, gradient)| ShadowFractionGradient { fraction, gradient })
+    .map_err(shadow_gradient_error)
+}
+
+/// Conical shadow fraction and position derivative with the selected Earth figure.
+/// Each position is an inertial three-vector in kilometres.
+#[wasm_bindgen(js_name = shadowFractionWithModelAndGradient)]
+pub fn shadow_fraction_with_model_and_gradient(
+    satellite_position_km: &[f64],
+    sun_position_km: &[f64],
+    #[wasm_bindgen(unchecked_param_type = "EarthShadowModel")] model: f64,
+) -> Result<ShadowFractionGradient, JsValue> {
+    sidereon_core::astro::events::eclipse::shadow_fraction_with_model_and_gradient(
+        crate::marshal::vec3("satellitePositionKm", satellite_position_km)?,
+        crate::marshal::vec3("sunPositionKm", sun_position_km)?,
+        earth_shadow_model(model)?,
+    )
+    .map(|(fraction, gradient)| ShadowFractionGradient { fraction, gradient })
+    .map_err(shadow_gradient_error)
+}
+
+/// Combined Earth and Moon shadow fraction and position derivative.
+/// Each position is an inertial three-vector in kilometres.
+#[wasm_bindgen(js_name = shadowFractionWithModelMoonAndGradient)]
+pub fn shadow_fraction_with_model_moon_and_gradient(
+    satellite_position_km: &[f64],
+    sun_position_km: &[f64],
+    moon_position_km: &[f64],
+    #[wasm_bindgen(unchecked_param_type = "EarthShadowModel")] model: f64,
+) -> Result<ShadowFractionGradient, JsValue> {
+    sidereon_core::astro::events::eclipse::shadow_fraction_with_model_moon_and_gradient(
+        crate::marshal::vec3("satellitePositionKm", satellite_position_km)?,
+        crate::marshal::vec3("sunPositionKm", sun_position_km)?,
+        crate::marshal::vec3("moonPositionKm", moon_position_km)?,
+        earth_shadow_model(model)?,
+    )
+    .map(|(fraction, gradient)| ShadowFractionGradient { fraction, gradient })
+    .map_err(shadow_gradient_error)
+}
+
+impl From<CoreEarthShadowModel> for EarthShadowModel {
+    fn from(model: CoreEarthShadowModel) -> Self {
+        match model {
+            CoreEarthShadowModel::Spherical => Self::Spherical,
+            CoreEarthShadowModel::Wgs84Oblate => Self::Wgs84Oblate,
+        }
+    }
+}
+
+pub(crate) fn shadow_function(
+    value: f64,
+) -> Result<sidereon_core::astro::events::eclipse::ShadowFunction, JsValue> {
+    use sidereon_core::astro::events::eclipse::ShadowFunction as CoreShadowFunction;
+    match value {
+        x if x == f64::from(ShadowFunction::ApparentDisc as u32) => {
+            Ok(CoreShadowFunction::ApparentDisc)
+        }
+        x if x == f64::from(ShadowFunction::Conical as u32) => Ok(CoreShadowFunction::Conical),
+        _ => Err(crate::error::range_error(
+            "function must be a ShadowFunction value",
+        )),
+    }
+}
+
+pub(crate) fn shadow_function_label(
+    value: sidereon_core::astro::events::eclipse::ShadowFunction,
+) -> Result<ShadowFunction, JsValue> {
+    use sidereon_core::astro::events::eclipse::ShadowFunction as CoreShadowFunction;
+    match value {
+        CoreShadowFunction::ApparentDisc => Ok(ShadowFunction::ApparentDisc),
+        CoreShadowFunction::Conical => Ok(ShadowFunction::Conical),
+        _ => Err(crate::error::range_error(
+            "unsupported ShadowFunction value",
+        )),
+    }
+}
